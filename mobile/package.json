@@ -1,0 +1,28 @@
+{
+  "name": "yunqiao-ai-companion",
+  "version": "0.5.0",
+  "private": true,
+  "type": "module",
+  "description": "云桥AI 工具箱 手机伴侣端：远程看用量、切供应商、读会话",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "prepare:ios": "npm run build && node scripts/prepare-ios.mjs",
+    "add:ios": "npm run prepare:ios",
+    "add:android": "cap add android",
+    "sync": "npm run build && cap sync",
+    "sync:ios": "npm run prepare:ios && cap sync ios",
+    "open:ios": "cap open ios",
+    "open:android": "cap open android"
+  },
+  "dependencies": {
+    "@capacitor/core": "7.6.10"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "7.6.10",
+    "@capacitor/ios": "7.6.10",
+    "@capacitor/android": "7.6.10",
+    "esbuild": "0.28.2"
+  }
+}
+

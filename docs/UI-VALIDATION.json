@@ -1,0 +1,20 @@
+{
+  "checks": [
+    "Electron sandbox + IPC + initial client workspace",
+    "Client category filtering",
+    "Client -> add provider -> model -> live connection test -> redacted preview -> apply",
+    "Restore original client configuration byte-for-byte",
+    "Session discovery, reading and real Markdown download",
+    "Live remote catalog loading and model/vendor search",
+    "Persistent theme switch and keyboard command navigation",
+    "Settings validation prevents invalid gateway port",
+    "Occupied port rolls back settings and restores the actual listener",
+    "All primary navigation pages render",
+    "Built-in plugin can be enabled, persisted and disabled in the UI",
+    "Codex extension workspace renders local resource categories",
+    "Authenticated browser console + mobile responsive layout"
+  ],
+  "count": 13,
+  "profile": "isolated temporary data and client directories",
+  "mockUpstream": true
+}

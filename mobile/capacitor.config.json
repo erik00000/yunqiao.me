@@ -1,0 +1,14 @@
+{
+  "appId": "io.yunqiao.ai.companion",
+  "appName": "云桥AI 工具箱",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  },
+  "ios": {
+    "contentInset": "never",
+    "backgroundColor": "#f4f7f6",
+    "limitsNavigationsToAppBoundDomains": false
+  },
+  "android": { "backgroundColor": "#f4f7f6" }
+}

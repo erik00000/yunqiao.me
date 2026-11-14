@@ -1,0 +1,186 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { createHash, randomBytes } from 'node:crypto';
+
+export interface PlannedFile { path: string; before: string; after: string; existed: boolean }
+interface BackupEntry { path: string; backup: string | null; installedHash: string }
+interface BackupManifest { format: 'aurora-client-backup-v1'; agentId: string; files: BackupEntry[] }
+
+export const digest = (s: string) => createHash('sha256').update(s).digest('hex');
+export function readText(file: string): string {
+  if (!fs.existsSync(file)) return '';
+  const stat = fs.lstatSync(file);
+  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`配置路径不是普通文件：${file}`);
+  if (stat.size > 4 * 1024 * 1024) throw new Error(`配置文件超过 4 MB，请手动检查：${file}`);
+  return fs.readFileSync(file, 'utf8');
+}
+export function jsonObject(file: string): Record<string, any> {
+  const text = readText(file);
+  if (!text && !fs.existsSync(file)) return {};
+  try {
+    const value = JSON.parse(text.replace(/^\uFEFF/, ''));
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error();
+    return value;
+  } catch { throw new Error(`配置不是有效的 JSON 对象，已停止写入：${file}`); }
+}
+export function planned(file: string, after: string): PlannedFile {
+  return { path: file, before: readText(file), after, existed: fs.existsSync(file) };
+}
+export function plannedJson(file: string, value: unknown): PlannedFile {
+  return planned(file, JSON.stringify(value, null, 2) + '\n');
+}
+export function atomicWrite(file: string, content: string): void {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.aurora-${randomBytes(6).toString('hex')}.tmp`;
+  try {
+    fs.writeFileSync(tmp, content, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    fs.renameSync(tmp, file);
+  } finally { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); }
+}
+function backupRoot(paths: string[]): string { return path.join(path.dirname(paths[0]), '.aurora-backups'); }
+function isWithin(root: string, file: string): boolean {
+  const rel = path.relative(path.resolve(root), path.resolve(file));
+  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+function loadManifest(file: string, agentId: string, allowed: string[]): BackupManifest {
+  const root = backupRoot(allowed);
+  if (!isWithin(root, file)) throw new Error('备份路径不属于此客户端');
+  const manifest = JSON.parse(readText(file)) as BackupManifest;
+  if (manifest.format !== 'aurora-client-backup-v1' || manifest.agentId !== agentId || !Array.isArray(manifest.files))
+    throw new Error('备份格式不匹配；请手动检查旧版备份');
+  for (const e of manifest.files) {
+    if (!allowed.some(p => path.resolve(p) === path.resolve(e.path)) || (e.backup !== null && !isWithin(root, e.backup)))
+      throw new Error('备份包含不属于此客户端的文件');
+  }
+  if (new Set(manifest.files.map(e => path.resolve(e.path))).size !== manifest.files.length) throw new Error('备份存在重复路径');
+  return manifest;
+}
+
+/** Back up every file before writing any file, and preserve the first connection's originals. */
+export function applyPlan(agentId: string, files: PlannedFile[], previousBackup?: string): string {
+  if (!files.length) throw new Error('没有可应用的配置');
+  const allowed = files.map(f => f.path);
+  const previous = previousBackup ? loadManifest(previousBackup, agentId, allowed) : undefined;
+  const root = backupRoot(allowed);
+  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  const stamp = `${Date.now()}-${randomBytes(4).toString('hex')}`;
+  const manifest: BackupManifest = { format: 'aurora-client-backup-v1', agentId, files: [] };
+  // Detect edits since preview/build, before creating backups or changing the configuration.
+  for (const f of files) {
+    if (fs.existsSync(f.path) !== f.existed || readText(f.path) !== f.before) throw new Error('配置刚被其他程序修改，请重新预览');
+    const old = previous?.files.find(e => e.path === f.path);
+    if (old && digest(f.before) !== old.installedHash) throw new Error(`配置在上次接入后有外部修改，请先处理冲突：${f.path}`);
+    let backup = old?.backup;
+    if (old && backup !== null) {
+      if (!backup || !fs.existsSync(backup)) throw new Error('首次接入前的备份已丢失，已停止切换');
+      readText(backup);
+    }
+    if (!old) {
+      backup = f.existed ? path.join(root, `${stamp}-${manifest.files.length}.original`) : null;
+      if (backup) fs.writeFileSync(backup, f.before, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    }
+    manifest.files.push({ path: f.path, backup: backup ?? null, installedHash: digest(f.after) });
+  }
+  const manifestPath = path.join(root, `${agentId}-${stamp}.json`);
+  atomicWrite(manifestPath, JSON.stringify(manifest, null, 2));
+  const written: PlannedFile[] = [];
+  try {
+    for (const f of files) { atomicWrite(f.path, f.after); written.push(f); }
+  } catch (error) {
+    const rollbackErrors: string[] = [];
+    for (const f of written.reverse()) {
+      try { if (f.existed) atomicWrite(f.path, f.before); else fs.unlinkSync(f.path); }
+      catch { rollbackErrors.push(f.path); }
+    }
+    throw new Error(`${String((error as Error).message)}；配置备份：${manifestPath}${rollbackErrors.length ? `；需要手动还原：${rollbackErrors.join('、')}` : '；已撤回本次写入'}`);
+  }
+  return manifestPath;
+}
+
+export function restorePlan(agentId: string, backup: string | undefined, allowed: string[]): void {
+  if (!backup) throw new Error('没有接入前备份，未修改客户端配置');
+  const manifest = loadManifest(backup, agentId, allowed);
+  const before = manifest.files.map(e => {
+    const current = readText(e.path);
+    if (!fs.existsSync(e.path) || digest(current) !== e.installedHash) throw new Error(`配置在接入后有修改，已停止恢复以保留你的改动：${e.path}`);
+    if (e.backup && !fs.existsSync(e.backup)) throw new Error(`原始备份丢失：${e.backup}`);
+    return { entry: e, current, restored: e.backup ? readText(e.backup) : null };
+  });
+  const restored: typeof before = [];
+  try {
+    for (const f of before) {
+      if (f.restored === null) fs.unlinkSync(f.entry.path);
+      else atomicWrite(f.entry.path, f.restored);
+      restored.push(f);
+    }
+  } catch (error) {
+    for (const f of restored.reverse()) atomicWrite(f.entry.path, f.current);
+    throw error;
+  }
+}
+
+type TomlValue = string | number | boolean | null;
+function toml(value: Exclude<TomlValue, null>): string { return typeof value === 'string' ? JSON.stringify(value) : String(value); }
+/** Edits only the named table; unrelated tables and comments retain their original text. */
+export function patchToml(src: string, section: string, values: Record<string, TomlValue>): string {
+  if (/"""|'''/.test(src)) throw new Error('此 TOML 含多行字符串，请在客户端中手动配置，避免误改原内容');
+  const lines = src.replace(/^\uFEFF/, '').split(/\r?\n/);
+  const out: string[] = [];
+  let current = '';
+  let found = section === '';
+  const written = new Set<string>();
+  const appendMissing = () => {
+    for (const [key, value] of Object.entries(values)) {
+      if (!written.has(key) && value !== null) out.push(`${key} = ${toml(value)}`);
+      written.add(key);
+    }
+  };
+  for (const line of lines) {
+    const header = /^\s*\[+([^\]]+)\]+\s*(?:#.*)?$/.exec(line);
+    if (header) {
+      if (current === section) appendMissing();
+      current = header[1].trim();
+      if (current === section) found = true;
+    }
+    const assignment = /^\s*([A-Za-z0-9_-]+)\s*=/.exec(line);
+    if (current === section && assignment && Object.hasOwn(values, assignment[1])) {
+      const key = assignment[1];
+      if (!written.has(key) && values[key] !== null) out.push(`${key} = ${toml(values[key]!)}`);
+      written.add(key);
+    } else out.push(line);
+  }
+  if (current === section) appendMissing();
+  if (!found) { out.push('', `[${section}]`); appendMissing(); }
+  return out.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd() + '\n';
+}
+
+export function patchEnv(src: string, values: Record<string, string>): string {
+  const lines = src.split(/\r?\n/);
+  const written = new Set<string>();
+  const out: string[] = [];
+  for (const line of lines) {
+    const m = /^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)\s*=/.exec(line);
+    if (m && Object.hasOwn(values, m[1])) {
+      if (!written.has(m[1])) out.push(`${m[1]}=${JSON.stringify(values[m[1]])}`);
+      written.add(m[1]);
+    } else out.push(line);
+  }
+  for (const [key, value] of Object.entries(values)) if (!written.has(key)) out.push(`${key}=${JSON.stringify(value)}`);
+  return out.join('\n').trim() + '\n';
+}
+
+/** Preview must not disclose previous provider credentials or arbitrary MCP env secrets. */
+export function redactConfig(text: string): string {
+  try {
+    const value = JSON.parse(text);
+    const visit = (v: any, key = ''): any => {
+      if (typeof v === 'string' && /key|token|secret|password|authorization|credential/i.test(key)) return v ? '••••••••' : '';
+      if (Array.isArray(v)) return v.map(x => visit(x, key));
+      if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, visit(x, k)]));
+      return v;
+    };
+    return JSON.stringify(visit(value), null, 2);
+  } catch {
+    return text.replace(/^(\s*[\w-]*(?:key|token|secret|password|authorization|credential)[\w-]*\s*=).*$/gim, '$1 "••••••••"');
+  }
+}

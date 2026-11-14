@@ -1,0 +1,1429 @@
+{
+  "version": 1,
+  "updatedAt": "2026-11-14T03:34:27.692Z",
+  "providers": [
+    {
+      "key": "deepseek",
+      "name": "深度求索",
+      "vendor": "深度求索",
+      "format": "openai-chat",
+      "baseUrl": "https://api.deepseek.com",
+      "region": "cn",
+      "color": "#4d6bfe",
+      "icon": "🐳",
+      "docs": "https://platform.deepseek.com",
+      "note": "",
+      "tags": [],
+      "official": false,
+      "enabled": true,
+      "sort": 100,
+      "models": [
+        {
+          "id": "deepseek-chat",
+          "contextWindow": 128000,
+          "inputPrice": 0.27,
+          "outputPrice": 1.1,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        },
+        {
+          "id": "deepseek-reasoner",
+          "contextWindow": 128000,
+          "inputPrice": 0.55,
+          "outputPrice": 2.19,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "moonshot",
+      "name": "月之暗面",
+      "vendor": "月之暗面",
+      "format": "openai-chat",
+      "baseUrl": "https://api.moonshot.cn/v1",
+      "region": "cn",
+      "color": "#0f172a",
+      "icon": "🌙",
+      "docs": "https://platform.moonshot.cn",
+      "note": "",
+      "tags": [],
+      "official": false,
+      "enabled": true,
+      "sort": 101,
+      "models": [
+        {
+          "id": "kimi-k2-turbo-preview",
+          "contextWindow": 262144,
+          "inputPrice": 0.28,
+          "outputPrice": 1.15,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        },
+        {
+          "id": "moonshot-v1-128k",
+          "contextWindow": 131072,
+          "inputPrice": 0.84,
+          "outputPrice": 0.84,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "zhipu",
+      "name": "智谱 AI",
+      "vendor": "智谱",
+      "format": "openai-chat",
+      "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
+      "region": "cn",
+      "color": "#2f6bff",
+      "icon": "🔷",
+      "docs": "https://open.bigmodel.cn",
+      "note": "",
+      "tags": [],
+      "official": false,
+      "enabled": true,
+      "sort": 102,
+      "models": [
+        {
+          "id": "glm-4.6",
+          "contextWindow": 200000,
+          "inputPrice": 0.6,
+          "outputPrice": 2.2,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        },
+        {
+          "id": "glm-4-flash",
+          "contextWindow": 128000,
+          "inputPrice": 0,
+          "outputPrice": 0,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "qwen",
+      "name": "通义千问 / 百炼",
+      "vendor": "阿里云",
+      "format": "openai-chat",
+      "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "region": "cn",
+      "color": "#615ced",
+      "icon": "☁️",
+      "docs": "https://bailian.console.aliyun.com",
+      "note": "",
+      "tags": [],
+      "official": false,
+      "enabled": true,
+      "sort": 103,
+      "models": [
+        {
+          "id": "qwen3-max",
+          "contextWindow": 262144,
+          "inputPrice": 0.86,
+          "outputPrice": 3.44,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        },
+        {
+          "id": "qwen3-coder-plus",
+          "contextWindow": 1000000,
+          "inputPrice": 0.6,
+          "outputPrice": 2.4,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "minimax",
+      "name": "稀宇科技",
+      "vendor": "MiniMax",
+      "format": "openai-chat",
+      "baseUrl": "https://api.minimax.chat/v1",
+      "region": "cn",
+      "color": "#ff5c35",
+      "icon": "🔺",
+      "docs": "https://platform.minimaxi.com",
+      "note": "模型名要填「推理接入点 ID」或以模型名直接调用（需开通）",
+      "tags": [],
+      "official": false,
+      "enabled": true,
+      "sort": 104,
+      "models": [
+        {
+          "id": "MiniMax-M2",
+          "contextWindow": 200000,
+          "inputPrice": 0.3,
+          "outputPrice": 1.2,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        },
+        {
+          "id": "abab6.5s-chat",
+          "contextWindow": 245000,
+          "inputPrice": 0.14,
+          "outputPrice": 0.14,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "siliconflow",
+      "name": "硅基流动",
+      "vendor": "SiliconFlow",
+      "format": "openai-chat",
+      "baseUrl": "https://api.siliconflow.cn/v1",
+      "region": "cn",
+      "color": "#7c3aed",
+      "icon": "🧪",
+      "docs": "https://siliconflow.cn",
+      "note": "模型名要填「推理接入点 ID」或以模型名直接调用（需开通）",
+      "tags": [],
+      "official": false,
+      "enabled": true,
+      "sort": 105,
+      "models": [
+        {
+          "id": "deepseek-ai/DeepSeek-V3.2",
+          "contextWindow": 131072,
+          "inputPrice": 0.14,
+          "outputPrice": 0.28,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        },
+        {
+          "id": "Qwen/Qwen3-235B-A22B-Instruct",
+          "contextWindow": 131072,
+          "inputPrice": 0.14,
+          "outputPrice": 0.56,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "volcengine",
+      "name": "火山方舟",
+      "vendor": "字节跳动",
+      "format": "openai-chat",
+      "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
+      "region": "cn",
+      "color": "#1664ff",
+      "icon": "🌋",
+      "docs": "https://console.volcengine.com/ark",
+      "note": "模型名要填「推理接入点 ID」或以模型名直接调用（需开通）",
+      "tags": [],
+      "official": false,
+      "enabled": true,
+      "sort": 106,
+      "models": [
+        {
+          "id": "doubao-seed-1-6",
+          "contextWindow": 262144,
+          "inputPrice": 0.11,
+          "outputPrice": 0.28,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        },
+        {
+          "id": "deepseek-v3-1-250821",
+          "contextWindow": 131072,
+          "inputPrice": 0.28,
+          "outputPrice": 1.1,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "stepfun",
+      "name": "阶跃星辰",
+      "vendor": "阶跃星辰",
+      "format": "openai-chat",
+      "baseUrl": "https://api.stepfun.com/v1",
+      "region": "cn",
+      "color": "#00a3ff",
+      "icon": "🪜",
+      "docs": "https://platform.stepfun.com",
+      "note": "",
+      "tags": [],
+      "official": false,
+      "enabled": true,
+      "sort": 107,
+      "models": [
+        {
+          "id": "step-3",
+          "contextWindow": 262144,
+          "inputPrice": 0.2,
+          "outputPrice": 0.8,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        },
+        {
+          "id": "step-2-mini",
+          "contextWindow": 32768,
+          "inputPrice": 0.14,
+          "outputPrice": 0.28,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "baidu-qianfan",
+      "name": "百度千帆",
+      "vendor": "百度",
+      "format": "openai-chat",
+      "baseUrl": "https://qianfan.baidubce.com/v2",
+      "region": "cn",
+      "color": "#2932e1",
+      "icon": "🐾",
+      "docs": "https://qianfan.cloud.baidu.com",
+      "note": "",
+      "tags": [],
+      "official": false,
+      "enabled": true,
+      "sort": 108,
+      "models": [
+        {
+          "id": "ernie-4.5-turbo-128k",
+          "contextWindow": 128000,
+          "inputPrice": 0.11,
+          "outputPrice": 0.44,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "hunyuan",
+      "name": "腾讯混元",
+      "vendor": "腾讯云",
+      "format": "openai-chat",
+      "baseUrl": "https://api.hunyuan.cloud.tencent.com/v1",
+      "region": "cn",
+      "color": "#00a4ff",
+      "icon": "🐧",
+      "docs": "https://cloud.tencent.com/product/hunyuan",
+      "note": "",
+      "tags": [],
+      "official": false,
+      "enabled": true,
+      "sort": 109,
+      "models": [
+        {
+          "id": "hunyuan-turbos-latest",
+          "contextWindow": 32768,
+          "inputPrice": 0.11,
+          "outputPrice": 0.28,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "modelscope",
+      "name": "魔搭社区",
+      "vendor": "阿里云",
+      "format": "openai-chat",
+      "baseUrl": "https://api-inference.modelscope.cn/v1",
+      "region": "cn",
+      "color": "#8b5cf6",
+      "icon": "🏔️",
+      "docs": "",
+      "note": "",
+      "tags": [],
+      "official": false,
+      "enabled": true,
+      "sort": 110,
+      "models": [
+        {
+          "id": "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+          "contextWindow": 262144,
+          "inputPrice": 0,
+          "outputPrice": 0,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "ppio",
+      "name": "PPIO 派欧云",
+      "vendor": "PPIO",
+      "format": "openai-chat",
+      "baseUrl": "https://api.ppio.com/openai",
+      "region": "cn",
+      "color": "#f97316",
+      "icon": "⚡",
+      "docs": "",
+      "note": "",
+      "tags": [],
+      "official": false,
+      "enabled": true,
+      "sort": 111,
+      "models": [
+        {
+          "id": "deepseek/deepseek-v3",
+          "contextWindow": 131072,
+          "inputPrice": 0.27,
+          "outputPrice": 1.1,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "sensenova",
+      "name": "商汤日日新",
+      "vendor": "商汤",
+      "format": "openai-chat",
+      "baseUrl": "https://api.sensenova.cn/compatible-mode/v1",
+      "region": "cn",
+      "color": "#e11d48",
+      "icon": "🎋",
+      "docs": "",
+      "note": "",
+      "tags": [],
+      "official": false,
+      "enabled": true,
+      "sort": 112,
+      "models": [
+        {
+          "id": "SenseChat-5",
+          "contextWindow": 131072,
+          "inputPrice": 0.55,
+          "outputPrice": 1.65,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "iflytek",
+      "name": "讯飞星火",
+      "vendor": "科大讯飞",
+      "format": "openai-chat",
+      "baseUrl": "https://spark-api-open.xf-yun.com/v1",
+      "region": "cn",
+      "color": "#0ea5e9",
+      "icon": "✦",
+      "docs": "",
+      "note": "",
+      "tags": [],
+      "official": false,
+      "enabled": true,
+      "sort": 113,
+      "models": [
+        {
+          "id": "generalv3.5",
+          "contextWindow": 8192,
+          "inputPrice": 0.14,
+          "outputPrice": 0.14,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "lingyi",
+      "name": "零一万物",
+      "vendor": "零一万物",
+      "format": "openai-chat",
+      "baseUrl": "https://api.lingyiwanwu.com/v1",
+      "region": "cn",
+      "color": "#22c55e",
+      "icon": "🌱",
+      "docs": "",
+      "note": "",
+      "tags": [],
+      "official": false,
+      "enabled": true,
+      "sort": 114,
+      "models": [
+        {
+          "id": "yi-lightning",
+          "contextWindow": 16384,
+          "inputPrice": 0.14,
+          "outputPrice": 0.14,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "baichuan",
+      "name": "百川智能",
+      "vendor": "百川",
+      "format": "openai-chat",
+      "baseUrl": "https://api.baichuan-ai.com/v1",
+      "region": "cn",
+      "color": "#f59e0b",
+      "icon": "🌊",
+      "docs": "https://platform.openai.com",
+      "note": "",
+      "tags": [],
+      "official": false,
+      "enabled": true,
+      "sort": 115,
+      "models": [
+        {
+          "id": "Baichuan4",
+          "contextWindow": 32768,
+          "inputPrice": 1.43,
+          "outputPrice": 1.43,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "huawei-maas",
+      "name": "华为云 ModelArts",
+      "vendor": "华为云",
+      "format": "openai-chat",
+      "baseUrl": "https://api.modelarts-maas.com/v1",
+      "region": "cn",
+      "color": "#cf0a2c",
+      "icon": "🌸",
+      "docs": "https://platform.openai.com",
+      "note": "",
+      "tags": [],
+      "official": false,
+      "enabled": true,
+      "sort": 116,
+      "models": [
+        {
+          "id": "deepseek-v3",
+          "contextWindow": 131072,
+          "inputPrice": 0.27,
+          "outputPrice": 1.1,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "infini",
+      "name": "无问芯穹",
+      "vendor": "无问芯穹",
+      "format": "openai-chat",
+      "baseUrl": "https://cloud.infini-ai.com/maas/v1",
+      "region": "cn",
+      "color": "#06b6d4",
+      "icon": "∞",
+      "docs": "https://platform.openai.com",
+      "note": "",
+      "tags": [],
+      "official": false,
+      "enabled": true,
+      "sort": 117,
+      "models": [
+        {
+          "id": "deepseek-v3",
+          "contextWindow": 131072,
+          "inputPrice": 0.27,
+          "outputPrice": 1.1,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "openai",
+      "name": "OpenAI",
+      "vendor": "OpenAI",
+      "format": "openai-responses",
+      "baseUrl": "https://api.openai.com/v1",
+      "region": "global",
+      "color": "#10a37f",
+      "icon": "◍",
+      "docs": "https://platform.openai.com",
+      "note": "",
+      "tags": [],
+      "official": false,
+      "enabled": true,
+      "sort": 118,
+      "models": [
+        {
+          "id": "gpt-5.1-codex",
+          "contextWindow": 400000,
+          "inputPrice": 1.25,
+          "outputPrice": 10,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        },
+        {
+          "id": "gpt-4.1",
+          "contextWindow": 1047576,
+          "inputPrice": 2,
+          "outputPrice": 8,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "anthropic",
+      "name": "Anthropic Claude",
+      "vendor": "Anthropic",
+      "format": "anthropic",
+      "baseUrl": "https://api.anthropic.com",
+      "region": "global",
+      "color": "#d97757",
+      "icon": "✳",
+      "docs": "https://console.anthropic.com",
+      "note": "",
+      "tags": [],
+      "official": false,
+      "enabled": true,
+      "sort": 119,
+      "models": [
+        {
+          "id": "claude-sonnet-4-5",
+          "contextWindow": 1000000,
+          "inputPrice": 3,
+          "outputPrice": 15,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        },
+        {
+          "id": "claude-opus-4-1",
+          "contextWindow": 200000,
+          "inputPrice": 15,
+          "outputPrice": 75,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        },
+        {
+          "id": "claude-haiku-4-5",
+          "contextWindow": 200000,
+          "inputPrice": 1,
+          "outputPrice": 5,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "gemini",
+      "name": "Google Gemini",
+      "vendor": "Google",
+      "format": "gemini",
+      "baseUrl": "https://generativelanguage.googleapis.com",
+      "region": "global",
+      "color": "#4285f4",
+      "icon": "✦",
+      "docs": "https://aistudio.google.com",
+      "note": "",
+      "tags": [],
+      "official": false,
+      "enabled": true,
+      "sort": 120,
+      "models": [
+        {
+          "id": "gemini-2.5-pro",
+          "contextWindow": 1048576,
+          "inputPrice": 1.25,
+          "outputPrice": 10,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        },
+        {
+          "id": "gemini-2.5-flash",
+          "contextWindow": 1048576,
+          "inputPrice": 0.3,
+          "outputPrice": 2.5,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "xai",
+      "name": "xAI Grok",
+      "vendor": "xAI",
+      "format": "openai-chat",
+      "baseUrl": "https://api.x.ai/v1",
+      "region": "global",
+      "color": "#111827",
+      "icon": "𝕏",
+      "docs": "",
+      "note": "",
+      "tags": [],
+      "official": false,
+      "enabled": true,
+      "sort": 121,
+      "models": [
+        {
+          "id": "grok-4",
+          "contextWindow": 256000,
+          "inputPrice": 3,
+          "outputPrice": 15,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        },
+        {
+          "id": "grok-code-fast-1",
+          "contextWindow": 256000,
+          "inputPrice": 0.2,
+          "outputPrice": 1.5,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "mistral",
+      "name": "Mistral AI",
+      "vendor": "Mistral",
+      "format": "openai-chat",
+      "baseUrl": "https://api.mistral.ai/v1",
+      "region": "global",
+      "color": "#ff7000",
+      "icon": "🌬️",
+      "docs": "",
+      "note": "",
+      "tags": [],
+      "official": false,
+      "enabled": true,
+      "sort": 122,
+      "models": [
+        {
+          "id": "mistral-large-latest",
+          "contextWindow": 131072,
+          "inputPrice": 2,
+          "outputPrice": 6,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        },
+        {
+          "id": "codestral-latest",
+          "contextWindow": 256000,
+          "inputPrice": 0.3,
+          "outputPrice": 0.9,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "groq",
+      "name": "Groq",
+      "vendor": "Groq",
+      "format": "openai-chat",
+      "baseUrl": "https://api.groq.com/openai/v1",
+      "region": "global",
+      "color": "#f55036",
+      "icon": "⚙️",
+      "docs": "",
+      "note": "",
+      "tags": [],
+      "official": false,
+      "enabled": true,
+      "sort": 123,
+      "models": [
+        {
+          "id": "llama-3.3-70b-versatile",
+          "contextWindow": 131072,
+          "inputPrice": 0.59,
+          "outputPrice": 0.79,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "openrouter",
+      "name": "OpenRouter",
+      "vendor": "OpenRouter",
+      "format": "openai-chat",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "region": "relay",
+      "color": "#6366f1",
+      "icon": "🔀",
+      "docs": "",
+      "note": "",
+      "tags": [],
+      "official": false,
+      "enabled": true,
+      "sort": 124,
+      "models": [
+        {
+          "id": "anthropic/claude-sonnet-4.5",
+          "contextWindow": 1000000,
+          "inputPrice": 3,
+          "outputPrice": 15,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        },
+        {
+          "id": "deepseek/deepseek-chat",
+          "contextWindow": 163840,
+          "inputPrice": 0.27,
+          "outputPrice": 1.1,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "together",
+      "name": "Together AI",
+      "vendor": "Together",
+      "format": "openai-chat",
+      "baseUrl": "https://api.together.xyz/v1",
+      "region": "global",
+      "color": "#0f6fff",
+      "icon": "🤝",
+      "docs": "",
+      "note": "",
+      "tags": [],
+      "official": false,
+      "enabled": true,
+      "sort": 125,
+      "models": [
+        {
+          "id": "Qwen/Qwen3-235B-A22B-Instruct",
+          "contextWindow": 262144,
+          "inputPrice": 0.2,
+          "outputPrice": 0.6,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "fireworks",
+      "name": "Fireworks AI",
+      "vendor": "Fireworks",
+      "format": "openai-chat",
+      "baseUrl": "https://api.fireworks.ai/inference/v1",
+      "region": "global",
+      "color": "#ef4444",
+      "icon": "🎆",
+      "docs": "",
+      "note": "",
+      "tags": [],
+      "official": false,
+      "enabled": true,
+      "sort": 126,
+      "models": [
+        {
+          "id": "accounts/fireworks/models/deepseek-v3",
+          "contextWindow": 131072,
+          "inputPrice": 0.9,
+          "outputPrice": 0.9,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "deepinfra",
+      "name": "DeepInfra",
+      "vendor": "DeepInfra",
+      "format": "openai-chat",
+      "baseUrl": "https://api.deepinfra.com/v1/openai",
+      "region": "global",
+      "color": "#0ea5e9",
+      "icon": "🧊",
+      "docs": "",
+      "note": "",
+      "tags": [],
+      "official": false,
+      "enabled": true,
+      "sort": 127,
+      "models": [
+        {
+          "id": "deepseek-ai/DeepSeek-V3",
+          "contextWindow": 131072,
+          "inputPrice": 0.27,
+          "outputPrice": 1.1,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "cerebras",
+      "name": "Cerebras",
+      "vendor": "Cerebras",
+      "format": "openai-chat",
+      "baseUrl": "https://api.cerebras.ai/v1",
+      "region": "global",
+      "color": "#f59e0b",
+      "icon": "🧠",
+      "docs": "",
+      "note": "",
+      "tags": [],
+      "official": false,
+      "enabled": true,
+      "sort": 128,
+      "models": [
+        {
+          "id": "qwen-3-coder-480b",
+          "contextWindow": 131072,
+          "inputPrice": 0.6,
+          "outputPrice": 1.2,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "nvidia",
+      "name": "英伟达 NIM",
+      "vendor": "NVIDIA",
+      "format": "openai-chat",
+      "baseUrl": "https://integrate.api.nvidia.com/v1",
+      "region": "global",
+      "color": "#76b900",
+      "icon": "🟩",
+      "docs": "",
+      "note": "",
+      "tags": [],
+      "official": false,
+      "enabled": true,
+      "sort": 129,
+      "models": [
+        {
+          "id": "deepseek-ai/deepseek-r1",
+          "contextWindow": 128000,
+          "inputPrice": 0,
+          "outputPrice": 0,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "perplexity",
+      "name": "Perplexity",
+      "vendor": "Perplexity",
+      "format": "openai-chat",
+      "baseUrl": "https://api.perplexity.ai",
+      "region": "global",
+      "color": "#20808d",
+      "icon": "🔍",
+      "docs": "",
+      "note": "",
+      "tags": [],
+      "official": false,
+      "enabled": true,
+      "sort": 130,
+      "models": [
+        {
+          "id": "sonar-pro",
+          "contextWindow": 200000,
+          "inputPrice": 3,
+          "outputPrice": 15,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "cohere",
+      "name": "Cohere",
+      "vendor": "Cohere",
+      "format": "openai-chat",
+      "baseUrl": "https://api.cohere.ai/compatibility/v1",
+      "region": "global",
+      "color": "#39594d",
+      "icon": "ⓒ",
+      "docs": "",
+      "note": "把 {resource} 与 {deployment} 换成你自己的；需要额外 header api-key 时请在供应商的请求头里加",
+      "tags": [],
+      "official": false,
+      "enabled": true,
+      "sort": 131,
+      "models": [
+        {
+          "id": "command-a-03-2025",
+          "contextWindow": 256000,
+          "inputPrice": 2.5,
+          "outputPrice": 10,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "github-models",
+      "name": "GitHub 模型",
+      "vendor": "GitHub",
+      "format": "openai-chat",
+      "baseUrl": "https://models.inference.ai.azure.com",
+      "region": "global",
+      "color": "#24292f",
+      "icon": "🐙",
+      "docs": "",
+      "note": "把 {resource} 与 {deployment} 换成你自己的；需要额外 header api-key 时请在供应商的请求头里加",
+      "tags": [],
+      "official": false,
+      "enabled": true,
+      "sort": 132,
+      "models": [
+        {
+          "id": "gpt-4o",
+          "contextWindow": 128000,
+          "inputPrice": 0,
+          "outputPrice": 0,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "azure-openai",
+      "name": "微软 Azure",
+      "vendor": "Microsoft",
+      "format": "openai-chat",
+      "baseUrl": "https://{resource}.openai.azure.com/openai/deployments/{deployment}",
+      "region": "global",
+      "color": "#0078d4",
+      "icon": "🅰️",
+      "docs": "",
+      "note": "把 {resource} 与 {deployment} 换成你自己的；需要额外 header api-key 时请在供应商的请求头里加",
+      "tags": [],
+      "official": false,
+      "enabled": true,
+      "sort": 133,
+      "models": [
+        {
+          "id": "gpt-4o",
+          "contextWindow": 128000,
+          "inputPrice": 2.5,
+          "outputPrice": 10,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "ollama",
+      "name": "Ollama 本地",
+      "vendor": "Ollama",
+      "format": "openai-chat",
+      "baseUrl": "http://127.0.0.1:11434/v1",
+      "region": "local",
+      "color": "#111827",
+      "icon": "🦙",
+      "docs": "",
+      "note": "本机无需 API Key，随便填一个即可",
+      "tags": [],
+      "official": false,
+      "enabled": true,
+      "sort": 134,
+      "models": [
+        {
+          "id": "qwen3-coder:30b",
+          "contextWindow": 262144,
+          "inputPrice": 0,
+          "outputPrice": 0,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        },
+        {
+          "id": "deepseek-r1:14b",
+          "contextWindow": 131072,
+          "inputPrice": 0,
+          "outputPrice": 0,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "lmstudio",
+      "name": "LM Studio 本地",
+      "vendor": "LM Studio",
+      "format": "openai-chat",
+      "baseUrl": "http://127.0.0.1:1234/v1",
+      "region": "local",
+      "color": "#7c3aed",
+      "icon": "🎛️",
+      "docs": "",
+      "note": "new-api / one-api / sub2api 都填这个",
+      "tags": [],
+      "official": false,
+      "enabled": true,
+      "sort": 135,
+      "models": [
+        {
+          "id": "local-model",
+          "contextWindow": 32768,
+          "inputPrice": 0,
+          "outputPrice": 0,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "vllm",
+      "name": "vLLM 自建",
+      "vendor": "vLLM",
+      "format": "openai-chat",
+      "baseUrl": "http://127.0.0.1:8000/v1",
+      "region": "local",
+      "color": "#0f766e",
+      "icon": "🚀",
+      "docs": "",
+      "note": "new-api / one-api / sub2api 都填这个",
+      "tags": [],
+      "official": false,
+      "enabled": true,
+      "sort": 136,
+      "models": [
+        {
+          "id": "your-model",
+          "contextWindow": 32768,
+          "inputPrice": 0,
+          "outputPrice": 0,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "relay-openai",
+      "name": "中转站（OpenAI 兼容）",
+      "vendor": "自定义",
+      "format": "openai-chat",
+      "baseUrl": "https://api.example.com/v1",
+      "region": "relay",
+      "color": "#64748b",
+      "icon": "🔌",
+      "docs": "",
+      "note": "new-api / one-api / sub2api 都填这个",
+      "tags": [],
+      "official": false,
+      "enabled": true,
+      "sort": 137,
+      "models": [
+        {
+          "id": "gpt-4o",
+          "contextWindow": 128000,
+          "inputPrice": 2.5,
+          "outputPrice": 10,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "relay-anthropic",
+      "name": "中转站（Claude 兼容）",
+      "vendor": "自定义",
+      "format": "anthropic",
+      "baseUrl": "https://api.example.com",
+      "region": "relay",
+      "color": "#b45309",
+      "icon": "🧷",
+      "docs": "",
+      "note": "走本机 `claude` 官方登录态，不经过协议改写；在「账号」里登录后可用",
+      "tags": [],
+      "official": true,
+      "enabled": true,
+      "sort": 138,
+      "models": [
+        {
+          "id": "claude-sonnet-4-5",
+          "contextWindow": 200000,
+          "inputPrice": 3,
+          "outputPrice": 15,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "relay-gemini",
+      "name": "中转站（Gemini 兼容）",
+      "vendor": "自定义",
+      "format": "gemini",
+      "baseUrl": "https://api.example.com",
+      "region": "relay",
+      "color": "#1d4ed8",
+      "icon": "🔗",
+      "docs": "",
+      "note": "走本机 `claude` 官方登录态，不经过协议改写；在「账号」里登录后可用",
+      "tags": [],
+      "official": true,
+      "enabled": true,
+      "sort": 139,
+      "models": [
+        {
+          "id": "gemini-2.5-pro",
+          "contextWindow": 1048576,
+          "inputPrice": 1.25,
+          "outputPrice": 10,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "claude-subscription",
+      "name": "Claude 官方订阅",
+      "vendor": "Anthropic",
+      "format": "anthropic",
+      "baseUrl": "https://api.anthropic.com",
+      "region": "subscription",
+      "color": "#d97757",
+      "icon": "✳",
+      "docs": "",
+      "note": "走本机 `claude` 官方登录态，不经过协议改写；在「账号」里登录后可用",
+      "tags": [],
+      "official": true,
+      "enabled": true,
+      "sort": 140,
+      "models": [
+        {
+          "id": "claude-sonnet-4-5",
+          "contextWindow": 200000,
+          "inputPrice": 0,
+          "outputPrice": 0,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "chatgpt-subscription",
+      "name": "ChatGPT Plus / Pro",
+      "vendor": "OpenAI",
+      "format": "openai-responses",
+      "baseUrl": "https://chatgpt.com/backend-api/codex",
+      "region": "subscription",
+      "color": "#10a37f",
+      "icon": "◍",
+      "docs": "",
+      "note": "读取本机 Codex 的 OAuth 登录态；多账号可轮换",
+      "tags": [],
+      "official": true,
+      "enabled": true,
+      "sort": 141,
+      "models": [
+        {
+          "id": "gpt-5.1-codex",
+          "contextWindow": 400000,
+          "inputPrice": 0,
+          "outputPrice": 0,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "copilot-subscription",
+      "name": "GitHub Copilot 订阅",
+      "vendor": "GitHub",
+      "format": "openai-chat",
+      "baseUrl": "https://api.githubcopilot.com",
+      "region": "subscription",
+      "color": "#24292f",
+      "icon": "🐙",
+      "docs": "",
+      "note": "需要设备码登录 GitHub，模型随订阅档位变化",
+      "tags": [],
+      "official": true,
+      "enabled": true,
+      "sort": 142,
+      "models": [
+        {
+          "id": "gpt-4o",
+          "contextWindow": 128000,
+          "inputPrice": 0,
+          "outputPrice": 0,
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "thinking": false
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,106 @@
+{
+  "name": "yunqiao-ai-toolbox",
+  "productName": "云桥AI 工具箱",
+  "version": "0.5.0",
+  "description": "云桥 AI · Aurora — 客户端、供应商与模型的统一工作空间。",
+  "private": true,
+  "type": "module",
+  "main": "dist/main/main.cjs",
+  "author": {
+    "name": "云桥AI",
+    "email": "hello@yunqiao.local"
+  },
+  "license": "MIT",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run typecheck && node scripts/test-clients.mjs && node scripts/test-gateway.mjs",
+    "build:main": "node scripts/build-main.mjs",
+    "build:ui": "vite build",
+    "build": "npm run build:ui && npm run build:main",
+    "start": "npm run build && electron .",
+    "gateway": "node scripts/build-main.mjs && node dist/main/gateway-cli.cjs",
+    "package:win": "npm run build && electron-builder --win --x64 --publish never",
+    "package:mac": "npm run build && electron-builder --mac",
+    "package:linux": "npm run build && electron-builder --linux"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^38.0.0",
+    "electron-builder": "^26.0.12",
+    "esbuild": "^0.24.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11"
+  },
+  "build": {
+    "appId": "io.yunqiao.ai",
+    "productName": "云桥AI 工具箱",
+    "asar": true,
+    "executableName": "YunQiaoAI",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "shortcutName": "云桥AI 工具箱",
+      "artifactName": "YunQiaoAI-${version}-win-x64-setup.${ext}"
+    },
+    "portable": {
+      "artifactName": "YunQiaoAI-${version}-win-x64-portable.${ext}"
+    },
+    "mac": {
+      "target": ["dmg"],
+      "icon": "build/icon.png",
+      "category": "public.app-category.developer-tools",
+      "artifactName": "YunQiaoAI-${version}-mac-${arch}.${ext}"
+    },
+    "linux": {
+      "target": ["AppImage"],
+      "icon": "build/icon.png",
+      "artifactName": "YunQiaoAI-${version}-linux-${arch}.${ext}"
+    }
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

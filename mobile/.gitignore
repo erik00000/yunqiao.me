@@ -1,0 +1,6 @@
+node_modules/
+ios/
+android/
+build/
+ios-v6-generated-backup/
+__pycache__/

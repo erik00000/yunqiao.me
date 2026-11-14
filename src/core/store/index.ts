@@ -1,0 +1,397 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { randomBytes } from 'node:crypto';
+import { isIP } from 'node:net';
+import { JsonFile, JsonLines } from './jsonFile.js';
+import type {
+  AgentState,
+  PluginRecord,
+  Provider,
+  RoutingGroup,
+  Settings,
+  UsageRecord,
+} from './types.js';
+import { findPreset } from '../presets/providers.js';
+import { newId, nowIso, dayKey } from '../util.js';
+
+export * from './types.js';
+export { JsonFile, JsonLines } from './jsonFile.js';
+
+function validateProvider(provider: Provider): Provider {
+  if (!provider.name?.trim()) throw new Error('供应商名称不能为空');
+  if (!['anthropic', 'openai-chat', 'openai-responses', 'gemini'].includes(provider.format)) throw new Error('不支持的供应商协议');
+  if (provider.baseUrl) {
+    let url: URL;
+    try { url = new URL(provider.baseUrl); } catch { throw new Error('供应商接口地址格式不正确'); }
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.hash || url.search) throw new Error('供应商接口必须使用 HTTP(S)，且不能包含账号、查询参数或片段');
+  }
+  if (!Array.isArray(provider.models) || !Array.isArray(provider.apiKeys)) throw new Error('供应商模型和密钥必须是列表');
+  if (provider.models.some(m => !m || typeof m.id !== 'string' || !m.id.trim() || /[\r\n\u0000]/.test(m.id))) throw new Error('模型 ID 不能为空或包含换行');
+  if (new Set(provider.models.map(m => m.id)).size !== provider.models.length) throw new Error('同一供应商的模型 ID 不能重复');
+  if (provider.apiKeys.some(k => !k || typeof k.key !== 'string' || /[\r\n]/.test(k.key))) throw new Error('API Key 格式不正确');
+  for (const model of provider.models) {
+    for (const field of ['contextWindow', 'maxOutput', 'inputPrice', 'outputPrice', 'cacheReadPrice'] as const) {
+      const value = model[field];
+      if (value !== undefined && (!Number.isFinite(value) || value < 0)) throw new Error(`模型 ${model.id} 的 ${field} 必须是非负数字`);
+    }
+  }
+  return provider;
+}
+
+export const DEFAULT_SETTINGS = (): Settings => ({
+  language: 'zh-CN',
+  theme: 'light',
+  accent: '#4f66e8',
+  gatewayHost: '127.0.0.1',
+  gatewayPort: 3425,
+  autoStartGateway: true,
+  launchAtLogin: false,
+  closeToTray: true,
+  proxy: '',
+  maskSecrets: false,
+  autoTrimContext: true,
+  maxRetries: 2,
+  requestTimeoutMs: 600000,
+  usageRetentionDays: 90,
+  lanShare: false,
+  gatewayToken: randomBytes(24).toString('hex'),
+  webdavUrl: '',
+  webdavUser: '',
+  webdavPass: '',
+  firstByteTimeoutMs: 120000,
+  logRequests: true,
+  catalogUrl: 'https://ai.haowucm.cn/pub.php?action=catalog',
+  updateUrl: 'https://ai.haowucm.cn/pub.php?action=update',
+  autoCheckUpdate: true,
+  adminUrl: 'https://ai.haowucm.cn/',
+  autoSyncModels: true,
+  updatedAt: nowIso(),
+});
+
+export function defaultDataDir(): string {
+  const env = process.env.YUNQIAO_HOME || process.env.AURORA_HOME;
+  if (env) return path.resolve(env);
+  const home = os.homedir();
+  const base =
+    process.platform === 'win32'
+      ? process.env.APPDATA ?? path.join(home, 'AppData', 'Roaming')
+      : process.platform === 'darwin'
+        ? path.join(home, 'Library', 'Application Support')
+        : process.env.XDG_CONFIG_HOME ?? path.join(home, '.config');
+
+  const current = path.join(base, process.platform === 'linux' ? 'yunqiao' : 'YunQiaoAI');
+  const legacy = path.join(base, process.platform === 'linux' ? 'aurora' : 'Aurora');
+
+  // 老版本（极光 Aurora）的数据目录平滑迁移，避免升级后"什么都没有了"
+  try {
+    if (!fs.existsSync(current) && fs.existsSync(legacy)) {
+      fs.cpSync(legacy, current, { recursive: true });
+    }
+  } catch {
+    /* 迁移失败就继续用新目录，用户还可以手动指过去 */
+  }
+  return current;
+}
+
+export class AuroraStore {
+  readonly dir: string;
+  readonly providers: JsonFile<Provider[]>;
+  readonly groups: JsonFile<RoutingGroup[]>;
+  readonly settings: JsonFile<Settings>;
+  readonly plugins: JsonFile<PluginRecord[]>;
+  readonly agents: JsonFile<Record<string, AgentState>>;
+  readonly overrides: JsonFile<Record<string, { priceIn?: number; priceOut?: number; contextWindow?: number }>>;
+  private usageDir: string;
+
+  constructor(dir = defaultDataDir()) {
+    this.dir = dir;
+    fs.mkdirSync(dir, { recursive: true });
+    this.providers = new JsonFile<Provider[]>(path.join(dir, 'providers.json'), () => []);
+    this.groups = new JsonFile<RoutingGroup[]>(path.join(dir, 'groups.json'), () => []);
+    this.settings = new JsonFile<Settings>(path.join(dir, 'settings.json'), DEFAULT_SETTINGS);
+    this.plugins = new JsonFile<PluginRecord[]>(path.join(dir, 'plugins.json'), () => []);
+    this.agents = new JsonFile<Record<string, AgentState>>(path.join(dir, 'agents.json'), () => ({}));
+    this.overrides = new JsonFile(path.join(dir, 'pricing.json'), () => ({}));
+    this.usageDir = path.join(dir, 'usage');
+    fs.mkdirSync(this.usageDir, { recursive: true });
+    // Persist the generated token before any client configuration can refer to it.
+    if (!fs.existsSync(path.join(dir, 'settings.json'))) this.settings.write(this.settings.read());
+  }
+
+  /* ---------------------------- providers ---------------------------- */
+
+  listProviders(): Provider[] {
+    return this.providers.read();
+  }
+
+  getProvider(id: string): Provider | undefined {
+    return this.providers.read().find((p) => p.id === id);
+  }
+
+  saveProvider(input: Partial<Provider> & { id?: string }): Provider {
+    const list = [...this.providers.read()];
+    if (input.id) {
+      const idx = list.findIndex((p) => p.id === input.id);
+      if (idx >= 0) {
+        list[idx] = validateProvider({ ...list[idx], ...input, updatedAt: nowIso() } as Provider);
+        this.providers.write([...list]);
+        return list[idx];
+      }
+    }
+    const preset = findPreset(input.presetId);
+    const created: Provider = {
+      id: newId('prov_', 8),
+      name: input.name ?? preset?.nameZh ?? preset?.name ?? '自定义供应商',
+      presetId: input.presetId,
+      format: input.format ?? preset?.format ?? 'openai-chat',
+      baseUrl: input.baseUrl ?? preset?.baseUrl ?? '',
+      apiKeys: input.apiKeys ?? [{ id: newId('key_', 6), label: '默认', key: '', enabled: true, weight: 1 }],
+      models: input.models ?? preset?.models ?? [],
+      enabled: input.enabled ?? true,
+      priority: input.priority ?? 10,
+      color: input.color ?? preset?.color ?? '#6d8cff',
+      icon: input.icon ?? preset?.icon ?? '◆',
+      headers: input.headers,
+      proxy: input.proxy,
+      notes: input.notes,
+      rateMultiplier: input.rateMultiplier ?? 1,
+      official: input.official,
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+    };
+    validateProvider(created);
+    this.providers.write([...list, created]);
+    return created;
+  }
+
+  deleteProvider(id: string): void {
+    this.providers.write(this.providers.read().filter((p) => p.id !== id));
+    this.groups.write(
+      this.groups.read().map((g) => ({ ...g, members: g.members.filter((m) => m.providerId !== id) })),
+    );
+  }
+
+  /* ---------------------------- groups ---------------------------- */
+
+  listGroups(): RoutingGroup[] {
+    return this.groups.read();
+  }
+
+  saveGroup(input: Partial<RoutingGroup> & { id?: string }): RoutingGroup {
+    const list = [...this.groups.read()];
+    if (input.id) {
+      const idx = list.findIndex((g) => g.id === input.id);
+      if (idx >= 0) {
+        list[idx] = { ...list[idx], ...input } as RoutingGroup;
+        this.groups.write([...list]);
+        return list[idx];
+      }
+    }
+    const created: RoutingGroup = {
+      id: newId('grp_', 8),
+      name: input.name ?? '新分组',
+      mode: input.mode ?? 'order',
+      members: input.members ?? [],
+      enabled: input.enabled ?? true,
+      retries: input.retries ?? 2,
+      notes: input.notes,
+      createdAt: nowIso(),
+    };
+    this.groups.write([...list, created]);
+    return created;
+  }
+
+  deleteGroup(id: string): void {
+    this.groups.write(this.groups.read().filter((g) => g.id !== id));
+  }
+
+  /* ---------------------------- settings ---------------------------- */
+
+  getSettings(): Settings {
+    const stored = this.settings.read();
+    const settings = { ...DEFAULT_SETTINGS(), ...stored };
+    if (typeof stored.gatewayToken !== 'string' || !stored.gatewayToken.trim()) {
+      settings.gatewayToken = randomBytes(24).toString('hex');
+      this.settings.write(settings);
+    }
+    return settings;
+  }
+
+  saveSettings(patch: Partial<Settings>): Settings {
+    const next = { ...this.getSettings(), ...patch, updatedAt: nowIso() };
+    this.validateSettings(next);
+    this.settings.write(next);
+    return next;
+  }
+
+  private validateSettings(next: Settings): void {
+    if (!['light', 'dark', 'system'].includes(next.theme)) throw new Error('请选择有效主题');
+    if (!/^#[a-fA-F0-9]{6}$/.test(next.accent)) throw new Error('主题色应为六位十六进制颜色');
+    if (!Number.isInteger(next.gatewayPort) || next.gatewayPort < 1024 || next.gatewayPort > 65535) throw new Error('网关端口必须在 1024–65535 之间');
+    if (!isIP(next.gatewayHost) && next.gatewayHost !== 'localhost') throw new Error('网关监听地址必须是有效 IP 或 localhost');
+    if (typeof next.gatewayToken !== 'string' || next.gatewayToken.length < 16 || /[\r\n]/.test(next.gatewayToken)) throw new Error('网关访问令牌至少 16 个字符，不能留空');
+    for (const key of ['autoStartGateway', 'launchAtLogin', 'closeToTray', 'maskSecrets', 'autoTrimContext', 'lanShare', 'logRequests', 'autoCheckUpdate', 'autoSyncModels'] as const) {
+      if (typeof next[key] !== 'boolean') throw new Error(`${key} 必须为开关值`);
+    }
+    for (const [key, min, max] of [['maxRetries', 0, 10], ['requestTimeoutMs', 1000, 1800000], ['firstByteTimeoutMs', 1000, 600000], ['usageRetentionDays', 1, 3650]] as const) {
+      if (!Number.isInteger(next[key]) || next[key] < min || next[key] > max) throw new Error(`${key} 必须在 ${min}–${max} 之间`);
+    }
+    for (const key of ['catalogUrl', 'updateUrl', 'adminUrl', 'proxy'] as const) {
+      if (!next[key]) continue;
+      let url: URL;
+      try { url = new URL(next[key]); } catch { throw new Error(`${key} 不是有效地址`); }
+      if (!['http:', 'https:'].includes(url.protocol)) throw new Error(`${key} 仅支持 HTTP(S)`);
+    }
+  }
+
+  /* ---------------------------- agents ---------------------------- */
+
+  listAgents(): Record<string, AgentState> {
+    return this.agents.read();
+  }
+
+  saveAgent(state: AgentState): AgentState {
+    const all = { ...this.agents.read() };
+    all[state.id] = { ...all[state.id], ...state, lastSyncAt: nowIso() };
+    this.agents.write({ ...all });
+    return all[state.id];
+  }
+
+  /* ---------------------------- plugins ---------------------------- */
+
+  listPlugins(): PluginRecord[] {
+    return this.plugins.read();
+  }
+
+  savePlugin(p: Partial<PluginRecord> & { id?: string }): PluginRecord {
+    const list = [...this.plugins.read()];
+    const builtin = ['model-map', 'system-prompt', 'word-guard', 'param-override', 'token-budget'].includes(p.id || '');
+    if (p.builtin && !builtin) throw new Error('未知的内置插件');
+    if (p.id) {
+      const idx = list.findIndex((x) => x.id === p.id);
+      if (idx >= 0) {
+        list[idx] = { ...list[idx], ...p, builtin, updatedAt: nowIso() } as PluginRecord;
+        this.plugins.write([...list]);
+        return list[idx];
+      }
+    }
+    const rec: PluginRecord = {
+      id: builtin ? p.id! : newId('plg_', 8),
+      name: p.name ?? '未命名插件',
+      description: p.description,
+      code: p.code,
+      enabled: p.enabled ?? false,
+      builtin,
+      options: p.options,
+      updatedAt: nowIso(),
+    };
+    this.plugins.write([...list, rec]);
+    return rec;
+  }
+
+  deletePlugin(id: string): void {
+    this.plugins.write(this.plugins.read().filter((p) => p.id !== id));
+  }
+
+  /* ---------------------------- usage ---------------------------- */
+
+  recordUsage(rec: UsageRecord): void {
+    const file = path.join(this.usageDir, `${dayKey()}.jsonl`);
+    new JsonLines(file).append(rec);
+  }
+
+  readUsage(days = 14): UsageRecord[] {
+    days = Math.max(1, Math.min(3650, Math.floor(Number(days) || 14)));
+    const out: UsageRecord[] = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(Date.now() - i * 86400000);
+      const file = path.join(this.usageDir, `${dayKey(d)}.jsonl`);
+      if (!fs.existsSync(file)) continue;
+      out.push(...new JsonLines(file).read(0));
+    }
+    return out;
+  }
+
+  recentRequests(limit = 200): UsageRecord[] {
+    const all = this.readUsage(7);
+    return all.slice(-limit).reverse();
+  }
+
+  usageDirPath(): string {
+    return this.usageDir;
+  }
+
+  readExtra<T>(name: string, fallback: T): T {
+    try {
+      return JSON.parse(fs.readFileSync(path.join(this.dir, name), 'utf8')) as T;
+    } catch {
+      return fallback;
+    }
+  }
+
+  writeExtra(name: string, data: unknown): void {
+    if (path.basename(name) !== name || name === '.' || name === '..') throw new Error('配置文件名无效');
+    new JsonFile<unknown>(path.join(this.dir, name), () => null).write(data);
+  }
+
+  exportAll(): Record<string, unknown> {
+    return {
+      version: 1,
+      exportedAt: nowIso(),
+      providers: this.listProviders(),
+      groups: this.listGroups(),
+      settings: this.getSettings(),
+      plugins: this.listPlugins(),
+      agents: this.listAgents(),
+    };
+  }
+
+  importAll(data: any): void {
+    if (!data || data.version !== 1 || !Array.isArray(data.providers) || !Array.isArray(data.groups) || !Array.isArray(data.plugins) || !data.settings || typeof data.settings !== 'object') throw new Error('这不是受支持的云桥配置备份');
+    const providers = data.providers.map((p: Provider) => validateProvider(p));
+    const validId = (id: unknown) => typeof id === 'string' && /^[a-zA-Z0-9_-]{1,150}$/.test(id) && !['__proto__', 'prototype', 'constructor'].includes(id);
+    if (providers.some((p: Provider) => !validId(p.id)) || new Set(providers.map((p: Provider) => p.id)).size !== providers.length) throw new Error('备份中的供应商 ID 无效或重复');
+    const groups = data.groups as RoutingGroup[];
+    for (const group of groups) {
+      if (!group || !validId(group.id) || !['order', 'rotate', 'weight', 'usage', 'pace', 'smart'].includes(group.mode) || !Array.isArray(group.members)) throw new Error('备份中的路由分组无效');
+      if (group.members.some(m => !m || !providers.some((p: Provider) => p.id === m.providerId) || !Number.isFinite(m.weight) || m.weight < 0)) throw new Error('路由分组引用了不存在的供应商或权重无效');
+    }
+    const settings: Settings = { ...DEFAULT_SETTINGS(), ...data.settings, updatedAt: nowIso() };
+    if (!settings.gatewayToken) settings.gatewayToken = randomBytes(24).toString('hex');
+    this.validateSettings(settings);
+    const plugins = data.plugins as PluginRecord[];
+    for (const plugin of plugins) {
+      if (!plugin || !validId(plugin.id) || typeof plugin.name !== 'string' || typeof plugin.enabled !== 'boolean' || (plugin.code !== undefined && typeof plugin.code !== 'string')) throw new Error('备份中的插件配置无效');
+      if (plugin.builtin && !['model-map', 'system-prompt', 'word-guard', 'param-override', 'token-budget'].includes(plugin.id)) throw new Error('备份包含未知的内置插件');
+    }
+    // Importing settings does not write client files. Keep bindings for reapplication, without claiming they are live.
+    const localAgents = this.listAgents();
+    const agents: Record<string, AgentState> = Object.fromEntries(Object.entries(localAgents).map(([id, value]) => [id, { ...value, connected: false, pendingReapply: !!(value.backupPath && (value.connected || value.pendingReapply)) }]));
+    for (const [id, value] of Object.entries(data.agents || {})) {
+      const state = value as AgentState;
+      if (!validId(id) || !state || typeof state !== 'object') throw new Error('备份中的客户端信息无效');
+      const local = localAgents[id];
+      agents[id] = { id: id as AgentState['id'], connected: false, providerId: state.providerId, model: state.model, modelMap: state.modelMap, mode: state.mode,
+        backupPath: local?.backupPath, configPath: local?.configPath, pendingReapply: !!(local?.backupPath && (local.connected || local.pendingReapply)) };
+    }
+    const before = this.exportAll();
+    try {
+      this.providers.write(providers); this.groups.write(groups); this.settings.write(settings); this.plugins.write(plugins); this.agents.write(agents);
+    } catch (error) {
+      try {
+        this.providers.write(before.providers as Provider[]); this.groups.write(before.groups as RoutingGroup[]); this.settings.write(before.settings as Settings); this.plugins.write(before.plugins as PluginRecord[]); this.agents.write(before.agents as Record<string, AgentState>);
+      } catch { throw new Error('导入失败且无法自动回滚，请使用导入前的本地备份恢复'); }
+      throw error;
+    }
+  }
+}
+
+let singleton: AuroraStore | null = null;
+export function getStore(): AuroraStore {
+  if (!singleton) singleton = new AuroraStore();
+  return singleton;
+}
+export function setDataDir(dir: string): void {
+  singleton = new AuroraStore(dir);
+}

@@ -1,0 +1,93 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aurora-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: node scripts/test-clients.mjs
+      - run: node scripts/test-gateway.mjs
+      - run: node scripts/make-icon.mjs build
+      - run: pnpm build
+      - run: node scripts/smoke.mjs
+      - run: npx electron-builder --win --x64 --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yunqiao-windows
+          path: |
+            release/*.exe
+            release/*.exe.blockmap
+
+  ios:
+    name: iOS companion · simulator
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - name: 安装锁定依赖并验证移动接口
+        working-directory: mobile
+        run: |
+          npm ci
+          npm test
+      - name: 构建资源并生成原生工程
+        working-directory: mobile
+        run: |
+          npm run sync:ios
+      - name: 构建模拟器 App（不是可安装到真机的 IPA）
+        working-directory: mobile
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          xcodebuild -workspace ios/App/App.xcworkspace \
+            -scheme App -configuration Release \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO build | tee build/xcodebuild.log
+          ditto -c -k --sequesterRsrc --keepParent \
+            build/Build/Products/Release-iphonesimulator/App.app \
+            build/YunQiaoAI-iOS-simulator.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yunqiao-ios-simulator
+          path: mobile/build/YunQiaoAI-iOS-simulator.zip
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yunqiao-ios-build-log
+          path: mobile/build/xcodebuild.log
+          if-no-files-found: ignore
+
