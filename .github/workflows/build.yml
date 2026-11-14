@@ -5,6 +5,12 @@ on:
     branches: [main]
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      target:
+        description: Build target
+        type: choice
+        default: all
+        options: [all, windows, ios]
 
 permissions:
   contents: read
@@ -15,6 +21,7 @@ concurrency:
 
 jobs:
   windows:
+    if: github.event_name != 'workflow_dispatch' || inputs.target != 'ios'
     name: Windows
     runs-on: windows-latest
     steps:
@@ -45,7 +52,8 @@ jobs:
             release/*.exe.blockmap
 
   ios:
-    name: iOS companion · simulator
+    if: github.event_name != 'workflow_dispatch' || inputs.target != 'windows'
+    name: iOS companion · simulator + unsigned device
     runs-on: macos-15
     timeout-minutes: 35
     steps:
@@ -84,10 +92,31 @@ jobs:
           name: yunqiao-ios-simulator
           path: mobile/build/YunQiaoAI-iOS-simulator.zip
           if-no-files-found: error
+      - name: 构建 iPhone App（未签名，不能直接安装）
+        working-directory: mobile
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -workspace ios/App/App.xcworkspace \
+            -scheme App -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build-device \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            'CODE_SIGN_IDENTITY=' build | tee build/xcodebuild-device.log
+          ditto -c -k --sequesterRsrc --keepParent \
+            build-device/Build/Products/Release-iphoneos/App.app \
+            build/YunQiaoAI-iOS-device-unsigned.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yunqiao-ios-device-unsigned
+          path: mobile/build/YunQiaoAI-iOS-device-unsigned.zip
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: yunqiao-ios-build-log
-          path: mobile/build/xcodebuild.log
+          path: mobile/build/xcodebuild*.log
           if-no-files-found: ignore
 

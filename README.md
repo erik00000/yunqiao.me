@@ -4,6 +4,8 @@
 
 Windows 桌面端使用 Electron + React + TypeScript；iOS 为 Capacitor 伴侣端，连接电脑或服务器上的网关。当前版本 0.5.0。
 
+公开仓库：[jxb412/aurora](https://github.com/jxb412/aurora) · [构建与下载](https://github.com/jxb412/aurora/actions) · [用户讨论](https://github.com/jxb412/aurora/discussions)
+
 ![客户端工作台](docs/images/clients-v0.5.png)
 
 ## 已实现
@@ -67,6 +69,8 @@ npx cap open ios
 ```
 
 原生编译必须使用 **macOS + Xcode**。仓库工作流在 macOS 上构建模拟器 `.app`，不会把源码或模拟器 ZIP 伪称可安装到 iPhone 的 IPA。真机分发还需要 Apple 开发者签名和描述文件。当前 Windows 工作区能生成 iOS 工程、构建 Web 资源，不能独立完成苹果原生编译。
+
+2026-11-15 已通过 [GitHub macOS 原生构建](https://github.com/jxb412/aurora/actions/runs/43617523329/job/132515739714)，产出包含有效 Mach-O 的 iOS 16+ 模拟器应用；另提供 iPhoneOS 未签名设备构建流程。Actions 手动运行可选 `ios`、`windows` 或 `all`。
 
 ## 验证
 
