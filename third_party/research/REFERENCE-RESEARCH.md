@@ -12,7 +12,7 @@ CodexPlusPlus 的仓库元数据 `has_discussions=false`；其 Discussions API �
 | [cc-switch README](https://github.com/farion1231/cc-switch#readme) | 按工具配置供应商；预设；连接字段最小修改和备份；四协议路由/聚合；MCP、Skills、Prompts；会话；用量；云同步与 WSL | 先选客户端后选供应商；改动预览；保留用户原配置；模型与供应商易搜索；清楚区分直连、路由、聚合 |
 | [magpie README](https://github.com/yetone/magpie#readme) | 本地网关；四协议；供应商/订阅；多账号路由；会话黏性；隐私遮蔽；插件中间件；WebUI/Docker/CLI；远程管理 | 连接、模型、路由共享数据；请求失败的可解释性；移动端/无界面管理；供应商目录动态刷新 |
 
-三个项目都已具备较丰富功能，不能再把 cc-switch 简单描述为「只有切配置」，也不能笼统认定 magpie「只支持 macOS」。CodexPlusPlus README 明确说明不修改官方应用安装文件，但其部分增强仍依赖官方页面结构/CDP，需要版本适配。0.6 已引入 CodexPlusPlus 的固定版本源码与扩展资源并保留 AGPL 及组件许可，详见[集成记录](CODEXPLUSPLUS-INTEGRATION.md)；cc-switch（MIT）与 magpie 在本项目中作为功能和流程研究来源。
+三个项目都已具备较丰富功能，不能再把 cc-switch 简单描述为「只有切配置」，也不能笼统认定 magpie「只支持 macOS」。CodexPlusPlus README 明确说明不修改官方应用安装文件，但其部分增强仍依赖官方页面结构/CDP，需要版本适配。0.6 已引入 CodexPlusPlus 的固定版本源码与扩展资源并保留 AGPL 及组件许可，详见[集成记录](../INTEGRATION.md)；cc-switch（MIT）与 magpie 在本项目中作为功能和流程研究来源。
 
 ## 用户真正关心的事
 
@@ -41,4 +41,4 @@ CodexPlusPlus 的仓库元数据 `has_discussions=false`；其 Discussions API �
 
 本次设计不宣称可以把任意 API 塞进所有官方桌面 App。特别是 [cc-switch Discussion #2397](https://github.com/farion1231/cc-switch/discussions/2397) 提到 Claude Desktop 新的 gateway 能力，说明必须核对最新官方入口，不能照旧知识一概判为不支持。0.6 将 ChatGPT、Beta 与原 Codex 桌面版合并为用户入口，但接入判断仍区分实际版本能力，旧聊天客户端不能沿用编码客户端的配置结论。
 
-详细流程、界面、架构、阶段和验收见 [DESIGN.md](DESIGN.md)。
+详细流程、界面、架构、阶段和验收见 [产品与实现设计](../../docs/DESIGN.md)。

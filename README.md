@@ -2,9 +2,9 @@
 
 以客户端为起点的 AI 工作空间：**选客户端 → 连接供应商 → 选择模型 → 预览并应用**。
 
-Windows 桌面端使用 Electron + React + TypeScript；iOS 为 Capacitor 伴侣端，连接电脑或服务器上的网关。当前版本 0.6.0。
+Windows 桌面端使用 Electron + React + TypeScript；iOS 为 Capacitor 伴侣端，连接电脑或服务器上的网关。0.6.0 正在本地功能验证，公开下载为 0.5.0 预览版。
 
-公开仓库：[jxb412/aurora](https://github.com/jxb412/aurora) · [下载 0.6.0](https://github.com/jxb412/aurora/releases/tag/v0.6.0) · [构建记录](https://github.com/jxb412/aurora/actions) · [用户讨论](https://github.com/jxb412/aurora/discussions)
+公开仓库：[jxb412/aurora](https://github.com/jxb412/aurora) · [下载预览版 0.5.0](https://github.com/jxb412/aurora/releases/tag/v0.5.0) · [构建记录](https://github.com/jxb412/aurora/actions) · [用户讨论](https://github.com/jxb412/aurora/discussions)
 
 ![客户端工作台](docs/images/clients-v0.6.png)
 
@@ -15,10 +15,10 @@ Windows 桌面端使用 Electron + React + TypeScript；iOS 为 Capacitor 伴侣
 - **模型管理**：跨供应商批量选择、编辑能力/价格/上下文、预览删除影响、保护正在使用的客户端与分组引用；修改前保留备份。未知价格保持未知。
 - **本地网关**：Anthropic Messages、OpenAI Chat、OpenAI Responses、Gemini；同协议原生透传，跨协议转换；分组路由、重试和请求统计。
 - **历史会话**：阅读/搜索/导出；批量修复 ChatGPT / Codex 的供应商归属、路径与原生消息索引，支持范围选择、变更预览、自动备份、冲突检查和按批次恢复。
-- **扩展**：收录 Codex++ 的 32 项内置增强及 5 个完整拓展包，连接兼容桌面后按实际状态启用；公开/完整插件市场、插件入口解锁、主题、用量状态栏及原生资源管理。每项标明兼容性，未适配项不能假开启。保留网关中间件、MCP、Skills 和提示词工作台。
+- **扩展**：提供 32 项内置增强及 5 个完整拓展包，连接兼容桌面后按实际状态启用；公开/完整插件市场、插件入口解锁、主题、用量状态栏及原生资源管理。每项标明兼容性，未适配项不能假开启。保留网关中间件、MCP、Skills 和提示词工作台。
 - **实时用量**：进行中的请求、输入/输出、缓存读写与命中率、完成日志；原生桌面用量取自实际 token_count。上游未报告的数据不显示为零。
 - **云桥会员**：平台登录/两步验证、客户端安装绑定、首次使用 $10 赠金、选择会员分组并添加 API 供应商；后端固定金额、账户/安装唯一约束、幂等核销与管理员核对。
-- **设置**：浅色/深色/跟随系统、强调色、托盘、自启、网关与代理、访问令牌、远端目录、更新检查、导入导出配置。
+- **设置**：浅色/深色/跟随系统、强调色、托盘、自启、网关与代理、访问令牌、更新检查、导入导出配置。
 - **远程管理**：认证后的 Web 控制台与 iOS 内置伴侣 UI；公开目录不包含个人密钥，远程管理返回值脱敏。
 
 ## 客户端能力
@@ -93,23 +93,5 @@ python scripts/test-ui.py
 - 同协议原生路径尽量保留供应商专属字段。开启转换、隐私遮蔽或通用请求插件后，专属 hosted tools、加密 reasoning 和部分多模态能力不保证跨协议可用；不同供应商的思考签名不能伪造。
 - 历史可阅读不等于可以跨账号无损续聊。读取有大小/消息数量边界；没有永久后台全文索引。
 - 用量费用依据本地价格估算，额度策略依据已配置额度，不等同实时官方账单。
-- 桌面插件依赖实际版本的原生接口。收录全部上游入口不等于每项都适配；需要额外后台或尚未适配的项目会禁用并展示原因。完整状态见集成文档。
+- 桌面插件依赖实际版本的原生接口。收录全部上游入口不等于每项都适配；需要额外后台或尚未适配的项目会禁用并展示原因。具体兼容状态以界面提示为准。
 - 远程管理限制文件写入、自定义代码、密钥与敏感设置；这些操作需要桌面端完成。
-
-## 设计与来源
-
-[真实用户需求调研](docs/RESEARCH.md) · [产品与实现设计](docs/DESIGN.md) · [目录服务部署](docs/SERVER.md)
-
-参考 CodexPlusPlus、cc-switch、magpie 的公开功能和用户讨论进行设计。0.6 已集成并保留 CodexPlusPlus 的源码、完整扩展资源及许可；其余项目作为功能与流程研究来源。
-
-## 0.6 后端与集成说明
-
-- [会员赠金、安装绑定、配置与恢复](docs/MEMBERSHIP.md)
-- [默认模型来源与核验边界](docs/MODEL-SOURCES.md)
-- [Codex++ 资产、市场许可与功能适配](docs/CODEXPLUSPLUS-INTEGRATION.md)
-
-服务器公开目录仍为 `https://ai.haowucm.cn/pub.php?action=catalog`。后台提供完整候选模型同步、人工精选推荐、会员赠金审核；每日任务读取服务端管理密钥，客户端没有管理员权限或管理密钥。API 模型 Key 留在用户电脑；会员会话/安装证明使用操作系统加密存储，服务端 JWT 加密入账本。
-
-## 许可
-
-0.6.0 集成 CodexPlusPlus 后采用 **AGPL-3.0-only**，见 [LICENSE](LICENSE) 与 [第三方声明](THIRD_PARTY_NOTICES.md)。插件市场各包维持自己的许可；收录索引不意味着拥有统一再分发授权。源码和构建材料与版本一同公开。

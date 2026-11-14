@@ -13,7 +13,7 @@ export const REPOSITORIES = { public: 'BigPizzaV3/CodexPlusPlusPluginCache', ful
 export function resourceRoot(): string {
   const resourcePath = (process as any).resourcesPath;
   const roots = [process.env.AURORA_EXTENSION_ASSETS, resourcePath && path.join(resourcePath, 'codexplusplus'), path.join(process.cwd(), 'third_party', 'codexplusplus')].filter(Boolean) as string[];
-  const root = roots.find(p => fs.existsSync(path.join(p, 'UPSTREAM.json'))); if (!root) throw new Error('未找到 CodexPlusPlus 扩展资源，请重新安装云桥'); return root;
+  const root = roots.find(p => fs.existsSync(path.join(p, 'UPSTREAM.json'))); if (!root) throw new Error('未找到桌面扩展资源，请重新安装云桥'); return root;
 }
 export function safeRelative(value: string): string {
   if (typeof value !== 'string' || !value || value.length > 500 || /[\\\x00-\x1f:*?"<>|]/.test(value) || value.startsWith('/') || value.split('/').some(s => !s || s === '.' || s === '..' || /[. ]$/.test(s) || /^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\.|$)/i.test(s) || s.toLowerCase() === '.git')) throw new Error('插件包含不安全的文件路径');

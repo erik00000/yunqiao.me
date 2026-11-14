@@ -1,12 +1,12 @@
 # Third party notices
 
-yunqiao.me 0.6.0 is distributed under AGPL-3.0-only. The complete corresponding source and build instructions are available at https://github.com/jxb412/aurora (release tag v0.6.0). See LICENSE. The earlier Aurora 0.5.0 source was published under MIT; that historical license remains applicable to those original files as published.
+yunqiao.me 0.6.0 is distributed under AGPL-3.0-only. The public source tree and build instructions are available at https://github.com/jxb412/aurora/tree/main. Version 0.6.0 is still under development and does not yet have a public release tag. See LICENSE. The earlier Aurora 0.5.0 source was published under MIT; that historical license remains applicable to those original files as published.
 
 ## CodexPlusPlus
 
 Repository: https://github.com/BigPizzaV3/CodexPlusPlus
 
-Version: 2.6.9, commit 75d25e0b8020a4a96cb4b75c00d75ee31ed2cc3c. Copyright belongs to the respective upstream contributors. Renderer sources, extension packages, protocol phase adaptation, and related derived work retain AGPL-3.0-only. Modifications and integration boundaries are recorded in docs/CODEXPLUSPLUS-INTEGRATION.md. The original LICENSE, THIRD_PARTY_NOTICES.md, and component licenses are retained under third_party/codexplusplus; UPSTREAM.json records provenance and hashes. scripts/vendor-codexplusplus.py reproduces the bundled assets.
+Version: 2.6.9, commit 75d25e0b8020a4a96cb4b75c00d75ee31ed2cc3c. Copyright belongs to the respective upstream contributors. Renderer sources, extension packages, protocol phase adaptation, and related derived work retain AGPL-3.0-only. Modifications and integration boundaries are recorded in third_party/INTEGRATION.md. The original LICENSE, THIRD_PARTY_NOTICES.md, and component licenses are retained under third_party/codexplusplus; UPSTREAM.json records provenance and hashes. scripts/vendor-codexplusplus.py reproduces the bundled assets.
 
 Dream, Snow, Glass and Tiger themes retain their upstream MIT notices. Whale artwork and audio have their own provenance terms; refer to WHALE-PROVENANCE.md and the original component notices. No ownership of third party artwork is claimed.
 

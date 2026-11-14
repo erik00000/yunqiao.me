@@ -2,6 +2,8 @@
 
 核对日期：2026-11-15。依据是实际源码及实时市场索引，不能用功能名称或界面开关代替运行验收。
 
+本文集中保存第三方来源、修改记录与集成证据。文中源码路径均相对于仓库根目录。
+
 ## 固定来源与复现
 
 - 仓库：[BigPizzaV3/CodexPlusPlus](https://github.com/BigPizzaV3/CodexPlusPlus)。固定提交：[`75d25e0b8020a4a96cb4b75c00d75ee31ed2cc3c`](https://github.com/BigPizzaV3/CodexPlusPlus/tree/75d25e0b8020a4a96cb4b75c00d75ee31ed2cc3c)，提交时间 2026-11-14 16:02:09 UTC。
