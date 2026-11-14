@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { AgentId, Provider } from '../store/types.js';
 import { nowIso } from '../util.js';
+import { detectCodingDesktop } from '../injector.js';
 import { applyPlan, restorePlan, jsonObject, planned, plannedJson, readText, patchToml, patchEnv, redactConfig, digest, type PlannedFile } from './configFiles.js';
 
 export interface ConnectContext {
@@ -17,7 +18,7 @@ export interface ConnectContext {
 }
 export interface ConnectResult { ok: boolean; path?: string; backup?: string; message: string; restartRequired?: boolean; extraFiles?: string[] }
 export interface ConnectPreview { ok: boolean; message: string; files: PlannedFile[]; warnings: string[]; requiresRestart: boolean; revision?: string; manual?: { baseUrl: string; apiKey: string; model: string } }
-export interface AgentDetection { installed: boolean; configured: boolean; command?: string; configPath?: string; version?: string }
+export interface AgentDetection { installed: boolean; configured: boolean; command?: string; configPath?: string; version?: string; productName?: string; supportsCodexConfig?: boolean; evidence?: string[] }
 export interface AgentAdapter {
   id: AgentId; name: string; vendor: string; description: string; needsInstall: boolean; protocol: string; hotSwitch: boolean;
   support: 'automatic' | 'manual' | 'unsupported'; category: 'cli' | 'desktop' | 'service'; supportNote: string; docsUrl: string;
@@ -54,6 +55,9 @@ function desktopPath(name: string): string | undefined {
 }
 function codexConfig(): string { return path.join(envDir('CODEX_HOME', home('.codex')), 'config.toml'); }
 function claudeCodeConfig(): string { return path.join(envDir('CLAUDE_CONFIG_DIR', home('.claude')), 'settings.json'); }
+let desktopExecutable: string | undefined;
+export function configureDesktopPath(value?: string): void { if (desktopExecutable !== value) { desktopExecutable = value; detectReset(); } }
+function desktopDetection() { return detectCodingDesktop(desktopExecutable); }
 
 export function connectionParameters(ctx: ConnectContext, protocol: string): { baseUrl: string; apiKey: string; model: string } {
   const url = new URL(ctx.mode === 'gateway' ? ctx.gatewayUrl : ctx.provider.baseUrl);
@@ -109,14 +113,14 @@ function makeAdapter(spec: AdapterSpec): AgentAdapter {
         validate(ctx, this);
         const files = spec.plan!(ctx);
         if (ctx.expectedRevision && ctx.expectedRevision !== planRevision(files)) throw new Error('配置或连接参数在预览后已变化，请重新预览再应用');
-        const backup = applyPlan(this.id.startsWith('codex-') ? 'codex-cli' : this.id, files, ctx.previousBackup);
+        const backup = applyPlan(this.id.startsWith('codex-') || this.id === 'chatgpt-desktop' ? 'codex-cli' : this.id, files, ctx.previousBackup);
         detectReset();
         return { ok: true, path: files[0].path, backup, extraFiles: files.slice(1).map(f => f.path), restartRequired: true, message: `${spec.name} 配置已保存并备份。${this.launchHint(ctx.model)}。` };
       } catch (error) { return { ok: false, message: String((error as Error).message) }; }
     },
     disconnect(backup) {
       if (spec.support !== 'automatic') return { ok: false, message: '此客户端没有由云桥写入的配置' };
-      try { restorePlan(this.id.startsWith('codex-') ? 'codex-cli' : this.id, backup, this.configPaths()); detectReset(); return { ok: true, message: `已恢复首次接入前的 ${spec.name} 配置，请重新启动客户端。`, restartRequired: true }; }
+      try { restorePlan(this.id.startsWith('codex-') || this.id === 'chatgpt-desktop' ? 'codex-cli' : this.id, backup, this.configPaths()); detectReset(); return { ok: true, message: `已恢复首次接入前的 ${spec.name} 配置，请重新启动客户端。`, restartRequired: true }; }
       catch (error) { return { ok: false, message: String((error as Error).message) }; }
     },
   };
@@ -149,10 +153,15 @@ const codexCli = makeAdapter({
   warnings: ['Codex CLI 与 Codex 桌面共享用户级配置；当前 profile 或项目配置可能覆盖此设置。'],
 });
 const codexDesktop = makeAdapter({
-  id: 'codex-desktop', name: 'Codex 桌面版', vendor: 'OpenAI', category: 'desktop', support: 'automatic', protocol: 'openai-responses', description: 'OpenAI 编程桌面客户端，与 Codex CLI 共用模型供应商设置。',
-  supportNote: '接入自定义 Responses 供应商；与 ChatGPT 日常聊天桌面应用是不同产品。', docsUrl: 'https://developers.openai.com/codex/config-reference', desktop: 'Codex', paths: () => [codexConfig()], hint: '完全退出 Codex（包括托盘）后重新打开', plan: codexPlan,
+  id: 'chatgpt-desktop', name: 'ChatGPT 桌面版', vendor: 'OpenAI', category: 'desktop', support: 'automatic', protocol: 'openai-responses', description: '统一识别 ChatGPT、ChatGPT Beta 与原 Codex 桌面版，按已安装版本的实际能力接入。',
+  supportNote: '具有 Codex 编程模块的桌面版本可配置 Responses 供应商；旧版纯聊天应用需要升级或使用 CLI。', docsUrl: 'https://developers.openai.com/codex/config-reference', desktop: 'ChatGPT', paths: () => [codexConfig()], hint: '完全退出 ChatGPT / Codex 桌面版（包括托盘）后重新打开', plan: codexPlan,
   warnings: ['此变更也会影响 Codex CLI；切换供应商后部分历史会话可能被客户端按 provider 筛选，可到历史会话页查看。'],
 });
+const desktopPreview = codexDesktop.preview.bind(codexDesktop), desktopConnect = codexDesktop.connect.bind(codexDesktop);
+Object.defineProperty(codexDesktop, 'support', { enumerable: true, get: () => desktopDetection().supportsCodexConfig ? 'automatic' : 'manual' });
+codexDesktop.detect = () => { const detected = desktopDetection(); return { installed: detected.installed, configured: fs.existsSync(codexConfig()), command: detected.executable, version: detected.version, configPath: codexConfig(), productName: detected.productName, supportsCodexConfig: detected.supportsCodexConfig, evidence: detected.evidence }; };
+codexDesktop.preview = ctx => desktopDetection().supportsCodexConfig ? desktopPreview(ctx) : { ok: false, message: '尚未从安装资源确认该桌面版本支持 Codex 配置。请升级到含编程模块的 ChatGPT 桌面版，或在桌面增强中指定程序路径后重新检测。', files: [], warnings: [], requiresRestart: false };
+codexDesktop.connect = ctx => desktopDetection().supportsCodexConfig ? desktopConnect(ctx) : { ok: false, message: '当前桌面版本的编程配置能力尚未确认，未改写任何客户端配置。' };
 const DESKTOP_PROFILE = '753cb857-baa9-45ce-a04b-000000003425';
 function desktopConfigPaths(): string[] {
   const root = process.platform === 'win32' ? localData() : process.platform === 'darwin' ? home('Library', 'Application Support') : envDir('XDG_CONFIG_HOME', home('.config'));
@@ -193,12 +202,11 @@ const manualSpecs: AdapterSpec[] = [
   { id: 'qwen-code', name: 'Qwen Code', vendor: '阿里云', category: 'cli', protocol: 'openai-chat', support: 'manual', command: 'qwen', description: '通义千问终端编程助手，提供 OpenAI 兼容接入参数。', supportNote: '按当前版本官方文档设置 OPENAI_BASE_URL、OPENAI_API_KEY 和模型；设置完请在客户端选择对应身份方式。', docsUrl: 'https://qwenlm.github.io/qwen-code-docs/' },
   { id: 'kimi-code', name: 'Kimi Code', vendor: '月之暗面', category: 'cli', protocol: 'openai-chat', support: 'manual', command: 'kimi', description: 'Kimi 编程助手，可按官方模型配置接入。', supportNote: '使用 Kimi Code 当前版本的 /setup 或模型配置入口；请核实它接受的供应商协议。', docsUrl: 'https://moonshotai.github.io/kimi-cli/' },
   { id: 'opencode', name: 'OpenCode', vendor: 'OpenCode', category: 'cli', protocol: 'openai-chat', support: 'manual', command: 'opencode', description: '开放的编程助手，可使用自定义 OpenAI 兼容供应商。', supportNote: '在 opencode.json 的 provider 中使用 @ai-sdk/openai-compatible，填写 baseURL、apiKey 和模型。现有 JSONC 配置请在客户端中维护。', docsUrl: 'https://opencode.ai/docs/providers/' },
-  { id: 'chatgpt-desktop', name: 'ChatGPT 桌面版', vendor: 'OpenAI', category: 'desktop', protocol: 'openai-responses', support: 'unsupported', desktop: 'ChatGPT', description: 'OpenAI 官方聊天应用，使用自己的账号和订阅服务。', supportNote: '尚无可核实的第三方模型端点配置入口。管理 OpenAI API 供应商请使用 Codex 或支持自定义 API 的客户端；API 与 ChatGPT 订阅分别计费。', docsUrl: 'https://chatgpt.com/download/' },
   { id: 'zcode', name: 'ZCode', vendor: 'ZCode', category: 'cli', protocol: 'openai-chat', support: 'manual', command: 'zcode', description: '提供标准 API 连接参数，由客户端自定义模型入口接入。', supportNote: '该客户端版本和配置格式尚未验证，云桥只生成参数，不自动改写配置。', docsUrl: '' },
   { id: 'antigravity', name: 'Antigravity', vendor: 'Google', category: 'desktop', protocol: 'gemini', support: 'unsupported', desktop: 'Antigravity', description: 'Google 编程产品。', supportNote: '尚未验证其第三方网关配置机制，不能把 Gemini CLI 环境变量当作该产品支持的配置。', docsUrl: 'https://antigravity.google/' },
 ];
 export const AGENT_ADAPTERS: AgentAdapter[] = [claudeCode, claudeDesktop, codexCli, codexDesktop, geminiCli, ...manualSpecs.map(makeAdapter)];
-export function getAdapter(id: string): AgentAdapter | undefined { return AGENT_ADAPTERS.find(a => a.id === id); }
+export function getAdapter(id: string): AgentAdapter | undefined { return AGENT_ADAPTERS.find(a => a.id === (id === 'codex-desktop' ? 'chatgpt-desktop' : id)); }
 let detectCache: { at: number; data: Record<string, AgentDetection> } | null = null;
 export function detectAll(_fast = false): Record<string, AgentDetection> {
   if (detectCache && Date.now() - detectCache.at < 60_000) return detectCache.data;

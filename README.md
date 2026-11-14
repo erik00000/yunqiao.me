@@ -1,21 +1,23 @@
-# 云桥 AI · Aurora
+# 云桥 AI · yunqiao.me
 
 以客户端为起点的 AI 工作空间：**选客户端 → 连接供应商 → 选择模型 → 预览并应用**。
 
-Windows 桌面端使用 Electron + React + TypeScript；iOS 为 Capacitor 伴侣端，连接电脑或服务器上的网关。当前版本 0.5.0。
+Windows 桌面端使用 Electron + React + TypeScript；iOS 为 Capacitor 伴侣端，连接电脑或服务器上的网关。当前版本 0.6.0。
 
-公开仓库：[jxb412/aurora](https://github.com/jxb412/aurora) · [构建与下载](https://github.com/jxb412/aurora/actions) · [用户讨论](https://github.com/jxb412/aurora/discussions)
+公开仓库：[jxb412/aurora](https://github.com/jxb412/aurora) · [下载 0.6.0](https://github.com/jxb412/aurora/releases/tag/v0.6.0) · [构建记录](https://github.com/jxb412/aurora/actions) · [用户讨论](https://github.com/jxb412/aurora/discussions)
 
-![客户端工作台](docs/images/clients-v0.5.png)
+![客户端工作台](docs/images/clients-v0.6.png)
 
 ## 已实现
 
 - **客户端工作台**：分类、搜索、本地检测；向导内新增供应商、拉取远端预设、选择模型、测试连接、查看脱敏配置差异、自动备份、恢复原配置。
-- **厂商与供应商**：公开远端目录、国内/国际/本地/聚合筛选、批量导入、离线缓存、自定义 API、多个密钥、禁用和冷却。
-- **模型管理**：同步服务商模型列表、原始模型 ID、上下文和价格元数据、工具/视觉/思考能力标注。
+- **厂商与供应商**：首次启动拉取官方 Web 目录，后续启动共用缓存并后台刷新；接入向导、添加供应商和厂商页共用同一列表。支持搜索、地区筛选、批量导入、多密钥和冷却。默认模型有逐项官方来源记录。
+- **模型管理**：跨供应商批量选择、编辑能力/价格/上下文、预览删除影响、保护正在使用的客户端与分组引用；修改前保留备份。未知价格保持未知。
 - **本地网关**：Anthropic Messages、OpenAI Chat、OpenAI Responses、Gemini；同协议原生透传，跨协议转换；分组路由、重试和请求统计。
-- **历史会话**：只读扫描 Claude Code、Codex、Gemini 等支持格式，搜索、按客户端过滤、阅读、Markdown 下载、复制对应客户端恢复命令。
-- **扩展**：内置请求插件、自定义中间件；Codex Skills、MCP、插件与提示词资源发现、支持项启停、全局指令编辑、会话诊断。
+- **历史会话**：阅读/搜索/导出；批量修复 ChatGPT / Codex 的供应商归属、路径与原生消息索引，支持范围选择、变更预览、自动备份、冲突检查和按批次恢复。
+- **扩展**：收录 Codex++ 的 32 项内置增强及 5 个完整拓展包，连接兼容桌面后按实际状态启用；公开/完整插件市场、插件入口解锁、主题、用量状态栏及原生资源管理。每项标明兼容性，未适配项不能假开启。保留网关中间件、MCP、Skills 和提示词工作台。
+- **实时用量**：进行中的请求、输入/输出、缓存读写与命中率、完成日志；原生桌面用量取自实际 token_count。上游未报告的数据不显示为零。
+- **云桥会员**：平台登录/两步验证、客户端安装绑定、首次使用 $10 赠金、选择会员分组并添加 API 供应商；后端固定金额、账户/安装唯一约束、幂等核销与管理员核对。
 - **设置**：浅色/深色/跟随系统、强调色、托盘、自启、网关与代理、访问令牌、远端目录、更新检查、导入导出配置。
 - **远程管理**：认证后的 Web 控制台与 iOS 内置伴侣 UI；公开目录不包含个人密钥，远程管理返回值脱敏。
 
@@ -25,10 +27,11 @@ Windows 桌面端使用 Electron + React + TypeScript；iOS 为 Capacitor 伴侣
 | --- | --- |
 | Claude Code | 自动配置 settings.json，保留其他设置 |
 | Claude Desktop | 支持第三方配置的版本：写入 Claude-3p profile；具体平台/版本须支持该入口 |
-| Codex CLI / Codex 桌面版 | 自动配置共享的 Codex 配置，正确写入 TOML 顶层键与供应商表 |
+| Codex CLI | 自动配置共享的 Codex 配置，正确写入 TOML 顶层键与供应商表 |
+| ChatGPT 桌面版 | 统一入口识别 ChatGPT、Beta 与原 Codex；有实际编码配置能力的版本自动接入，扩展需经本机调试接口验证 |
 | Gemini CLI | 自动配置环境文件，使用原生 Gemini 网关接口 |
 | WorkBuddy / DeepSeek API / Qwen / Kimi / OpenCode 等 | 按能力给出手动参数与文档；不猜测未证实的配置文件，也不把手动参数标记成自动接入成功 |
-| ChatGPT 桌面聊天 | 官方账号登录；未发现可把任意第三方 API 替换为其订阅聊天的受支持机制 |
+| 不具备编码配置接口的旧 ChatGPT 聊天版 | 在统一入口说明官方账号登录限制，不把第三方 API 接入标记成功 |
 
 客户端界面会展示自动配置、手动接入或官方登录状态，以及版本限制。厂商同名模型也可能具有不同能力，连接测试需要用户自己的有效 API Key。
 
@@ -43,7 +46,7 @@ npm run build
 npm run package:win
 ```
 
-Windows 产物位于 `release/`：`YunQiaoAI-0.5.0-win-x64-setup.exe` 与 `YunQiaoAI-0.5.0-win-x64-portable.exe`。未配置代码签名证书。
+Windows 产物位于 `release/`：`YunQiaoAI-0.6.0-win-x64-setup.exe` 与 `YunQiaoAI-0.6.0-win-x64-portable.exe`。未配置代码签名证书。
 
 无界面网关：
 
@@ -70,14 +73,14 @@ npx cap open ios
 
 原生编译必须使用 **macOS + Xcode**。仓库工作流在 macOS 上构建模拟器 `.app`，不会把源码或模拟器 ZIP 伪称可安装到 iPhone 的 IPA。真机分发还需要 Apple 开发者签名和描述文件。当前 Windows 工作区能生成 iOS 工程、构建 Web 资源，不能独立完成苹果原生编译。
 
-2026-11-15 已通过 [GitHub macOS 原生构建](https://github.com/jxb412/aurora/actions/runs/43617523329/job/132515739714)，产出包含有效 Mach-O 的 iOS 16+ 模拟器应用；另提供 iPhoneOS 未签名设备构建流程。Actions 手动运行可选 `ios`、`windows` 或 `all`。
+历史 0.5.0 已通过 [GitHub macOS 原生构建](https://github.com/jxb412/aurora/actions/runs/43617930882)，实际产出包含有效 Mach-O 的 iOS 16+ 模拟器应用及 iPhoneOS 未签名设备应用。设备 ZIP 需要签名后才能安装，不是已签名 IPA。Actions 手动运行可选 `ios`、`windows` 或 `all`。
 
 ## 验证
 
 ```powershell
 npm run typecheck
-node scripts/test-clients.mjs
-node scripts/test-gateway.mjs
+npm test
+node scripts/test-extensions.mjs --renderer
 npm run build
 node scripts/smoke.mjs
 python scripts/test-ui.py
@@ -90,11 +93,23 @@ python scripts/test-ui.py
 - 同协议原生路径尽量保留供应商专属字段。开启转换、隐私遮蔽或通用请求插件后，专属 hosted tools、加密 reasoning 和部分多模态能力不保证跨协议可用；不同供应商的思考签名不能伪造。
 - 历史可阅读不等于可以跨账号无损续聊。读取有大小/消息数量边界；没有永久后台全文索引。
 - 用量费用依据本地价格估算，额度策略依据已配置额度，不等同实时官方账单。
-- 扩展管理目前覆盖内置中间件和已安装的 Codex 本地资源；跨客户端扩展市场、WSL 多配置环境、加密云同步属于后续设计，未展示为已实现功能。
+- 桌面插件依赖实际版本的原生接口。收录全部上游入口不等于每项都适配；需要额外后台或尚未适配的项目会禁用并展示原因。完整状态见集成文档。
 - 远程管理限制文件写入、自定义代码、密钥与敏感设置；这些操作需要桌面端完成。
 
 ## 设计与来源
 
 [真实用户需求调研](docs/RESEARCH.md) · [产品与实现设计](docs/DESIGN.md) · [目录服务部署](docs/SERVER.md)
 
-参考 CodexPlusPlus、cc-switch、magpie 的公开功能和用户讨论进行设计。本次没有把三个项目的代码库直接合并。后续引入第三方源码时需要分别遵守其许可证。
+参考 CodexPlusPlus、cc-switch、magpie 的公开功能和用户讨论进行设计。0.6 已集成并保留 CodexPlusPlus 的源码、完整扩展资源及许可；其余项目作为功能与流程研究来源。
+
+## 0.6 后端与集成说明
+
+- [会员赠金、安装绑定、配置与恢复](docs/MEMBERSHIP.md)
+- [默认模型来源与核验边界](docs/MODEL-SOURCES.md)
+- [Codex++ 资产、市场许可与功能适配](docs/CODEXPLUSPLUS-INTEGRATION.md)
+
+服务器公开目录仍为 `https://ai.haowucm.cn/pub.php?action=catalog`。后台提供完整候选模型同步、人工精选推荐、会员赠金审核；每日任务读取服务端管理密钥，客户端没有管理员权限或管理密钥。API 模型 Key 留在用户电脑；会员会话/安装证明使用操作系统加密存储，服务端 JWT 加密入账本。
+
+## 许可
+
+0.6.0 集成 CodexPlusPlus 后采用 **AGPL-3.0-only**，见 [LICENSE](LICENSE) 与 [第三方声明](THIRD_PARTY_NOTICES.md)。插件市场各包维持自己的许可；收录索引不意味着拥有统一再分发授权。源码和构建材料与版本一同公开。

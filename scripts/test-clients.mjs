@@ -53,7 +53,7 @@ try {
   write(claudeFile, claudeOriginal);
   check('Direct protocol mismatch is rejected', () => assert(!claude.preview({ ...context, mode: 'direct' }).ok));
   check('Compatible base URL does not double append version', () => { const params = api.connectionParameters({ ...context, mode: 'direct' }, 'openai-chat'); assert.equal(params.baseUrl, 'https://example.com/v1'); });
-  check('Unsupported ChatGPT desktop and manual WorkBuddy never claim auto connection', () => { assert.equal(api.getAdapter('chatgpt-desktop').support, 'unsupported'); assert(!api.getAdapter('chatgpt-desktop').connect(context).ok); const manual = api.getAdapter('workbuddy').preview(context); assert(manual.ok); assert.equal(manual.files.length, 0); assert(manual.manual); assert(!api.getAdapter('workbuddy').connect(context).ok); });
+  check('ChatGPT without verified coding capability and manual WorkBuddy never claim auto connection', () => { assert.equal(api.getAdapter('chatgpt-desktop').support, 'manual'); assert(!api.getAdapter('chatgpt-desktop').connect(context).ok); assert.equal(api.getAdapter('codex-desktop').id, 'chatgpt-desktop'); assert.equal(api.AGENT_ADAPTERS.filter(a => ['codex-desktop', 'chatgpt-desktop'].includes(a.id)).length, 1); const manual = api.getAdapter('workbuddy').preview(context); assert(manual.ok); assert.equal(manual.files.length, 0); assert(manual.manual); assert(!api.getAdapter('workbuddy').connect(context).ok); });
   const desktopPaths = desktop.configPaths();
   write(desktopPaths[0], JSON.stringify({ deploymentMode: '1p', userPreference: true }));
   write(desktopPaths[2], JSON.stringify({ appliedId: 'existing', entries: [{ id: 'existing', name: 'Existing profile' }] }));

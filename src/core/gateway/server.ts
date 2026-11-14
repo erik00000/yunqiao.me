@@ -17,6 +17,8 @@ import {
 } from '../protocol/index.js';
 import { JsonLines } from '../store/jsonFile.js';
 import { Router } from './router.js';
+import { trackRequest, updateRequest, finishRequest } from './liveUsage.js';
+import { fillResponsePhases, ResponsePhaseStream } from './responsePhase.js';
 import { openUpstream, readAll } from './upstream.js';
 import { applyMiddleware } from '../plugins/middleware.js';
 import { Masker } from '../plugins/masking.js';
@@ -339,7 +341,7 @@ export class GatewayServer {
       const id = `group/${g.name}`;
       if (seen.has(id)) continue;
       seen.add(id);
-      data.push({ id, object: 'model', created: Math.floor(Date.now() / 1000), owned_by: 'Aurora 分组' });
+      data.push({ id, object: 'model', created: Math.floor(Date.now() / 1000), owned_by: 'yunqiao.me 分组' });
     }
     return { object: 'list', data };
   }
@@ -428,12 +430,17 @@ export class GatewayServer {
       return;
     }
 
+    const rawThreadId = req.headers['x-codex-thread-id'] || req.headers['x-thread-id'] || body?.metadata?.thread_id;
+    const threadId = typeof rawThreadId === 'string' && /^[a-zA-Z0-9_-]{1,160}$/.test(rawThreadId) ? rawThreadId : undefined;
+    trackRequest(store, { id: requestId, threadId, agent, phase: 'connecting', model: ir.model, startedAtMs: startedAt, attempts: 0, autoRetries: 0 });
+    res.once('close', () => finishRequest(store, requestId));
     let attempt = 0;
     let lastErr: { status: number; message: string; raw?: string } | null = null;
     const maxAttempts = Math.min(resolved.candidates.length, 1 + Math.max(0, resolved.retries ?? settings.maxRetries));
 
     for (const cand of resolved.candidates.slice(0, maxAttempts)) {
       attempt++;
+      updateRequest(store, requestId, { attempts: attempt, autoRetries: attempt - 1, phase: attempt > 1 ? 'retrying' : 'connecting', model: cand.model, providerName: cand.provider.name });
       const supportsImages = cand.providerModel.capabilities?.vision ?? true;
       const target = {
         baseUrl: cand.provider.baseUrl,
@@ -569,11 +576,13 @@ export class GatewayServer {
       clientModel: ir.model,
       upstreamFormat: cand.provider.format,
     });
-    const body = JSON.stringify(masker.unmaskValue(out));
+    const phaseEnabled = proto === 'openai-responses' && /codex|chatgpt/i.test(agent) && this.deps.store.readExtra<any>('extensions.json', {})?.entries?.['builtin:reasoning-collapse']?.enabled;
+    const body = JSON.stringify(masker.unmaskValue(phaseEnabled ? fillResponsePhases(out) : out));
     res.writeHead(200, { 'content-type': 'application/json', ...CORS });
     res.end(body);
 
     const usage = irRes.usage;
+    const inputTokens = usage.inputTokens + (cand.provider.format === 'anthropic' ? (usage.cacheReadTokens || 0) + (usage.cacheWriteTokens || 0) : 0);
     this.record({
       ts: nowIso(),
       agent,
@@ -584,14 +593,17 @@ export class GatewayServer {
       protocol: proto,
       stream: false,
       status: 200,
-      inputTokens: usage.inputTokens,
+      inputTokens,
       outputTokens: usage.outputTokens,
+      cacheReadKnown: usage.cacheReadTokens !== undefined,
+      cacheWriteKnown: usage.cacheWriteTokens !== undefined,
       cacheRead: usage.cacheReadTokens ?? 0,
       cacheWrite: usage.cacheWriteTokens ?? 0,
       cost: this.router.costOf(cand.provider, cand.providerModel, {
-        input: usage.inputTokens,
+        input: inputTokens,
         output: usage.outputTokens,
         cacheRead: usage.cacheReadTokens,
+        cacheWrite: usage.cacheWriteTokens,
       }),
       latencyMs: Date.now() - startedAt,
       attempts: attempt,
@@ -621,10 +633,14 @@ export class GatewayServer {
     const parser = new SseParser();
     const usage: Usage = { inputTokens: 0, outputTokens: 0 };
     let firstByte = 0;
+    let reportedInput = false;
+    let outputCharacters = 0;
+    updateRequest(this.deps.store, requestId, { phase: 'streaming' });
     let streamError: string | undefined;
     let terminal = false;
     const utf8 = new StringDecoder('utf8');
     const channels = new Map<string, StreamEvent>();
+    const phase = proto === 'openai-responses' && /codex|chatgpt/i.test(agent) && this.deps.store.readExtra<any>('extensions.json', {})?.entries?.['builtin:reasoning-collapse']?.enabled ? new ResponsePhaseStream() : null;
 
     res.writeHead(200, {
       'content-type': encoder.contentType,
@@ -634,13 +650,14 @@ export class GatewayServer {
       ...CORS,
     });
 
-    const write = (s: string) => {
+    const writeRaw = (s: string) => {
       if (!s || res.destroyed) return;
       if (!res.write(s)) {
         (stream as any).pause?.();
         res.once('drain', () => (stream as any).resume?.());
       }
     };
+    const write = (s: string) => writeRaw(phase ? phase.push(s) : s);
 
     const flushChannels = (index?: number) => {
       for (const [channel, previous] of channels) {
@@ -658,7 +675,15 @@ export class GatewayServer {
         const events = decoder.decode(evt);
         if (!events) continue;
         for (let e of events) {
-          if (e.type === 'usage') Object.assign(usage, e.usage);
+          if (e.type === 'usage') {
+            Object.assign(usage, Object.fromEntries(Object.entries(e.usage).filter(([, v]) => v !== undefined)));
+            if (e.usage.inputTokens !== undefined) reportedInput = true;
+            updateRequest(this.deps.store, requestId, { inputTokens: reportedInput ? usage.inputTokens + (cand.provider.format === 'anthropic' ? (usage.cacheReadTokens || 0) + (usage.cacheWriteTokens || 0) : 0) : undefined, outputTokens: e.usage.outputTokens, cacheRead: usage.cacheReadTokens, cacheWrite: usage.cacheWriteTokens });
+          }
+          if (e.type === 'text_delta' || e.type === 'thinking_delta' || e.type === 'tool_delta') {
+            outputCharacters += (e.type === 'tool_delta' ? e.json : e.text).length;
+            updateRequest(this.deps.store, requestId, { estimatedOutputTokens: Math.ceil(outputCharacters / 4) });
+          }
           if (e.type === 'stop') { terminal = true; flushChannels(); }
           if (e.type === 'error') { terminal = true; streamError = this.redactError(e.message); e = { ...e, message: streamError }; }
           if (native) continue;
@@ -700,10 +725,12 @@ export class GatewayServer {
 
     flushChannels();
     if (!streamError && !native) write(encoder.end());
+    if (phase) writeRaw(phase.end());
     res.end();
     if (streamError) { this.status.errors++; this.status.lastError = streamError; }
 
-    if (!usage.inputTokens) usage.inputTokens = estimateTokens(ir.system + JSON.stringify(ir.messages));
+    if (!reportedInput) usage.inputTokens = estimateTokens(ir.system + JSON.stringify(ir.messages));
+    const inputTokens = usage.inputTokens + (cand.provider.format === 'anthropic' && reportedInput ? (usage.cacheReadTokens || 0) + (usage.cacheWriteTokens || 0) : 0);
     this.record({
       ts: nowIso(),
       agent,
@@ -713,16 +740,20 @@ export class GatewayServer {
       requestModel: ir.model,
       protocol: proto,
       stream: true,
+      estimated: !reportedInput,
       status: streamError ? 502 : 200,
       error: streamError,
-      inputTokens: usage.inputTokens,
+      inputTokens,
       outputTokens: usage.outputTokens,
+      cacheReadKnown: usage.cacheReadTokens !== undefined,
+      cacheWriteKnown: usage.cacheWriteTokens !== undefined,
       cacheRead: usage.cacheReadTokens ?? 0,
       cacheWrite: usage.cacheWriteTokens ?? 0,
       cost: this.router.costOf(cand.provider, cand.providerModel, {
-        input: usage.inputTokens,
+        input: inputTokens,
         output: usage.outputTokens,
         cacheRead: usage.cacheReadTokens,
+        cacheWrite: usage.cacheWriteTokens,
       }),
       latencyMs: Date.now() - startedAt,
       firstByteMs: firstByte,
@@ -732,6 +763,8 @@ export class GatewayServer {
   }
 
   private record(rec: UsageRecord): void {
+    const request = finishRequest(this.deps.store, rec.requestId);
+    if (request?.threadId) rec.threadId = request.threadId;
     const settings = this.deps.store.getSettings();
     if (settings.logRequests) this.deps.store.recordUsage(rec);
     this.deps.onRequest?.(rec);

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { AuroraStore, getStore, setDataDir } from '../core/store/index.js';
+import { memberAction } from './member.js';
 import { GatewayServer, resetGateway } from '../core/gateway/server.js';
 import { runAction, type ActionDeps } from '../core/actions.js';
 import type { UsageRecord } from '../core/store/types.js';
@@ -51,7 +52,7 @@ function trustedFrame(raw?: string) {
 }
 function createWindow() {
   win = new BrowserWindow({ width: 1380, height: 930, minWidth: 900, minHeight: 640, backgroundColor: '#f7f8fc', show: false, frame: false,
-    title: '云桥 AI · Aurora', titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden', trafficLightPosition: { x: 16, y: 18 },
+    title: '云桥 AI · yunqiao.me', titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden', trafficLightPosition: { x: 16, y: 18 },
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, offscreen: process.env.AURORA_UI_TEST === '1' && !app.isPackaged, backgroundThrottling: false },
   });
   if (DEV) void win.loadURL(UI_URL);
@@ -69,7 +70,7 @@ function createWindow() {
 function showWindow() { if (!win) createWindow(); else { if (win.isMinimized()) win.restore(); win.show(); win.focus(); } }
 function createTray() {
   const icon = nativeImage.createFromPath(path.join(__dirname, '..', 'ui', 'tray.png'));
-  tray = new Tray(icon.resize({ width: 20, height: 20 })); tray.setToolTip('云桥 AI · Aurora'); tray.on('double-click', showWindow); refreshTray();
+  tray = new Tray(icon.resize({ width: 20, height: 20 })); tray.setToolTip('云桥 AI · yunqiao.me'); tray.on('double-click', showWindow); refreshTray();
 }
 function refreshTray() {
   tray?.setContextMenu(Menu.buildFromTemplate([
@@ -89,6 +90,7 @@ async function trayConnect(agentId: string, providerId: string, model: string) {
 }
 function applyLoginItem(enable: boolean) { try { app.setLoginItemSettings({ openAtLogin: enable, openAsHidden: false }); } catch {} }
 async function handleAction(action: string, payload: any) {
+  if (action.startsWith('member.')) return memberAction(store, action, payload);
   const shared = await runAction(deps(), action, payload);
   if (shared !== null) {
     if (action === 'settings.save') applyLoginItem(store.getSettings().launchAtLogin);
@@ -101,6 +103,7 @@ async function handleAction(action: string, payload: any) {
     case 'app.openExternal': await shell.openExternal(allowedExternal(String(payload.url))); return { ok: true };
     case 'app.openPath': { const error = await shell.openPath(String(payload.path)); return { ok: !error, message: error }; }
     case 'app.openDataDir': { const error = await shell.openPath(store.dir); return { ok: !error, message: error }; }
+    case 'app.chooseImage': { const selected = await dialog.showOpenDialog({ properties: ['openFile'], filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }] }); return { ok: !selected.canceled, path: selected.filePaths[0] || '' }; }
     case 'app.isDev': return { dev: !app.isPackaged, root: app.getAppPath() };
     case 'app.gitUpdate': return gitUpdate();
     case 'app.export': {

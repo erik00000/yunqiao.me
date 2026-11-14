@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { PageProps } from '../App';
 import { Btn, Empty, Ico, useToast, copyText } from '../components/ui';
 import { SessionSummary, call, fmtBytes, fmtTime } from '../lib/api';
+import HistoryRepair from '../components/HistoryRepair';
 
 interface Msg {
   role: string;
@@ -16,6 +17,7 @@ export default function Sessions({}: PageProps) {
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState('');
   const [active, setActive] = useState<SessionSummary | null>(null);
+  const [repairing, setRepairing] = useState(false);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [reading, setReading] = useState(false);
   const [agentFilter, setAgentFilter] = useState('all');
@@ -80,12 +82,14 @@ export default function Sessions({}: PageProps) {
           </p>
         </div>
         <div className="actions">
+          <Btn variant="primary" disabled={!window.aurora} onClick={() => setRepairing(true)}><Ico name="shield" size={13} />批量修复历史</Btn>
           <input className="input" style={{ width: 220 }} placeholder="搜索标题 / 目录 / 会话 ID" value={q} onChange={(e) => setQ(e.target.value)} />
           <Btn onClick={scan} disabled={loading}>
             <Ico name="refresh" size={13} /> {loading ? '扫描中…' : '重新扫描'}
           </Btn>
         </div>
       </div>
+      {repairing && <HistoryRepair onClose={() => setRepairing(false)} onRepaired={scan} />}
 
       <div className="row wrap" style={{ marginBottom: 12 }}>
         <button className={`chip ${agentFilter === 'all' ? 'accent' : ''}`} onClick={() => setAgentFilter('all')}>全部 {sessions.length}</button>

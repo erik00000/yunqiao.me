@@ -245,7 +245,7 @@ export function parseResponsesResponse(json: any): IRResponse {
     usage: {
       inputTokens: u.input_tokens ?? 0,
       outputTokens: u.output_tokens ?? 0,
-      cacheReadTokens: u.input_tokens_details?.cached_tokens ?? 0,
+      cacheReadTokens: u.input_tokens_details?.cached_tokens,
       reasoningTokens: u.output_tokens_details?.reasoning_tokens ?? 0,
     },
   };
@@ -319,7 +319,7 @@ export class ResponsesStreamDecoder {
             usage: {
               inputTokens: r.usage.input_tokens ?? 0,
               outputTokens: r.usage.output_tokens ?? 0,
-              cacheReadTokens: r.usage.input_tokens_details?.cached_tokens ?? 0,
+              cacheReadTokens: r.usage.input_tokens_details?.cached_tokens,
             },
           });
         out.push({ type: 'stop', stopReason: this.hasTools ? 'tool_use' : 'end_turn' });

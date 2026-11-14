@@ -1,5 +1,7 @@
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { createRpcClient, normalizeEndpoint } from './connection.js';
+import { summaryCache, requestCache, requestOutput } from './usage.js';
+import packageInfo from '../package.json';
 
 const app = document.getElementById('app');
 const overlay = document.getElementById('overlay');
@@ -9,6 +11,13 @@ let rpc = null;
 let state = null;
 let summary = null;
 let recent = [];
+let live = [];
+let liveHost = null;
+let liveTimer;
+let liveFlight = false;
+let liveRetryAt = 0;
+let liveError = '';
+let liveUpdatedAt = '';
 let sessions = null;
 let page = 'home';
 let epoch = 0;
@@ -107,7 +116,7 @@ function renderConnect() {
   overlay.replaceChildren();
   const wrap = el('div', 'connect-screen');
   const brand = el('div', 'brand');
-  brand.append(el('div', 'brand-mark', '云'), el('span', '', '云桥 AI'), badge('手机伴侣'));
+  brand.append(el('div', 'brand-mark', '云'), el('span', '', 'yunqiao.me'), badge('手机伴侣'));
   const hero = el('div', 'connect-hero');
   hero.append(el('span', 'eyebrow', 'YOUR AI, CONNECTED'), el('h1', '', 'AI 工作台，\n随手可达。'), el('p', 'muted', '连接电脑，随时查看模型、用量与会话。'));
   const form = el('form', 'card connect-form');
@@ -130,7 +139,8 @@ function renderConnect() {
       if (!nextState || !Array.isArray(nextState.providers) || !Array.isArray(nextState.agentCatalog)) throw new Error('网关版本不兼容，请先更新桌面端');
       epoch++; endpoint = base; rpc = nextRpc; state = nextState; summary = null; recent = []; sessions = null; page = 'home';
       token.value = ''; storage.set('yunqiao.gateway', base); updatedAt = new Date().toISOString();
-      render(); await refresh(false).catch(e => toast(e.message || '已连接，暂时无法刷新用量'));
+      live = []; liveError = ''; liveUpdatedAt = ''; liveRetryAt = 0;
+      render(); startLive(); await refresh(false).catch(e => toast(e.message || '已连接，暂时无法刷新用量'));
     } catch (e) {
       error.textContent = /fetch|network|timed|abort/i.test(e.message) ? '暂时连不上。请确认电脑在线、已开启局域网共享，并检查地址、端口和防火墙。' : e.message;
     } finally { go.disabled = false; go.textContent = '连接工作台'; }
@@ -157,11 +167,46 @@ async function refresh(showMessage = true) {
   else if (showMessage) toast('已更新');
 }
 
+function stopLive() { clearInterval(liveTimer); liveTimer = undefined; }
+function startLive() {
+  stopLive();
+  liveTimer = setInterval(() => { void pollLive(); }, 1500);
+  void pollLive();
+}
+async function pollLive() {
+  if (!rpc || page !== 'home' || document.hidden || liveFlight || Date.now() < liveRetryAt) return;
+  const currentEpoch = epoch;
+  const call = rpc;
+  liveFlight = true;
+  try {
+    const next = await call('usage.live');
+    if (currentEpoch !== epoch) return;
+    if (!Array.isArray(next)) throw new Error('实时请求数据格式不兼容');
+    const completed = live.some(previous => !next.some(request => request.id === previous.id));
+    live = next; liveError = ''; liveUpdatedAt = new Date().toISOString();
+    renderLive();
+    if (completed) {
+      const results = await Promise.allSettled([call('usage.summary', { days: 7 }), call('usage.recent')]);
+      if (currentEpoch !== epoch) return;
+      if (results[0].status === 'fulfilled') summary = results[0].value;
+      if (results[1].status === 'fulfilled') recent = results[1].value;
+      if (page === 'home') render();
+    }
+  } catch (error) {
+    if (currentEpoch !== epoch) return;
+    liveError = `实时数据暂不可用：${error.message || '请检查网关版本与连接'}`;
+    liveRetryAt = Date.now() + 15000;
+    renderLive();
+  } finally { liveFlight = false; }
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) void pollLive(); });
+
 function render() {
   if (!rpc || !state) return renderConnect();
   app.replaceChildren();
+  liveHost = null;
   const header = el('header', 'app-header');
-  const brand = el('div', 'brand'); brand.append(el('div', 'brand-mark small', '云'), el('strong', '', '云桥 AI'));
+  const brand = el('div', 'brand'); brand.append(el('div', 'brand-mark small', '云'), el('strong', '', 'yunqiao.me'));
   const refreshButton = iconButton('refresh', '刷新数据', () => busy(refreshButton, () => refresh()));
   header.append(brand, badge(state.gateway?.running ? '网关在线' : '网关已停止', state.gateway?.running), refreshButton);
   const content = el('section', 'page');
@@ -172,7 +217,7 @@ function render() {
   if (page === 'settings') renderSettings(content);
   const nav = el('nav', 'bottom-nav'); nav.setAttribute('aria-label', '主导航');
   for (const [id, title] of [['home', '工作台'], ['clients', '客户端'], ['providers', '供应商'], ['sessions', '会话'], ['settings', '我的']]) {
-    const n = button('', () => { page = id; render(); window.scrollTo({ top: 0 }); if (id === 'sessions' && sessions === null) loadSessions(); }, page === id ? 'nav-item active' : 'nav-item');
+    const n = button('', () => { page = id; render(); window.scrollTo({ top: 0 }); if (id === 'sessions' && sessions === null) loadSessions(); if (id === 'home') void pollLive(); }, page === id ? 'nav-item active' : 'nav-item');
     if (page === id) n.setAttribute('aria-current', 'page');
     n.append(icon(id), el('span', '', title)); nav.append(n);
   }
@@ -196,6 +241,14 @@ function renderHome(content) {
     const s = el('div', 'card stat'); s.append(el('span', 'muted', name), el('strong', '', value), el('small', 'muted', sub)); stats.append(s);
   }
   content.append(stats);
+  const cache = summaryCache(t);
+  const cacheTitle = el('div', 'section-title'); cacheTitle.append(el('h2', '', '缓存表现'), el('span', 'muted', '近 7 天'));
+  const cacheStats = el('div', 'stats-grid cache-stats'); cacheStats.setAttribute('aria-label', '缓存用量');
+  for (const [name, value, sub] of [['缓存读取', number(cache.read), '命中已有上下文的 Token'], ['缓存写入', number(cache.write), '新建缓存的 Token'], ['缓存命中率', cache.rate == null ? '—' : `${(cache.rate * 100).toFixed(1)}%`, '仅统计上游提供缓存数据的请求']]) {
+    const stat = el('div', 'card stat'); stat.append(el('span', 'muted', name), el('strong', '', value), el('small', 'muted', sub)); cacheStats.append(stat);
+  }
+  content.append(cacheTitle, cacheStats, el('p', 'usage-explainer muted', '输入总量包含缓存。未返回的缓存字段显示「—」，不会按零命中计算。费用是本地估算，以供应商账单为准。'));
+  liveHost = el('div', 'live-section'); liveHost.setAttribute('aria-label', '实时请求'); content.append(liveHost); renderLive();
   const title = el('div', 'section-title'); title.append(el('h2', '', '最近请求'), el('span', 'muted', '最近 8 条')); content.append(title);
   if (!recent.length) content.append(empty('还没有请求记录', '客户端开始调用模型后，这里会显示结果与用量。'));
   else {
@@ -203,11 +256,34 @@ function renderHome(content) {
     for (const r of recent.slice(0, 8)) {
       const row = el('div', 'request-row'); const info = el('div', 'grow');
       info.append(el('strong', 'truncate', r.model || '未知模型'), el('p', 'muted small-text', `${r.agent || '客户端'} · ${r.providerName || '供应商'} · ${date(r.ts)}`));
+      info.append(el('p', 'request-usage muted', `输入 ${number(r.inputTokens)} · 输出 ${number(r.outputTokens)}${r.estimated ? '（估算）' : ''}`), el('p', 'request-usage muted', `缓存读 ${number(requestCache(r, 'cacheRead'))} · 缓存写 ${number(requestCache(r, 'cacheWrite'))}`));
       if (r.error) info.append(el('p', 'error-text', r.error));
       row.append(info, badge(r.status >= 200 && r.status < 300 ? '成功' : `失败 ${r.status || ''}`, r.status >= 200 && r.status < 300)); list.append(row);
     }
     content.append(list);
   }
+}
+
+function renderLive() {
+  if (!liveHost || !liveHost.isConnected && page !== 'home') return;
+  liveHost.replaceChildren();
+  const title = el('div', 'section-title'); title.append(el('h2', '', '实时请求'), el('span', 'muted', liveError ? '连接中断' : `${live.length} 个进行中 · 1.5 秒刷新`)); liveHost.append(title);
+  if (liveError) liveHost.append(note(`${liveError}${liveUpdatedAt ? `；保留 ${date(liveUpdatedAt)} 的最后状态。` : ''}`, true));
+  if (!live.length) { liveHost.append(el('p', 'live-empty muted', liveError ? '恢复连接后自动更新。' : '等待下一次对话。请求完成后会计入上方统计。')); return; }
+  const list = el('div', 'card live-list');
+  for (const request of live) {
+    const row = el('article', 'live-request'), top = el('div', 'live-heading');
+    const phase = { connecting: '连接中', streaming: '生成中', retrying: '正在重试' }[request.phase] || '进行中';
+    top.append(el('strong', 'truncate', request.model || '等待模型'), badge(liveError ? '待更新' : phase, !liveError));
+    row.append(top, el('p', 'muted small-text', `${request.agent || '客户端'} · ${request.providerName || '等待路由'} · ${Math.max(0, Math.floor((Date.now() - request.startedAtMs) / 1000)) || 0} 秒`));
+    const values = el('div', 'live-metrics'), output = requestOutput(request);
+    const outputLabel = output.tokens == null ? '待返回' : `${output.estimated ? '约 ' : ''}${number(output.tokens)}`;
+    for (const [name, value] of [['输入', request.inputTokens == null ? '待返回' : number(request.inputTokens)], ['输出', outputLabel], ['缓存读', requestCache(request, 'cacheRead', true) == null ? '未提供' : number(request.cacheRead)], ['缓存写', requestCache(request, 'cacheWrite', true) == null ? '未提供' : number(request.cacheWrite)]]) values.append(el('span', '', `${name} ${value}`));
+    row.append(values);
+    if (request.autoRetries) row.append(el('p', 'muted small-text', `自动重试 ${request.autoRetries} 次`));
+    list.append(row);
+  }
+  liveHost.append(list, el('p', 'usage-explainer muted', '「约」表示生成中的输出估算，完成后以上游返回数据为准。'));
 }
 
 function renderClients(content) {
@@ -373,8 +449,10 @@ function renderSettings(content) {
   }
   plugins.append(el('p', 'muted small-text', '插件安装和脚本编辑在电脑端完成。')); content.append(plugins);
   content.append(note('手机只连接你选择的工作台。网关需保持运行，访问令牌不会写入地址或本地存储。'));
-  const disconnect = button('断开连接', () => { epoch++; rpc = null; state = null; summary = null; recent = []; sessions = null; renderConnect(); toast('已断开连接，访问令牌已清除'); }, 'button danger');
-  content.append(disconnect, el('p', 'footer-version', '云桥 AI 手机伴侣 · 0.5.0'));
+  const website = el('a', 'website-link', 'yunqiao.me'); website.href = 'https://yunqiao.me'; website.target = '_blank'; website.rel = 'noopener noreferrer';
+  const disconnect = button('断开连接', () => { epoch++; stopLive(); rpc = null; state = null; summary = null; recent = []; live = []; sessions = null; renderConnect(); toast('已断开连接，访问令牌已清除'); }, 'button danger');
+  const source = el('a', 'website-link', '开源代码 · AGPL-3.0-only'); source.href = `https://github.com/jxb412/aurora/tree/v${packageInfo.version}`; source.target = '_blank'; source.rel = 'noopener noreferrer';
+  content.append(disconnect, website, source, el('p', 'footer-version', `yunqiao.me · 手机伴侣 ${packageInfo.version}`));
 }
 
 renderConnect();

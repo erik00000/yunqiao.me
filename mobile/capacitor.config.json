@@ -1,6 +1,6 @@
 {
   "appId": "io.yunqiao.ai.companion",
-  "appName": "云桥AI 工具箱",
+  "appName": "yunqiao.me",
   "webDir": "www",
   "server": {
     "androidScheme": "https"

@@ -5,6 +5,7 @@ from pathlib import Path
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from playwright.sync_api import sync_playwright
 import json
+import sqlite3
 import os
 import socket
 import subprocess
@@ -40,6 +41,15 @@ def main():
         {'type': 'user', 'sessionId': 'ui-session', 'cwd': str(clients), 'timestamp': '2026-11-15T01:00:00Z', 'message': {'role': 'user', 'content': '这是云桥界面验证会话'}},
         {'type': 'assistant', 'timestamp': '2026-11-15T01:00:01Z', 'message': {'role': 'assistant', 'content': [{'type': 'text', 'text': '会话读取成功，配置保持完整。'}]}},
     ]), encoding='utf-8')
+    codex = clients / '.codex'; (codex / 'sessions').mkdir(parents=True)
+    (codex / 'config.toml').write_text('model_provider = "aurora"\n[model_providers.aurora]\nname = "yunqiao.me"\nbase_url = "http://127.0.0.1:3425/v1"\n', encoding='utf-8')
+    repair_id = '10000000-0000-4000-8000-000000000001'
+    rollout = codex / 'sessions' / ('rollout-' + repair_id + '.jsonl')
+    rollout.write_text(json.dumps({'type':'session_meta','payload':{'id':repair_id,'model_provider':'old','source':'cli'}})+'\n'+json.dumps({'type':'event_msg','payload':{'type':'user_message','message':'UI repair fixture'}})+'\n', encoding='utf-8')
+    repair_db = sqlite3.connect(codex / 'state_5.sqlite')
+    repair_db.execute('CREATE TABLE threads(id TEXT PRIMARY KEY, model_provider TEXT, rollout_path TEXT, title TEXT, archived INTEGER)')
+    repair_db.execute('INSERT INTO threads VALUES(?,?,?,?,?)', (repair_id, 'old', str(rollout), 'UI repair fixture', 0))
+    repair_db.commit(); repair_db.close()
     port, debug_port = free_port(), free_port()
     (data / 'settings.json').write_text(json.dumps({'theme': 'light', 'gatewayPort': port, 'autoCheckUpdate': False, 'closeToTray': False}), encoding='utf-8')
     server = ThreadingHTTPServer(('127.0.0.1', 0), Upstream)
@@ -62,10 +72,13 @@ def main():
             errors = []
             page.on('pageerror', lambda e: errors.append(str(e)))
             page.get_by_role('heading', name='连接你的 AI 客户端.').wait_for(timeout=20000)
-            assert page.locator('article.client-card').count() >= 10
+            assert page.locator('article.client-card').count() >= 9
+            assert page.get_by_role('heading', name='ChatGPT 桌面版', exact=True).count() == 1
+            assert page.get_by_role('heading', name='Codex 桌面版', exact=True).count() == 0
+            assert page.get_by_text('yunqiao.me', exact=True).count() > 0
             assert not page.evaluate('document.querySelector("main").scrollWidth > document.querySelector("main").clientWidth')
             (ROOT / 'docs/images').mkdir(exist_ok=True)
-            page.screenshot(animations="disabled", path=str(ROOT / 'docs/images/clients-v0.5.png'))
+            page.screenshot(animations="disabled", path=str(ROOT / 'docs/images/clients-v0.6.png'))
             passed('Electron sandbox + IPC + initial client workspace')
             page.get_by_role('button', name='桌面应用', exact=True).click()
             assert page.locator('article.client-card').count() > 0
@@ -86,7 +99,7 @@ def main():
             modal.get_by_role('button', name='预览配置').click()
             modal.get_by_text('当前配置', exact=True).wait_for()
             assert 'test-only-no-real-key' not in modal.inner_text()
-            page.screenshot(animations="disabled", path=str(ROOT / 'docs/images/connect-v0.5.png'))
+            page.screenshot(animations="disabled", path=str(ROOT / 'docs/images/connect-v0.6.png'))
             modal.get_by_role('button', name='备份并应用配置').click()
             page.wait_for_timeout(600)
             if modal.locator('.notice.warning').count() > len(modal.locator('.config-preview').all()):
@@ -111,6 +124,34 @@ def main():
             downloaded = profile / 'session.md'; download_info.value.save_as(downloaded)
             assert '会话读取成功' in downloaded.read_text(encoding='utf-8')
             passed('Session discovery, reading and real Markdown download')
+            page.get_by_role('button', name='批量修复历史', exact=False).click()
+            repair_modal = page.get_by_role('dialog')
+            repair_modal.get_by_role('button', name='扫描并预览').click()
+            repair_modal.get_by_text('UI repair fixture', exact=True).first.wait_for(timeout=15000)
+            assert repair_modal.get_by_role('checkbox', name='修复 UI repair fixture').is_checked()
+            assert json.loads(rollout.read_text().splitlines()[0])['payload']['model_provider'] == 'old'
+            repair_modal.get_by_role('button', name='关闭', exact=True).click()
+            passed('Batch repair UI previews real JSONL and SQLite without writing')
+            model_provider = page.evaluate("""async () => window.aurora.invoke('provider.save', {name:'UI bulk models',baseUrl:'https://example.invalid',models:[{id:'bulk-one',inputPrice:1},{id:'bulk-two',inputPrice:2}]})""")['id']
+            page.locator('nav').get_by_role('button', name='模型管理', exact=True).click()
+            page.get_by_label('搜索模型', exact=True).fill('bulk-')
+            page.get_by_label('全选当前模型', exact=True).check()
+            page.get_by_role('button', name='批量编辑', exact=True).click()
+            modal = page.get_by_role('dialog')
+            modal.get_by_label('批量输入价格', exact=True).fill('3.25')
+            modal.get_by_role('button', name='预览修改', exact=True).click()
+            modal.get_by_role('button', name='确认更新 2 条', exact=True).click()
+            modal.wait_for(state='hidden')
+            updated_models = page.evaluate("""async id => (await window.aurora.invoke('state.get')).providers.find(p=>p.id===id).models""", model_provider)
+            assert all(m['inputPrice']==3.25 for m in updated_models)
+            page.get_by_label('全选当前模型', exact=True).check()
+            page.get_by_role('button', name='删除所选', exact=True).click()
+            modal=page.get_by_role('dialog'); modal.get_by_role('button', name='预览修改', exact=True).click()
+            modal.get_by_role('button', name='确认删除 2 条', exact=True).click(); modal.wait_for(state='hidden')
+            removed = page.evaluate("""async id => (await window.aurora.invoke('state.get')).providers.find(p=>p.id===id)""", model_provider)
+            assert not removed['models'] and not removed['enabled']
+            passed('Bulk model selection, edit preview, save and delete through real IPC')
+
             page.locator('nav').get_by_role('button', name='厂商目录', exact=True).click()
             page.get_by_label('搜索厂商或模型').fill('DeepSeek')
             page.locator('.catalog-card').first.wait_for(timeout=25000)
@@ -118,7 +159,7 @@ def main():
             passed('Live remote catalog loading and model/vendor search')
             page.get_by_role('button', name='切换浅色 / 深色').click()
             page.wait_for_function('document.documentElement.dataset.theme === "dark"')
-            page.screenshot(animations="disabled", path=str(ROOT / 'docs/images/dark-v0.5.png'))
+            page.screenshot(animations="disabled", path=str(ROOT / 'docs/images/dark-v0.6.png'))
             page.get_by_role('button', name='切换浅色 / 深色').click()
             page.keyboard.press('Control+k')
             page.get_by_label('搜索功能', exact=True).fill('系统设置')
@@ -140,7 +181,7 @@ def main():
             assert rollback['failed'] and rollback['running'] and rollback['originalPort'] == rollback['savedPort'] == rollback['actualPort'], rollback
             passed('Occupied port rolls back settings and restores the actual listener')
             page.get_by_role('button', name='云端与更新', exact=True).click()
-            page.screenshot(animations="disabled", path=str(ROOT / 'docs/images/settings-v0.5.png'))
+            page.screenshot(animations="disabled", path=str(ROOT / 'docs/images/settings-v0.6.png'))
             for name, title in [('模型管理', '模型'), ('路由分组', '路由分组'), ('运行概览', '仪表盘'), ('我的供应商', '我的供应商'), ('本地账号', '本地账号'), ('用量与账单', '用量')]:
                 page.locator('nav').get_by_role('button', name=name, exact=False).click()
                 page.locator('main h1').wait_for()
@@ -148,6 +189,12 @@ def main():
             passed('All primary navigation pages render')
             page.locator('nav').get_by_role('button', name='插件中心', exact=True).click()
             page.get_by_role('heading', name='插件中心', exact=True).wait_for()
+            page.get_by_role('heading', name='ChatGPT 桌面版插件', exact=True).wait_for(timeout=15000)
+            page.get_by_role('button', name='官方拓展包 5', exact=True).click()
+            assert page.locator('.extension-card').count() == 5
+            page.screenshot(animations='disabled', path=str(ROOT / 'docs/images/plugins-v0.6.png'))
+            passed('Bundled desktop plugin catalog loads all five real packages')
+            page.get_by_role('button', name='网关中间件', exact=True).click()
             assert page.get_by_role('switch').count() > 0
             switch = page.get_by_role('switch').first
             switch.click()
@@ -156,10 +203,15 @@ def main():
             assert any(p['enabled'] and p.get('builtin') for p in plugins)
             switch.click()
             passed('Built-in plugin can be enabled, persisted and disabled in the UI')
-            page.locator('nav').get_by_role('button', name='Codex 工作台', exact=True).click()
+            page.locator('nav').get_by_role('button', name='桌面工作台', exact=True).click()
             page.locator('main h1').wait_for()
             assert page.get_by_text('MCP 服务器', exact=False).count() > 0
             passed('Codex extension workspace renders local resource categories')
+            page.locator('nav').get_by_role('button', name='云桥会员', exact=True).click()
+            page.get_by_role('heading', name='云桥会员', exact=True).wait_for()
+            assert page.get_by_label('平台会员邮箱', exact=True).count()==1
+            page.screenshot(animations='disabled', path=str(ROOT / 'docs/images/membership-v0.6.png'))
+            passed('Membership onboarding renders without embedding administrator credentials')
             assert not errors, errors
             # Verify real browser path uses token authentication and does not expose secrets.
             web = pw.chromium.launch(headless=True)
@@ -171,7 +223,7 @@ def main():
             web_page.get_by_role('button', name='连接工作空间', exact=True).click()
             web_page.get_by_role('heading', name='连接你的 AI 客户端.').wait_for()
             assert not web_page.evaluate('document.querySelector("main").scrollWidth > document.querySelector("main").clientWidth')
-            web_page.screenshot(animations="disabled", path=str(ROOT / 'docs/images/web-mobile-v0.5.png'))
+            web_page.screenshot(animations="disabled", path=str(ROOT / 'docs/images/web-mobile-v0.6.png'))
             passed('Authenticated browser console + mobile responsive layout')
             web.close()
             browser.close()

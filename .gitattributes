@@ -15,3 +15,4 @@
 *.png binary
 *.zip binary
 *.exe binary
+third_party/** -text -whitespace

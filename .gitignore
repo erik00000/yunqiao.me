@@ -14,9 +14,12 @@ mobile/ios-v6-generated-backup/
 mobile/www/
 __pycache__/
 *.pyc
+.reference/
 .env
 .env.*
 scripts/probe-codex-db.cjs
 docs/PROMO.md
 docs/images/*.png
 !docs/images/*-v0.5.png
+
+!docs/images/*-v0.6.png

@@ -13,9 +13,9 @@ export default function Catalog({ state, reload, go }: PageProps) {
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [importing, setImporting] = useState(false);
   const toast = useToast();
-  async function fetchCatalog() {
+  async function fetchCatalog(refresh = false) {
     setLoading(true); setError('');
-    try { const r = await call<CloudCatalog>('cloud.catalog', {}); if (!r.ok) throw new Error('目录暂不可用'); setData(r); }
+    try { const r = await call<CloudCatalog>('cloud.catalog', { refresh }); if (!r.ok) throw new Error('目录暂不可用'); setData(r); if (refresh) await reload(); }
     catch (e: any) { setError(e.message); } finally { setLoading(false); }
   }
   useEffect(() => { fetchCatalog(); }, []);
@@ -29,10 +29,10 @@ export default function Catalog({ state, reload, go }: PageProps) {
     } catch (e: any) { toast.push(e.message, 'bad'); } finally { setImporting(false); }
   }
   return <>
-    <div className="page-head"><div><div className="eyebrow">DISCOVER</div><h1>厂商目录</h1><p>发现国内外模型服务，按需加入你的供应商列表。</p></div><div className="actions"><Btn disabled={loading} onClick={fetchCatalog}><Ico name="refresh" size={14} />{loading ? '正在同步…' : '刷新目录'}</Btn><Btn variant="primary" disabled={!picked.size || importing || !window.aurora} onClick={importItems}><Ico name="plus" size={14} />添加所选{picked.size ? ` (${picked.size})` : ''}</Btn></div></div>
+    <div className="page-head"><div><div className="eyebrow">DISCOVER</div><h1>厂商目录</h1><p>发现国内外模型服务，按需加入你的供应商列表。</p></div><div className="actions"><Btn disabled={loading} onClick={() => fetchCatalog(true)}><Ico name="refresh" size={14} />{loading ? '正在同步…' : '刷新目录'}</Btn><Btn variant="primary" disabled={!picked.size || importing || !window.aurora} onClick={importItems}><Ico name="plus" size={14} />添加所选{picked.size ? ` (${picked.size})` : ''}</Btn></div></div>
     <div className="catalog-banner"><div className="catalog-symbol"><Ico name="cloud" size={27} /></div><div className="grow"><b>一份持续更新的 AI 服务目录</b><p>厂商提供模型，供应商提供访问端点。添加后填写你自己的密钥即可连接。</p></div><div className="catalog-count"><strong>{data?.providers.length ?? '—'}</strong><span>个服务预设</span></div><Btn onClick={() => go('providers')}>我的供应商 ↗</Btn></div>
     <div className="filter-bar"><div className="segments">{Object.entries(REGIONS).map(([id, label]) => <button key={id} className={region === id ? 'selected' : ''} onClick={() => setRegion(id)}>{label}</button>)}</div><div className="search-input"><Ico name="search" size={15} /><input aria-label="搜索厂商或模型" placeholder="搜索厂商、模型…" value={query} onChange={e => setQuery(e.target.value)} /></div></div>
-    {error && <div className="notice warning" role="alert">{error}<Btn size="sm" onClick={fetchCatalog}>重试</Btn></div>}
+    {error && <div className="notice warning" role="alert">{error}<Btn size="sm" onClick={() => fetchCatalog(true)}>重试</Btn></div>}
     {data?.warning && <div className="notice warning">{data.warning}</div>}
     {loading && !data ? <div className="client-grid">{[1, 2, 3, 4, 5, 6].map(i => <div className="skeleton" key={i} style={{ height: 215 }} />)}</div> : <div className="client-grid">{list.map(p => {
       const exists = state.providers.some(x => x.presetId === p.key || x.baseUrl === p.baseUrl);
@@ -45,6 +45,6 @@ export default function Catalog({ state, reload, go }: PageProps) {
       </article>;
     })}</div>}
     {!loading && !error && !list.length && <Empty icon="⌕" title="没有找到匹配的服务" hint="试试厂商中文名或模型名称，也可以在「我的供应商」中添加自定义端点。" />}
-    <div className="page-footnote"><Ico name="shield" size={14} /><span>目录只包含公开的服务信息，不包含你的密钥。{data ? ` · 目录 v${data.version} · ${data.source === 'cache' ? '离线缓存' : '远端已同步'}` : ''}</span></div>
+    <div className="page-footnote"><Ico name="shield" size={14} /><span>目录只包含公开的服务信息，不包含你的密钥。{data ? ` · 目录 v${data.version} · ${data.source === 'cache' ? '离线缓存' : data.source === 'builtin' ? '离线预设' : '远端已同步'}` : ''}</span></div>
   </>;
 }

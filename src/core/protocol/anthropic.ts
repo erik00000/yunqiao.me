@@ -253,8 +253,8 @@ export function parseAnthropicResponse(json: any): IRResponse {
     usage: {
       inputTokens: u.input_tokens ?? 0,
       outputTokens: u.output_tokens ?? 0,
-      cacheReadTokens: u.cache_read_input_tokens ?? 0,
-      cacheWriteTokens: u.cache_creation_input_tokens ?? 0,
+      cacheReadTokens: u.cache_read_input_tokens,
+      cacheWriteTokens: u.cache_creation_input_tokens,
     },
   };
 }
@@ -295,8 +295,8 @@ export class AnthropicStreamDecoder {
             type: 'usage',
             usage: {
               inputTokens: j.message.usage.input_tokens ?? 0,
-              cacheReadTokens: j.message.usage.cache_read_input_tokens ?? 0,
-              cacheWriteTokens: j.message.usage.cache_creation_input_tokens ?? 0,
+              cacheReadTokens: j.message.usage.cache_read_input_tokens,
+              cacheWriteTokens: j.message.usage.cache_creation_input_tokens,
             },
           });
         break;

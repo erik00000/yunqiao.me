@@ -15,4 +15,5 @@ await build({
   legalComments: 'eof',
 });
 await Promise.all(['index.html', 'app.css'].map(name => fs.copyFile(path.join(root, 'src', name), path.join(root, 'www', name))));
+await Promise.all(['LICENSE', 'THIRD_PARTY_NOTICES.md'].map(name => fs.copyFile(path.join(root, '..', name), path.join(root, 'www', name))));
 console.log('Mobile web assets built → mobile/www');

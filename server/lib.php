@@ -33,6 +33,19 @@ function store_read(string $name, array $default = []): array
     return is_array($j) ? $j : $default;
 }
 
+/** Authoritative configuration must never turn an unreadable/corrupt file into an empty store. */
+function store_read_strict(string $name, array $default = []): array
+{
+    $file = data_path($name);
+    if (!file_exists($file)) return $default;
+    $raw = @file_get_contents($file);
+    if ($raw === false || trim($raw) === '') throw new RuntimeException('配置文件无法读取，请恢复备份后重试');
+    try { $data = json_decode($raw, true, 512, JSON_THROW_ON_ERROR); }
+    catch (JsonException $error) { throw new RuntimeException('配置文件损坏，已停止写入，请恢复备份'); }
+    if (!is_array($data) || array_is_list($data)) throw new RuntimeException('配置文件结构无效，已停止写入');
+    return $data;
+}
+
 /** 原子写：先写临时文件再 rename，带 flock */
 function store_write(string $name, array $data): bool
 {
@@ -42,7 +55,8 @@ function store_write(string $name, array $data): bool
     if ($json === false) {
         return false;
     }
-    if (@file_put_contents($tmp, $json, LOCK_EX) === false) {
+    if (@file_put_contents($tmp, $json, LOCK_EX) !== strlen($json)) {
+        @unlink($tmp);
         return false;
     }
     if (!@rename($tmp, $f)) {
@@ -55,7 +69,7 @@ function store_write(string $name, array $data): bool
 
 function config(): array
 {
-    $cfg = store_read('config.json', []);
+    $cfg = store_read_strict('config.json', []);
     if (!isset($cfg['passwordHash'])) {
         // Existing installs keep their password. Fresh installs have no shared default credential.
         $initialPassword = getenv('AURORA_ADMIN_PASSWORD');
@@ -77,34 +91,64 @@ function config(): array
         ];
         $cfg['stats'] = ['pings' => 0, 'installs' => 0, 'lastPing' => null];
         $cfg['createdAt'] = date('c');
-        store_write('config.json', $cfg);
+        if (!store_write('config.json', $cfg)) throw new RuntimeException('无法保存后台初始配置');
     }
     return $cfg;
 }
 
 function save_config(array $cfg): void
 {
-    store_write('config.json', $cfg);
+    if (!store_write('config.json', $cfg)) throw new RuntimeException('后台配置保存失败');
 }
 
 function catalog(): array
 {
-    $c = store_read('catalog.json', [
+    $c = store_read_strict('catalog.json', [
         'version' => 0,
         'updatedAt' => date('c'),
         'providers' => [],
     ]);
     if (!isset($c['providers']) || !is_array($c['providers'])) {
-        $c['providers'] = [];
+        throw new RuntimeException('供应商目录结构无效，已停止写入');
     }
     return $c;
 }
 
-function save_catalog(array $c): void
+function save_catalog(array &$c): void
 {
     $c['version'] = (int)($c['version'] ?? 0) + 1;
     $c['updatedAt'] = date('c');
-    store_write('catalog.json', $c);
+    if (!store_write('catalog.json', $c)) throw new RuntimeException('供应商目录保存失败');
+}
+
+/** Keep checksums when editing release notes; never carry a previous build hash to a changed URL/version. */
+function normalize_update(array $body, array $previous): array
+{
+    $version = (string)($body['version'] ?? $previous['version'] ?? '0.1.0');
+    $previousFiles = (array)($previous['files'] ?? []);
+    $files = (array)($body['files'] ?? $previous['files'] ?? []);
+    foreach ($files as $platform => $url) {
+        if (!preg_match('/^[a-zA-Z0-9-]+$/D', (string)$platform) || !is_string($url)) throw new InvalidArgumentException('安装包平台或下载地址无效');
+        if ($url === '') continue;
+        $parts = parse_url($url);
+        if (!$parts || !in_array($parts['scheme'] ?? '', ['https', 'http'], true) || empty($parts['host']) || isset($parts['user']) || isset($parts['pass'])) throw new InvalidArgumentException('安装包下载地址必须为 HTTP(S) URL');
+    }
+    $hashes = [];
+    if ($version === (string)($previous['version'] ?? '')) {
+        foreach ((array)($previous['sha256'] ?? []) as $platform => $hash) {
+            if (isset($files[$platform]) && $files[$platform] === ($previousFiles[$platform] ?? null) && is_string($hash) && preg_match('/^[a-fA-F0-9]{64}$/D', $hash)) $hashes[$platform] = strtolower($hash);
+        }
+    }
+    if (array_key_exists('sha256', $body)) {
+        if (!is_array($body['sha256'])) throw new InvalidArgumentException('安装包 SHA256 格式无效');
+        foreach ($body['sha256'] as $platform => $hash) {
+            if (!isset($files[$platform]) || !is_string($hash) || !preg_match('/^[a-fA-F0-9]{64}$/D', $hash)) throw new InvalidArgumentException('安装包 SHA256 必须为64位十六进制且匹配下载平台');
+            $hashes[$platform] = strtolower($hash);
+        }
+    }
+    return array_merge($previous, ['version' => $version, 'notes' => (string)($body['notes'] ?? $previous['notes'] ?? ''),
+        'mandatory' => (bool)($body['mandatory'] ?? $previous['mandatory'] ?? false), 'files' => (object)$files,
+        'sha256' => (object)$hashes, 'publishedAt' => now()]);
 }
 
 /* ------------------------------ 会话与鉴权 ------------------------------ */
@@ -200,7 +244,7 @@ function normalize_provider(array $p): array
     $regions = ['cn', 'global', 'local', 'relay', 'subscription'];
     $baseUrl = trim((string)($p['baseUrl'] ?? ''));
     $parts = parse_url($baseUrl);
-    if (!$parts || !in_array($parts['scheme'] ?? '', ['http', 'https'], true) || empty($parts['host']) || isset($parts['user']) || isset($parts['pass'])) {
+    if (!(($p['customBaseUrl'] ?? false) === true && $baseUrl === '') && (!$parts || !in_array($parts['scheme'] ?? '', ['http', 'https'], true) || empty($parts['host']) || isset($parts['user']) || isset($parts['pass']) || isset($parts['query']) || isset($parts['fragment']))) {
         throw new InvalidArgumentException('供应商地址必须为不含账号密码的 HTTP(S) 地址');
     }
     if (!empty($p['format']) && !in_array($p['format'], $formats, true)) {
@@ -214,26 +258,28 @@ function normalize_provider(array $p): array
         }
     }
     $models = [];
+    $modelIds = [];
+    if (!is_array($p['models'] ?? []) || count($p['models'] ?? []) > 10000) throw new InvalidArgumentException('模型列表格式错误或数量过多');
     foreach (($p['models'] ?? []) as $m) {
         if (!is_array($m)) {
             continue;
         }
         $id = trim((string)($m['id'] ?? ''));
-        if ($id === '') {
-            continue;
-        }
-        $models[] = [
+        if ($id === '' || strlen($id) > 512 || preg_match('/[\r\n\x00]/', $id)) throw new InvalidArgumentException('模型 ID 无效');
+        if (isset($modelIds[$id])) throw new InvalidArgumentException('同一供应商的模型 ID 不能重复');
+        $modelIds[$id] = true;
+        $model = [
             'id' => $id,
             'displayName' => (string)($m['displayName'] ?? ''),
-            'contextWindow' => isset($m['contextWindow']) ? (int)$m['contextWindow'] : 128000,
-            'inputPrice' => isset($m['inputPrice']) ? (float)$m['inputPrice'] : 0,
-            'outputPrice' => isset($m['outputPrice']) ? (float)$m['outputPrice'] : 0,
-            'capabilities' => [
-                'tools' => (bool)($m['capabilities']['tools'] ?? true),
-                'vision' => (bool)($m['capabilities']['vision'] ?? false),
-                'thinking' => (bool)($m['capabilities']['thinking'] ?? false),
-            ],
+            'capabilities' => [],
         ];
+        foreach (['contextWindow', 'maxOutput', 'inputPrice', 'outputPrice', 'cacheReadPrice', 'cacheWritePrice'] as $field) {
+            if (!isset($m[$field]) || $m[$field] === '') continue;
+            if (!is_numeric($m[$field]) || !is_finite((float)$m[$field]) || (float)$m[$field] < 0) throw new InvalidArgumentException('模型价格和容量必须为非负数');
+            $model[$field] = in_array($field, ['contextWindow', 'maxOutput'], true) ? (int)$m[$field] : (float)$m[$field];
+        }
+        foreach (['tools', 'vision', 'thinking'] as $cap) if (isset($m['capabilities'][$cap]) && is_bool($m['capabilities'][$cap])) $model['capabilities'][$cap] = $m['capabilities'][$cap];
+        $models[] = $model;
     }
     return [
         'key' => (string)($p['key'] ?? ('p_' . substr(md5((string)($p['name'] ?? '') . microtime()), 0, 10))),
@@ -241,6 +287,7 @@ function normalize_provider(array $p): array
         'vendor' => (string)($p['vendor'] ?? ''),
         'format' => in_array($p['format'] ?? '', $formats, true) ? $p['format'] : 'openai-chat',
         'baseUrl' => $baseUrl,
+        'customBaseUrl' => ($p['customBaseUrl'] ?? false) === true,
         'region' => in_array($p['region'] ?? '', $regions, true) ? $p['region'] : 'relay',
         'color' => (string)($p['color'] ?? '#6d8cff'),
         'icon' => (string)($p['icon'] ?? '◆'),

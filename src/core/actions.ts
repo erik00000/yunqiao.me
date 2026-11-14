@@ -1,6 +1,9 @@
 import { AuroraStore } from './store/index.js';
-import { PROVIDER_PRESETS } from './presets/providers.js';
-import { AGENT_ADAPTERS, detectAll, detectReset, getAdapter, connectionParameters, exportEnvScript, type ConnectContext } from './agents/adapters.js';
+import { catalogPresets, ensureCatalog, refreshCatalog } from './catalog.js';
+import { manageModels } from './modelManagement.js';
+import { activeRequests } from './gateway/liveUsage.js';
+import { runExtensionAction } from './extensions/index.js';
+import { AGENT_ADAPTERS, detectAll, detectReset, getAdapter, connectionParameters, exportEnvScript, configureDesktopPath, type ConnectContext } from './agents/adapters.js';
 import { scanSessions, readSession, resumeCommand, exportSessionMarkdown } from './sessions.js';
 import { BUILTIN_MIDDLEWARE, SAMPLE_PLUGIN } from './plugins/middleware.js';
 import { desktopInfo, launchAndInject, injectorStatus, BUILTIN_INJECT_SCRIPTS } from './injector.js';
@@ -9,6 +12,8 @@ import { openUpstream, readAll } from './gateway/upstream.js';
 import { buildUpstreamHttp, parseClientRequest } from './protocol/index.js';
 import type { GatewayStatus } from './gateway/server.js';
 import type { UsageRecord } from './store/types.js';
+import { runHistoryRepairAction } from './historyRepair.js';
+import { runSessionIndexRepairAction } from './sessionIndexRepair.js';
 import {
   checkUpdate,
   fetchCloudCatalog,
@@ -211,6 +216,10 @@ export function summarizeUsage(records: UsageRecord[]) {
     totalOut = 0,
     totalCost = 0,
     totalCache = 0,
+    totalCacheWrite = 0,
+    cacheInput = 0,
+    cacheReports = 0,
+    cacheWriteReports = 0,
     errors = 0;
 
   for (const r of records) {
@@ -219,7 +228,10 @@ export function summarizeUsage(records: UsageRecord[]) {
     totalIn += r.inputTokens;
     totalOut += r.outputTokens;
     totalCost += r.cost;
-    totalCache += r.cacheRead;
+    totalCache += r.cacheRead || 0;
+    totalCacheWrite += r.cacheWrite || 0;
+    if (r.cacheWriteKnown || r.cacheWrite > 0) cacheWriteReports++;
+    if (r.cacheReadKnown || r.cacheRead > 0) { cacheInput += r.inputTokens; cacheReports++; }
     if (r.status >= 400) errors++;
     const d = byDay.get(day) ?? { cost: 0, tokens: 0, calls: 0 };
     byDay.set(day, { cost: d.cost + r.cost, tokens: d.tokens + tokens, calls: d.calls + 1 });
@@ -236,6 +248,10 @@ export function summarizeUsage(records: UsageRecord[]) {
       inputTokens: totalIn,
       outputTokens: totalOut,
       cacheRead: totalCache,
+      cacheWrite: totalCacheWrite,
+      cacheRate: cacheInput ? Math.min(1, totalCache / cacheInput) : 0,
+      cacheReports,
+      cacheWriteReports,
       cost: totalCost,
       calls: records.length,
       errors,
@@ -251,15 +267,23 @@ export function summarizeUsage(records: UsageRecord[]) {
 export async function runAction(deps: ActionDeps, action: string, payload: any): Promise<any | null> {
   const store = deps.store;
   payload = payload ?? {};
+  if (action.startsWith('extension.')) return runExtensionAction(deps, action, payload);
+  configureDesktopPath(store.readExtra<any>('extensions.json', {})?.connection?.exePath);
+  if (action.startsWith('codex.repair.')) return runHistoryRepairAction(action, payload);
+  if (action.startsWith('codex.indexRepair.')) return runSessionIndexRepairAction(action, payload);
   switch (action) {
-    case 'state.get':
+    case 'state.get': {
+      const catalog = await ensureCatalog(store);
+      const agents = store.listAgents();
+      if (!agents['chatgpt-desktop'] && agents['codex-desktop']) store.saveAgent({ ...agents['codex-desktop'], id: 'chatgpt-desktop' });
       return {
         settings: store.getSettings(),
         providers: store.listProviders(),
         groups: store.listGroups(),
         agents: store.listAgents(),
         plugins: store.listPlugins(),
-        presets: PROVIDER_PRESETS,
+        presets: catalogPresets(store, catalog),
+        catalog: { source: catalog.source, fetchedAt: catalog.fetchedAt, version: catalog.version, warning: catalog.warning, syncing: catalog.syncing },
         builtinMiddleware: BUILTIN_MIDDLEWARE.map((b) => ({
           id: b.id,
           name: b.name,
@@ -290,9 +314,14 @@ export async function runAction(deps: ActionDeps, action: string, payload: any):
         detected: detectAll(true),
         mode: deps.platform === 'web' ? 'web' : 'desktop',
       };
+    }
 
     case 'provider.save':
       return store.saveProvider(payload);
+    case 'model.batch.preview':
+      return manageModels(store, payload);
+    case 'model.batch.apply':
+      return manageModels(store, payload, true);
     case 'provider.delete':
       store.deleteProvider(payload.id);
       return { ok: true };
@@ -306,8 +335,9 @@ export async function runAction(deps: ActionDeps, action: string, payload: any):
 
     /* ---------- 云端 ---------- */
     case 'cloud.catalog': {
-      const url = payload.url || store.getSettings().catalogUrl;
-      const data = await fetchCloudCatalog(url, store);
+      const data = payload.url && payload.url !== store.getSettings().catalogUrl
+        ? await fetchCloudCatalog(payload.url, store)
+        : payload.refresh ? await refreshCatalog(store) : await ensureCatalog(store);
       return { ok: true, ...data };
     }
     case 'cloud.import': {
@@ -335,7 +365,7 @@ export async function runAction(deps: ActionDeps, action: string, payload: any):
     case 'codex.diagnose':
       return diagnoseSessions();
     case 'codex.repairSessions':
-      return repairSessions(payload.provider);
+      return { ok: false, message: '请使用历史会话中的批量修复，先预览范围后执行；旧版全库直接改写入口已停用。' };
     case 'codex.assets':
       return { ok: true, assets: listCodexAssets() };
     case 'codex.toggleAsset':
@@ -398,8 +428,9 @@ export async function runAction(deps: ActionDeps, action: string, payload: any):
       const provider = store.getProvider(String(payload.providerId || ''));
       if (!provider) return { ok: false, message: '请选择有效供应商' };
       if (payload.mode && !['gateway', 'direct'].includes(payload.mode)) return { ok: false, message: '不支持的接入模式' };
-      const sharedCodex = adapter.id === 'codex-cli' || adapter.id === 'codex-desktop';
-      const prior = store.listAgents()[adapter.id] || (sharedCodex ? store.listAgents()[adapter.id === 'codex-cli' ? 'codex-desktop' : 'codex-cli'] : undefined);
+      const sharedCodex = adapter.id === 'codex-cli' || adapter.id === 'chatgpt-desktop';
+      const states = store.listAgents();
+      const prior = states[adapter.id] || (sharedCodex ? states['codex-cli'] || states['chatgpt-desktop'] || states['codex-desktop'] : undefined);
       const context: ConnectContext = {
         provider, model: String(payload.model || provider.models[0]?.id || ''), modelMap: payload.modelMap,
         mode: payload.mode || 'gateway', gatewayUrl: deps.gatewayUrl(), token: store.getSettings().gatewayToken,
@@ -412,7 +443,7 @@ export async function runAction(deps: ActionDeps, action: string, payload: any):
       if (context.mode === 'gateway' && !deps.gatewayStatus().running) return { ok: false, message: '本地网关未运行，请先启动网关后再应用配置' };
       const result = adapter.connect(context);
       if (result.ok) {
-        const ids = sharedCodex ? (['codex-cli', 'codex-desktop'] as const) : [adapter.id];
+        const ids = sharedCodex ? (['codex-cli', 'chatgpt-desktop', 'codex-desktop'] as const) : [adapter.id];
         for (const id of ids) store.saveAgent({ id, connected: true, pendingReapply: false, providerId: provider.id, model: context.model, modelMap: context.modelMap, mode: context.mode, configPath: result.path, backupPath: result.backup });
       }
       return result;
@@ -423,7 +454,7 @@ export async function runAction(deps: ActionDeps, action: string, payload: any):
       const current = store.listAgents()[adapter.id];
       const result = adapter.disconnect(current?.backupPath);
       if (result.ok) {
-        const ids = adapter.id === 'codex-cli' || adapter.id === 'codex-desktop' ? (['codex-cli', 'codex-desktop'] as const) : [adapter.id];
+        const ids = adapter.id === 'codex-cli' || adapter.id === 'chatgpt-desktop' ? (['codex-cli', 'chatgpt-desktop', 'codex-desktop'] as const) : [adapter.id];
         for (const id of ids) store.saveAgent({ id, connected: false, pendingReapply: false, backupPath: undefined });
       }
       return result;
@@ -447,6 +478,8 @@ export async function runAction(deps: ActionDeps, action: string, payload: any):
 
     case 'usage.recent':
       return store.recentRequests(200);
+    case 'usage.live':
+      return activeRequests(store);
     case 'usage.summary':
       return summarizeUsage(store.readUsage(payload?.days ?? 14));
 

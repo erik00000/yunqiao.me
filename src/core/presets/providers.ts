@@ -20,24 +20,10 @@ export interface ProviderPreset {
   models: ProviderModel[];
 }
 
-const m = (
-  id: string,
-  ctx: number,
-  inp: number,
-  out: number,
-  caps: { tools?: boolean; vision?: boolean; thinking?: boolean } = {},
-): ProviderModel => ({
-  id,
-  contextWindow: ctx,
-  inputPrice: inp,
-  outputPrice: out,
-  capabilities: { tools: caps.tools ?? true, vision: caps.vision ?? false, thinking: caps.thinking ?? false },
-});
-
 /**
- * 供应商预设库。价格是「每百万 token 美元」的公开目录价，
- * 中转站倍率可以在供应商设置里覆盖。model 列表只是起步清单，
- * 真实列表会通过 /v1/models 自动拉取。
+ * 2026-11-15 官方目录核对；每个默认 API ID 的来源见 docs/MODEL-SOURCES.md。
+ * 仅给公开证实的模型填入 ID 与元数据，无法核实的账号/本地目录保持空列表。
+ * 缺省价格表示待确认，不能当作免费；预设不会覆盖用户已有供应商及删改的模型。
  */
 export const PROVIDER_PRESETS: ProviderPreset[] = [
   {
@@ -51,12 +37,32 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     color: '#6d8cff',
     icon: '🌉',
     docs: 'https://api.yunqiao.me',
-    note: '官方中转 · 新用户注册送 $5 · 国内直连',
+    note: "云桥AI 官方中转 · 新用户注册送 $10 · 登录后读取账号实际可用模型。",
     models: [
-      m('gpt-5.1-codex', 272000, 1.25, 10, { thinking: true, vision: true }),
-      m('gpt-4.1', 272000, 2, 8, { vision: true }),
-      m('claude-sonnet-4-5', 200000, 3, 15, { thinking: true, vision: true }),
-      m('deepseek-chat', 128000, 0.27, 1.1),
+      {
+        "id": "gpt-6.1-sol"
+      },
+      {
+        "id": "gpt-6-astra"
+      },
+      {
+        "id": "gpt-6-luna"
+      },
+      {
+        "id": "claude-sonnet-5-5"
+      },
+      {
+        "id": "claude-opus-5-5"
+      },
+      {
+        "id": "claude-haiku-5-5"
+      },
+      {
+        "id": "claude-fable-5-2"
+      },
+      {
+        "id": "deepseek-flash"
+      }
     ],
   },
   /* ------------------------------ 国内 ------------------------------ */
@@ -71,9 +77,32 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     color: '#4d6bfe',
     icon: '🐳',
     docs: 'https://platform.deepseek.com',
+    note: "deepseek-flash 对应 V4.1-Flash-1017，默认支持思考。显示缓存未命中高峰价，非高峰另有优惠。",
     models: [
-      { ...m('deepseek-chat', 128000, 0.28, 0.42), thinkingField: 'none' },
-      { ...m('deepseek-reasoner', 128000, 0.55, 2.19, { thinking: true }), thinkingField: 'enable_thinking' },
+      {
+        "id": "deepseek-flash",
+        "contextWindow": 1000000,
+        "inputPrice": 0.3,
+        "outputPrice": 1.2,
+        "maxOutput": 384000,
+        "capabilities": {
+          "tools": true,
+          "vision": true,
+          "thinking": true
+        }
+      },
+      {
+        "id": "deepseek-v4-pro",
+        "contextWindow": 1000000,
+        "inputPrice": 1.32,
+        "outputPrice": 3.96,
+        "maxOutput": 384000,
+        "capabilities": {
+          "tools": true,
+          "vision": false,
+          "thinking": true
+        }
+      }
     ],
   },
   {
@@ -86,8 +115,28 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     baseUrl: 'https://api.moonshot.cn/v1',
     color: '#0f172a',
     icon: '🌙',
-    docs: 'https://platform.moonshot.cn',
-    models: [m('kimi-k2-turbo-preview', 262144, 0.28, 1.15), m('moonshot-v1-128k', 131072, 0.84, 0.84)],
+    docs: "https://platform.kimi.com/docs/get-api-key",
+    note: "官方当前推荐 Kimi K3.1 Pro；高速版能力相同、输出速度更高；国内定价以人民币账单为准。",
+    models: [
+      {
+        "id": "kimi-k3.1-pro",
+        "contextWindow": 1000000,
+        "capabilities": {
+          "tools": true,
+          "vision": true,
+          "thinking": true
+        }
+      },
+      {
+        "id": "kimi-k3.1-pro-highspeed",
+        "contextWindow": 1000000,
+        "capabilities": {
+          "tools": true,
+          "vision": true,
+          "thinking": true
+        }
+      }
+    ],
   },
   {
     id: 'zhipu',
@@ -100,7 +149,39 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     color: '#2f6bff',
     icon: '🔷',
     docs: 'https://open.bigmodel.cn',
-    models: [m('glm-4.6', 200000, 0.6, 2.2, { thinking: true }), m('glm-4-flash', 128000, 0, 0)],
+    note: "GLM-5.3 为文本模型且始终启用思考；Flash/FlashX 支持图像与视频，不能按旧 GLM-4-Flash 的免费价格估算。",
+    models: [
+      {
+        "id": "glm-5.3",
+        "contextWindow": 1000000,
+        "maxOutput": 128000,
+        "capabilities": {
+          "tools": true,
+          "vision": false,
+          "thinking": true
+        }
+      },
+      {
+        "id": "glm-5.3-flash",
+        "contextWindow": 1000000,
+        "maxOutput": 128000,
+        "capabilities": {
+          "tools": true,
+          "vision": true,
+          "thinking": true
+        }
+      },
+      {
+        "id": "glm-5.3-flashx",
+        "contextWindow": 1000000,
+        "maxOutput": 128000,
+        "capabilities": {
+          "tools": true,
+          "vision": true,
+          "thinking": true
+        }
+      }
+    ],
   },
   {
     id: 'qwen',
@@ -113,7 +194,25 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     color: '#615ced',
     icon: '☁️',
     docs: 'https://bailian.console.aliyun.com',
-    models: [m('qwen3-max', 262144, 0.86, 3.44), m('qwen3-coder-plus', 1000000, 0.6, 2.4)],
+    note: "按官方 API 文档核对 Qwen 3.8 模型 ID；不同区域、输入长度与思考模式有不同定价。Qwen4-max-preview 属于 Token Plan，需对应开通与地址。",
+    models: [
+      {
+        "id": "qwen3.8-max",
+        "capabilities": {
+          "tools": true,
+          "vision": true,
+          "thinking": true
+        }
+      },
+      {
+        "id": "qwen3.8-flash",
+        "capabilities": {
+          "tools": true,
+          "vision": true,
+          "thinking": true
+        }
+      }
+    ],
   },
   {
     id: 'minimax',
@@ -122,11 +221,31 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     vendor: 'MiniMax',
     region: 'cn',
     format: 'openai-chat',
-    baseUrl: 'https://api.minimax.chat/v1',
+    baseUrl: "https://api.minimax.cn/v1",
     color: '#ff5c35',
     icon: '🔺',
-    docs: 'https://platform.minimaxi.com',
-    models: [m('MiniMax-M2', 200000, 0.3, 1.2), m('abab6.5s-chat', 245000, 0.14, 0.14)],
+    docs: "https://platform.minimax.cn/docs/api-reference/text-openai-api",
+    note: "已更新官方国内 OpenAI 兼容地址；M3 系列原生多模态，价格按人民币与上下文档位计费。",
+    models: [
+      {
+        "id": "MiniMax-M3.1-Flash",
+        "contextWindow": 1000000,
+        "capabilities": {
+          "tools": true,
+          "vision": true,
+          "thinking": true
+        }
+      },
+      {
+        "id": "MiniMax-M3",
+        "contextWindow": 1000000,
+        "capabilities": {
+          "tools": true,
+          "vision": true,
+          "thinking": true
+        }
+      }
+    ],
   },
   {
     id: 'siliconflow',
@@ -139,7 +258,8 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     color: '#7c3aed',
     icon: '🧪',
     docs: 'https://siliconflow.cn',
-    models: [m('deepseek-ai/DeepSeek-V3.2', 131072, 0.14, 0.28), m('Qwen/Qwen3-235B-A22B-Instruct', 131072, 0.14, 0.56)],
+    note: "该服务的当前模型列表需结合账号或控制台确认；添加密钥后读取模型，避免使用过期或未开通的固定 ID。",
+    models: [],
   },
   {
     id: 'volcengine',
@@ -151,9 +271,19 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
     color: '#1664ff',
     icon: '🌋',
-    docs: 'https://console.volcengine.com/ark',
-    note: '模型名要填「推理接入点 ID」或以模型名直接调用（需开通）',
-    models: [m('doubao-seed-1-6', 262144, 0.11, 0.28, { thinking: true }), m('deepseek-v3-1-250821', 131072, 0.28, 1.1)],
+    docs: "https://docs.volcengine.com/docs/ark/model-list?lang=zh",
+    note: "使用官方模型目录中的精确模型 ID；须先开通，也可填写自己的推理接入点 ID。",
+    models: [
+      {
+        "id": "doubao-seed-2-1-pro-260915"
+      },
+      {
+        "id": "doubao-seed-2-1-lite-260915"
+      },
+      {
+        "id": "deepseek-v4-1-flash-261017"
+      }
+    ],
   },
   {
     id: 'stepfun',
@@ -165,8 +295,19 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     baseUrl: 'https://api.stepfun.com/v1',
     color: '#00a3ff',
     icon: '🪜',
-    docs: 'https://platform.stepfun.com',
-    models: [m('step-3', 262144, 0.2, 0.8), m('step-2-mini', 32768, 0.14, 0.28)],
+    docs: "https://platform.stepfun.com/docs/zh/guides/models/list",
+    note: "官方明确的 Step 5 Preview API ID；预览模型可用范围与价格以账号控制台为准。",
+    models: [
+      {
+        "id": "step-5-preview",
+        "contextWindow": 1000000,
+        "capabilities": {
+          "tools": true,
+          "vision": true,
+          "thinking": true
+        }
+      }
+    ],
   },
   {
     id: 'baidu-qianfan',
@@ -179,7 +320,8 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     color: '#2932e1',
     icon: '🐾',
     docs: 'https://qianfan.cloud.baidu.com',
-    models: [m('ernie-4.5-turbo-128k', 128000, 0.11, 0.44)],
+    note: "该服务的当前模型列表需结合账号或控制台确认；添加密钥后读取模型，避免使用过期或未开通的固定 ID。",
+    models: [],
   },
   {
     id: 'hunyuan',
@@ -192,7 +334,8 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     color: '#00a4ff',
     icon: '🐧',
     docs: 'https://cloud.tencent.com/product/hunyuan',
-    models: [m('hunyuan-turbos-latest', 32768, 0.11, 0.28)],
+    note: "该服务的当前模型列表需结合账号或控制台确认；添加密钥后读取模型，避免使用过期或未开通的固定 ID。",
+    models: [],
   },
   {
     id: 'modelscope',
@@ -204,7 +347,8 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     baseUrl: 'https://api-inference.modelscope.cn/v1',
     color: '#8b5cf6',
     icon: '🏔️',
-    models: [m('Qwen/Qwen3-Coder-480B-A35B-Instruct', 262144, 0, 0)],
+    note: "该服务的当前模型列表需结合账号或控制台确认；添加密钥后读取模型，避免使用过期或未开通的固定 ID。",
+    models: [],
   },
   {
     id: 'ppio',
@@ -216,7 +360,8 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     baseUrl: 'https://api.ppio.com/openai',
     color: '#f97316',
     icon: '⚡',
-    models: [m('deepseek/deepseek-v3', 131072, 0.27, 1.1)],
+    note: "该服务的当前模型列表需结合账号或控制台确认；添加密钥后读取模型，避免使用过期或未开通的固定 ID。",
+    models: [],
   },
   {
     id: 'sensenova',
@@ -228,7 +373,8 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     baseUrl: 'https://api.sensenova.cn/compatible-mode/v1',
     color: '#e11d48',
     icon: '🎋',
-    models: [m('SenseChat-5', 131072, 0.55, 1.65)],
+    note: "该服务的当前模型列表需结合账号或控制台确认；添加密钥后读取模型，避免使用过期或未开通的固定 ID。",
+    models: [],
   },
   {
     id: 'iflytek',
@@ -240,7 +386,8 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     baseUrl: 'https://spark-api-open.xf-yun.com/v1',
     color: '#0ea5e9',
     icon: '✦',
-    models: [m('generalv3.5', 8192, 0.14, 0.14)],
+    note: "该服务的当前模型列表需结合账号或控制台确认；添加密钥后读取模型，避免使用过期或未开通的固定 ID。",
+    models: [],
   },
   {
     id: 'lingyi',
@@ -252,7 +399,8 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     baseUrl: 'https://api.lingyiwanwu.com/v1',
     color: '#22c55e',
     icon: '🌱',
-    models: [m('yi-lightning', 16384, 0.14, 0.14)],
+    note: "该服务的当前模型列表需结合账号或控制台确认；添加密钥后读取模型，避免使用过期或未开通的固定 ID。",
+    models: [],
   },
   {
     id: 'baichuan',
@@ -264,7 +412,8 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     baseUrl: 'https://api.baichuan-ai.com/v1',
     color: '#f59e0b',
     icon: '🌊',
-    models: [m('Baichuan4', 32768, 1.43, 1.43)],
+    note: "该服务的当前模型列表需结合账号或控制台确认；添加密钥后读取模型，避免使用过期或未开通的固定 ID。",
+    models: [],
   },
   {
     id: 'huawei-maas',
@@ -276,7 +425,8 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     baseUrl: 'https://api.modelarts-maas.com/v1',
     color: '#cf0a2c',
     icon: '🌸',
-    models: [m('deepseek-v3', 131072, 0.27, 1.1)],
+    note: "该服务的当前模型列表需结合账号或控制台确认；添加密钥后读取模型，避免使用过期或未开通的固定 ID。",
+    models: [],
   },
   {
     id: 'infini',
@@ -288,7 +438,8 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     baseUrl: 'https://cloud.infini-ai.com/maas/v1',
     color: '#06b6d4',
     icon: '∞',
-    models: [m('deepseek-v3', 131072, 0.27, 1.1)],
+    note: "该服务的当前模型列表需结合账号或控制台确认；添加密钥后读取模型，避免使用过期或未开通的固定 ID。",
+    models: [],
   },
 
   /* ------------------------------ 国外 ------------------------------ */
@@ -298,12 +449,62 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     nameZh: 'OpenAI',
     vendor: 'OpenAI',
     region: 'global',
-    format: 'openai-responses',
+    format: "openai-responses",
     baseUrl: 'https://api.openai.com/v1',
     color: '#10a37f',
     icon: '◍',
     docs: 'https://platform.openai.com',
-    models: [m('gpt-5.1-codex', 272000, 1.25, 10, { thinking: true }), m('gpt-4.1', 272000, 2, 8)],
+    note: "已核对官方 GPT-6 模型；工具调用使用 Responses API。目录价格为标准输入/输出，不含缓存与工具费用。",
+    models: [
+      {
+        "id": "gpt-6.1-sol",
+        "contextWindow": 1050000,
+        "inputPrice": 2,
+        "outputPrice": 10,
+        "maxOutput": 128000,
+        "capabilities": {
+          "tools": true,
+          "vision": true,
+          "thinking": true
+        }
+      },
+      {
+        "id": "gpt-6-astra",
+        "contextWindow": 1050000,
+        "inputPrice": 10,
+        "outputPrice": 50,
+        "maxOutput": 128000,
+        "capabilities": {
+          "tools": true,
+          "vision": true,
+          "thinking": true
+        }
+      },
+      {
+        "id": "gpt-6.1-terra",
+        "contextWindow": 1050000,
+        "inputPrice": 1,
+        "outputPrice": 5,
+        "maxOutput": 128000,
+        "capabilities": {
+          "tools": true,
+          "vision": true,
+          "thinking": true
+        }
+      },
+      {
+        "id": "gpt-6-luna",
+        "contextWindow": 1050000,
+        "inputPrice": 0.1,
+        "outputPrice": 0.5,
+        "maxOutput": 128000,
+        "capabilities": {
+          "tools": true,
+          "vision": true,
+          "thinking": true
+        }
+      }
+    ],
   },
   {
     id: 'anthropic',
@@ -316,10 +517,54 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     color: '#d97757',
     icon: '✳',
     docs: 'https://console.anthropic.com',
+    note: "官方当前模型，使用 adaptive thinking；Haiku 为分档起价，按实际账单计费。",
     models: [
-      m('claude-sonnet-4-5', 1000000, 3, 15, { thinking: true, vision: true }),
-      m('claude-opus-4-1', 200000, 15, 75, { thinking: true, vision: true }),
-      m('claude-haiku-4-5', 200000, 1, 5, { thinking: true, vision: true }),
+      {
+        "id": "claude-sonnet-5-5",
+        "contextWindow": 1000000,
+        "inputPrice": 2,
+        "outputPrice": 10,
+        "maxOutput": 128000,
+        "capabilities": {
+          "tools": true,
+          "vision": true,
+          "thinking": true
+        }
+      },
+      {
+        "id": "claude-opus-5-5",
+        "contextWindow": 1000000,
+        "inputPrice": 4,
+        "outputPrice": 20,
+        "maxOutput": 128000,
+        "capabilities": {
+          "tools": true,
+          "vision": true,
+          "thinking": true
+        }
+      },
+      {
+        "id": "claude-fable-5-2",
+        "contextWindow": 1000000,
+        "inputPrice": 8,
+        "outputPrice": 40,
+        "maxOutput": 128000,
+        "capabilities": {
+          "tools": true,
+          "vision": true,
+          "thinking": true
+        }
+      },
+      {
+        "id": "claude-haiku-5-5",
+        "contextWindow": 1000000,
+        "maxOutput": 128000,
+        "capabilities": {
+          "tools": true,
+          "vision": true,
+          "thinking": true
+        }
+      }
     ],
   },
   {
@@ -333,7 +578,39 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     color: '#4285f4',
     icon: '✦',
     docs: 'https://aistudio.google.com',
-    models: [m('gemini-2.5-pro', 1048576, 1.25, 10, { thinking: true, vision: true }), m('gemini-2.5-flash', 1048576, 0.3, 2.5)],
+    note: "官方 Gemini 4 系列；长输出模式、地区和账号访问范围以官方控制台为准。",
+    models: [
+      {
+        "id": "gemini-4-hydrogen",
+        "contextWindow": 1048576,
+        "maxOutput": 65536,
+        "capabilities": {
+          "tools": true,
+          "vision": true,
+          "thinking": true
+        }
+      },
+      {
+        "id": "gemini-4-carbon",
+        "contextWindow": 1048576,
+        "maxOutput": 65536,
+        "capabilities": {
+          "tools": true,
+          "vision": true,
+          "thinking": true
+        }
+      },
+      {
+        "id": "gemini-4-argon",
+        "contextWindow": 1048576,
+        "maxOutput": 65536,
+        "capabilities": {
+          "tools": true,
+          "vision": true,
+          "thinking": true
+        }
+      }
+    ],
   },
   {
     id: 'xai',
@@ -345,7 +622,18 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     baseUrl: 'https://api.x.ai/v1',
     color: '#111827',
     icon: '𝕏',
-    models: [m('grok-4', 256000, 3, 15, { thinking: true }), m('grok-code-fast-1', 256000, 0.2, 1.5)],
+    docs: "https://docs.x.ai/developers/models",
+    note: "官方模型服务清单中核对 Grok 4.7，访问权限与地区以账号为准。",
+    models: [
+      {
+        "id": "grok-4.7",
+        "capabilities": {
+          "tools": true,
+          "vision": true,
+          "thinking": true
+        }
+      }
+    ],
   },
   {
     id: 'mistral',
@@ -357,7 +645,19 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     baseUrl: 'https://api.mistral.ai/v1',
     color: '#ff7000',
     icon: '🌬️',
-    models: [m('mistral-large-latest', 131072, 2, 6), m('codestral-latest', 256000, 0.3, 0.9)],
+    docs: "https://docs.mistral.ai/models/mistral-large-4-0",
+    models: [
+      {
+        "id": "mistral-large-4",
+        "contextWindow": 1000000,
+        "inputPrice": 0.7,
+        "outputPrice": 2.1,
+        "capabilities": {
+          "tools": true,
+          "vision": true
+        }
+      }
+    ],
   },
   {
     id: 'groq',
@@ -369,7 +669,45 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     baseUrl: 'https://api.groq.com/openai/v1',
     color: '#f55036',
     icon: '⚙️',
-    models: [m('llama-3.3-70b-versatile', 131072, 0.59, 0.79)],
+    note: "官方 Production / Preview 模型列表；Qwen 3.8 27B 属于 Preview，可用性与限额随账号变化。",
+    models: [
+      {
+        "id": "openai/gpt-oss-120b",
+        "contextWindow": 131072,
+        "inputPrice": 0.15,
+        "outputPrice": 0.6,
+        "maxOutput": 65536,
+        "capabilities": {
+          "tools": true,
+          "vision": false,
+          "thinking": true
+        }
+      },
+      {
+        "id": "openai/gpt-oss-20b",
+        "contextWindow": 131072,
+        "inputPrice": 0.075,
+        "outputPrice": 0.3,
+        "maxOutput": 65536,
+        "capabilities": {
+          "tools": true,
+          "vision": false,
+          "thinking": true
+        }
+      },
+      {
+        "id": "qwen/qwen3.8-27b",
+        "contextWindow": 131072,
+        "inputPrice": 0.8,
+        "outputPrice": 4.0,
+        "maxOutput": 16384,
+        "capabilities": {
+          "tools": true,
+          "vision": true,
+          "thinking": true
+        }
+      }
+    ],
   },
   {
     id: 'openrouter',
@@ -381,7 +719,93 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     baseUrl: 'https://openrouter.ai/api/v1',
     color: '#6366f1',
     icon: '🔀',
-    models: [m('anthropic/claude-sonnet-4.5', 1000000, 3, 15), m('deepseek/deepseek-chat', 163840, 0.27, 1.1)],
+    note: "模型 ID、上下文和价格来自 OpenRouter 官方公开 models API；具体路由商与账号权限可能不同。",
+    models: [
+      {
+        "id": "openai/gpt-6.1-sol",
+        "contextWindow": 1050000,
+        "maxOutput": 128000,
+        "capabilities": {
+          "tools": true,
+          "vision": true,
+          "thinking": true
+        },
+        "inputPrice": 2.0,
+        "outputPrice": 10.0
+      },
+      {
+        "id": "anthropic/claude-sonnet-5.5",
+        "contextWindow": 1000000,
+        "maxOutput": 128000,
+        "capabilities": {
+          "tools": true,
+          "vision": true,
+          "thinking": true
+        },
+        "inputPrice": 2.0,
+        "outputPrice": 10.0
+      },
+      {
+        "id": "google/gemini-4-hydrogen",
+        "contextWindow": 1048576,
+        "maxOutput": 943718,
+        "capabilities": {
+          "tools": true,
+          "vision": true,
+          "thinking": true
+        },
+        "inputPrice": 1.5,
+        "outputPrice": 7.5
+      },
+      {
+        "id": "deepseek/deepseek-v4.1-flash-1017",
+        "contextWindow": 1048576,
+        "maxOutput": 943718,
+        "capabilities": {
+          "tools": true,
+          "vision": true,
+          "thinking": true
+        },
+        "inputPrice": 0.038,
+        "outputPrice": 0.5
+      },
+      {
+        "id": "moonshotai/kimi-k3.1-pro",
+        "contextWindow": 1048576,
+        "maxOutput": 943718,
+        "capabilities": {
+          "tools": true,
+          "vision": true,
+          "thinking": true
+        },
+        "inputPrice": 2.0,
+        "outputPrice": 10.0
+      },
+      {
+        "id": "z-ai/glm-5.3",
+        "contextWindow": 1048576,
+        "maxOutput": 943718,
+        "capabilities": {
+          "tools": true,
+          "vision": false,
+          "thinking": true
+        },
+        "inputPrice": 0.084,
+        "outputPrice": 3.6
+      },
+      {
+        "id": "minimax/minimax-m3.1-flash",
+        "contextWindow": 1048576,
+        "maxOutput": 524288,
+        "capabilities": {
+          "tools": true,
+          "vision": true,
+          "thinking": true
+        },
+        "inputPrice": 0.075,
+        "outputPrice": 0.3
+      }
+    ],
   },
   {
     id: 'together',
@@ -393,7 +817,39 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     baseUrl: 'https://api.together.xyz/v1',
     color: '#0f6fff',
     icon: '🤝',
-    models: [m('Qwen/Qwen3-235B-A22B-Instruct', 262144, 0.2, 0.6)],
+    note: "模型 ID、上下文与价格来自 Together 官方 Serverless 表格。",
+    models: [
+      {
+        "id": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+        "contextWindow": 1000000,
+        "inputPrice": 0.3,
+        "outputPrice": 1.2,
+        "cacheReadPrice": 0.006,
+        "capabilities": {
+          "tools": true
+        }
+      },
+      {
+        "id": "MiniMaxAI/MiniMax-M3.1-Flash",
+        "contextWindow": 1048576,
+        "inputPrice": 0.15,
+        "outputPrice": 0.6,
+        "cacheReadPrice": 0.015,
+        "capabilities": {
+          "tools": true
+        }
+      },
+      {
+        "id": "zai-org/GLM-5.3",
+        "contextWindow": 1048575,
+        "inputPrice": 1.4,
+        "outputPrice": 4.4,
+        "cacheReadPrice": 0.26,
+        "capabilities": {
+          "tools": true
+        }
+      }
+    ],
   },
   {
     id: 'fireworks',
@@ -405,7 +861,12 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     baseUrl: 'https://api.fireworks.ai/inference/v1',
     color: '#ef4444',
     icon: '🎆',
-    models: [m('accounts/fireworks/models/deepseek-v3', 131072, 0.9, 0.9)],
+    docs: "https://app.fireworks.ai/models/fireworks/deepseek-v4p1-flash-1017",
+    models: [
+      {
+        "id": "accounts/fireworks/models/deepseek-v4p1-flash-1017"
+      }
+    ],
   },
   {
     id: 'deepinfra',
@@ -417,7 +878,36 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     baseUrl: 'https://api.deepinfra.com/v1/openai',
     color: '#0ea5e9',
     icon: '🧊',
-    models: [m('deepseek-ai/DeepSeek-V3', 131072, 0.27, 1.1)],
+    note: "默认 ID 与上下文来自官方 featured API；服务档位与折扣价格请同步账号。",
+    models: [
+      {
+        "id": "moonshotai/Kimi-K3.1-Pro",
+        "contextWindow": 1048576,
+        "capabilities": {
+          "tools": true,
+          "vision": true,
+          "thinking": true
+        }
+      },
+      {
+        "id": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+        "contextWindow": 1048576,
+        "capabilities": {
+          "tools": true,
+          "vision": true,
+          "thinking": true
+        }
+      },
+      {
+        "id": "zai-org/GLM-5.3",
+        "contextWindow": 1048576,
+        "capabilities": {
+          "tools": true,
+          "vision": false,
+          "thinking": true
+        }
+      }
+    ],
   },
   {
     id: 'cerebras',
@@ -429,7 +919,15 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     baseUrl: 'https://api.cerebras.ai/v1',
     color: '#f59e0b',
     icon: '🧠',
-    models: [m('qwen-3-coder-480b', 131072, 0.6, 1.2)],
+    note: "官方 Shared Inference 当前模型；免费与付费账号上下文上限不同，请同步账号目录。",
+    models: [
+      {
+        "id": "gpt-oss-120b"
+      },
+      {
+        "id": "qwen-3.8-27b"
+      }
+    ],
   },
   {
     id: 'nvidia',
@@ -441,7 +939,18 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     baseUrl: 'https://integrate.api.nvidia.com/v1',
     color: '#76b900',
     icon: '🟩',
-    models: [m('deepseek-ai/deepseek-r1', 128000, 0, 0)],
+    note: "ID 来自 NVIDIA 官方 models API；不把试用额度等同于永久免费。",
+    models: [
+      {
+        "id": "deepseek-ai/deepseek-v4.1-flash"
+      },
+      {
+        "id": "stepfun-ai/step-5-preview"
+      },
+      {
+        "id": "z-ai/glm-5.3-flash"
+      }
+    ],
   },
   {
     id: 'perplexity',
@@ -453,7 +962,8 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     baseUrl: 'https://api.perplexity.ai',
     color: '#20808d',
     icon: '🔍',
-    models: [m('sonar-pro', 200000, 3, 15)],
+    note: "该服务的当前模型列表需结合账号或控制台确认；添加密钥后读取模型，避免使用过期或未开通的固定 ID。",
+    models: [],
   },
   {
     id: 'cohere',
@@ -465,7 +975,19 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     baseUrl: 'https://api.cohere.ai/compatibility/v1',
     color: '#39594d',
     icon: 'ⓒ',
-    models: [m('command-a-03-2025', 256000, 2.5, 10)],
+    docs: "https://docs.cohere.com/docs/models",
+    models: [
+      {
+        "id": "command-a-plus-05-2026",
+        "contextWindow": 128000,
+        "maxOutput": 64000,
+        "capabilities": {
+          "tools": true,
+          "vision": true,
+          "thinking": true
+        }
+      }
+    ],
   },
   {
     id: 'github-models',
@@ -477,7 +999,8 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     baseUrl: 'https://models.inference.ai.azure.com',
     color: '#24292f',
     icon: '🐙',
-    models: [m('gpt-4o', 272000, 0, 0)],
+    note: "该服务的当前模型列表需结合账号或控制台确认；添加密钥后读取模型，避免使用过期或未开通的固定 ID。",
+    models: [],
   },
   {
     id: 'azure-openai',
@@ -490,8 +1013,8 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     color: '#0078d4',
     icon: '🅰️',
     customBaseUrl: true,
-    note: '把 {resource} 与 {deployment} 换成你自己的；需要额外 header api-key 时请在供应商的请求头里加',
-    models: [m('gpt-4o', 272000, 2.5, 10)],
+    note: "填写 Azure 资源地址及部署名称；请求的 model 必须匹配自己的部署，不是通用厂商展示名。",
+    models: [],
   },
 
   /* ------------------------------ 本地 ------------------------------ */
@@ -505,8 +1028,8 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     baseUrl: 'http://127.0.0.1:11434/v1',
     color: '#111827',
     icon: '🦙',
-    note: '本机无需 API Key，随便填一个即可',
-    models: [m('qwen3-coder:30b', 262144, 0, 0), m('deepseek-r1:14b', 131072, 0, 0)],
+    note: "读取本机服务当前已安装或已加载模型；不同机器的模型 ID 和上下文配置不同。",
+    models: [],
   },
   {
     id: 'lmstudio',
@@ -518,7 +1041,8 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     baseUrl: 'http://127.0.0.1:1234/v1',
     color: '#7c3aed',
     icon: '🎛️',
-    models: [m('local-model', 32768, 0, 0)],
+    note: "读取本机服务当前已安装或已加载模型；不同机器的模型 ID 和上下文配置不同。",
+    models: [],
   },
   {
     id: 'vllm',
@@ -530,7 +1054,8 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     baseUrl: 'http://127.0.0.1:8000/v1',
     color: '#0f766e',
     icon: '🚀',
-    models: [m('your-model', 32768, 0, 0)],
+    note: "读取本机服务当前已安装或已加载模型；不同机器的模型 ID 和上下文配置不同。",
+    models: [],
   },
 
   /* ------------------------------ 中转 / 自定义 ------------------------------ */
@@ -545,8 +1070,8 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     color: '#64748b',
     icon: '🔌',
     customBaseUrl: true,
-    note: 'new-api / one-api / sub2api 都填这个',
-    models: [m('gpt-4o', 272000, 2.5, 10)],
+    note: "填写中转服务地址和密钥后读取实际可用模型；不预置未经该站验证的模型 ID。",
+    models: [],
   },
   {
     id: 'relay-anthropic',
@@ -559,7 +1084,8 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     color: '#b45309',
     icon: '🧷',
     customBaseUrl: true,
-    models: [m('claude-sonnet-4-5', 200000, 3, 15)],
+    note: "填写中转服务地址和密钥后读取实际可用模型；不预置未经该站验证的模型 ID。",
+    models: [],
   },
   {
     id: 'relay-gemini',
@@ -572,7 +1098,8 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     color: '#1d4ed8',
     icon: '🔗',
     customBaseUrl: true,
-    models: [m('gemini-2.5-pro', 1048576, 1.25, 10)],
+    note: "填写中转服务地址和密钥后读取实际可用模型；不预置未经该站验证的模型 ID。",
+    models: [],
   },
 
   /* ------------------------------ 订阅通道 ------------------------------ */
@@ -587,8 +1114,8 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     color: '#d97757',
     icon: '✳',
     official: true,
-    note: '走本机 `claude` 官方登录态，不经过协议改写；在「账号」里登录后可用',
-    models: [m('claude-sonnet-4-5', 200000, 0, 0)],
+    note: "使用对应官方客户端的真实登录状态；模型访问权限由订阅账号与客户端决定。",
+    models: [],
   },
   {
     id: 'chatgpt-subscription',
@@ -601,8 +1128,8 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     color: '#10a37f',
     icon: '◍',
     official: true,
-    note: '读取本机 Codex 的 OAuth 登录态；多账号可轮换',
-    models: [m('gpt-5.1-codex', 272000, 0, 0)],
+    note: "使用对应官方客户端的真实登录状态；模型访问权限由订阅账号与客户端决定。",
+    models: [],
   },
   {
     id: 'copilot-subscription',
@@ -615,8 +1142,8 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     color: '#24292f',
     icon: '🐙',
     official: true,
-    note: '需要设备码登录 GitHub，模型随订阅档位变化',
-    models: [m('gpt-4o', 272000, 0, 0)],
+    note: "使用对应官方客户端的真实登录状态；模型访问权限由订阅账号与客户端决定。",
+    models: [],
   },
 ];
 
@@ -635,7 +1162,7 @@ export const PRESET_REGIONS: Record<string, string> = {
 /**
  * 推荐顺序：客户端视角的默认序 —— ChatGPT 系(OpenAI/Codex) 最前，
  * 其次 Claude，再次 DeepSeek，然后才是其它国内/海外/本地。
- * 云桥AI 官方中转始终排第一（自家 + 送 $5）。
+ * 云桥AI 官方中转始终排第一（新用户注册赠送 $10）。
  */
 const PRESET_RANK: Record<string, number> = {
   yunqiao: 0,

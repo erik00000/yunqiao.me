@@ -5,7 +5,7 @@ import https from 'node:https';
 import http from 'node:http';
 import { createHash } from 'node:crypto';
 import { URL } from 'node:url';
-import type { AuroraStore, Provider } from './store/index.js';
+import type { AuroraStore, Provider, ProviderModel } from './store/index.js';
 import { newId, nowIso } from './util.js';
 
 /**
@@ -26,14 +26,9 @@ export interface CloudProvider {
   note?: string;
   tags?: string[];
   official?: boolean;
+  customBaseUrl?: boolean;
   sort?: number;
-  models?: Array<{
-    id: string;
-    contextWindow?: number;
-    inputPrice?: number;
-    outputPrice?: number;
-    capabilities?: { tools?: boolean; vision?: boolean; thinking?: boolean };
-  }>;
+  models?: ProviderModel[];
 }
 
 export interface CloudCatalog {
@@ -132,16 +127,16 @@ export function validateCloudProvider(raw: unknown): CloudProvider {
       throw new Error(`供应商「${p.name}」存在无效模型名称`);
     }
     return {
-      id: m.id.trim(), contextWindow: number(m.contextWindow), inputPrice: number(m.inputPrice), outputPrice: number(m.outputPrice),
+      id: m.id.trim(), displayName: optionalText(m.displayName, 160), contextWindow: number(m.contextWindow), maxOutput: number(m.maxOutput), inputPrice: number(m.inputPrice), outputPrice: number(m.outputPrice), cacheReadPrice: number(m.cacheReadPrice), cacheWritePrice: number(m.cacheWritePrice),
       capabilities: {
-        tools: m.capabilities?.tools === true,
-        vision: m.capabilities?.vision === true,
-        thinking: m.capabilities?.thinking === true,
+        tools: typeof m.capabilities?.tools === 'boolean' ? m.capabilities.tools : undefined,
+        vision: typeof m.capabilities?.vision === 'boolean' ? m.capabilities.vision : undefined,
+        thinking: typeof m.capabilities?.thinking === 'boolean' ? m.capabilities.thinking : undefined,
       },
     };
   }).filter((m: { id: string }) => !seen.has(m.id) && !!seen.add(m.id));
   return {
-    key: p.key.trim(), name: p.name.trim(), format: p.format, baseUrl: webUrl(p.baseUrl, `供应商「${p.name}」地址`),
+    key: p.key.trim(), name: p.name.trim(), format: p.format, baseUrl: p.customBaseUrl === true && p.baseUrl === '' ? '' : webUrl(p.baseUrl, `供应商「${p.name}」地址`), customBaseUrl: p.customBaseUrl === true,
     vendor: optionalText(p.vendor, 160), region: optionalText(p.region, 40),
     color: typeof p.color === 'string' && /^#[\da-f]{3,8}$/i.test(p.color) ? p.color : undefined,
     icon: optionalText(p.icon, 16), docs: p.docs ? webUrl(p.docs, '文档地址') : undefined,
@@ -194,11 +189,7 @@ export function importCloudProviders(
       (p) => p.presetId === item.key || (p.baseUrl.replace(/\/$/, '') === item.baseUrl && p.format === item.format),
     );
     const models = (item.models ?? []).map((m) => ({
-      id: m.id,
-      contextWindow: m.contextWindow ?? 128000,
-      inputPrice: m.inputPrice ?? 0,
-      outputPrice: m.outputPrice ?? 0,
-      capabilities: m.capabilities ?? { tools: true },
+      ...m,
     }));
     if (hit) {
       const map = new Map(hit.models.map((m) => [m.id, m]));

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { PageProps } from '../App';
 import { Btn, Empty, Ico, Stat } from '../components/ui';
 import { UsageRecord, UsageSummary, call, fmtCost, fmtNum, fmtTime } from '../lib/api';
@@ -8,17 +8,34 @@ export default function Usage({ state }: PageProps) {
   const [recent, setRecent] = useState<UsageRecord[]>([]);
   const [days, setDays] = useState(14);
   const [tab, setTab] = useState<'overview' | 'requests'>('overview');
+  const [live, setLive] = useState<any[]>([]);
+  const [summaryError, setSummaryError] = useState('');
+  const [liveError, setLiveError] = useState('');
+  const loadSequence = useRef(0);
+  const mounted = useRef(false);
 
-  async function load() {
-    setSummary(await call<UsageSummary>('usage.summary', { days }));
-    setRecent(await call<UsageRecord[]>('usage.recent'));
-  }
+  const load = useCallback(async () => {
+    const sequence = ++loadSequence.current;
+    try {
+      const [sum, requests] = await Promise.all([call<UsageSummary>('usage.summary', { days }), call<UsageRecord[]>('usage.recent')]);
+      if (mounted.current && sequence === loadSequence.current) { setSummary(sum); setRecent(requests); setSummaryError(''); }
+    } catch (e: any) { if (mounted.current && sequence === loadSequence.current) setSummaryError(e.message); }
+  }, [days]);
 
   useEffect(() => {
-    load();
-    const off = window.aurora?.onUsage((r) => setRecent((s) => [r, ...s].slice(0, 200)));
-    return () => off?.();
-  }, [days]);
+    mounted.current = true;
+    setSummary(null);
+    void load();
+    let alive = true, fetching = false;
+    const poll = async () => { if (fetching || document.hidden) return; fetching = true; try { const r = await call<any[]>('usage.live'); if (alive) { setLive(r); setLiveError(''); } } catch (e: any) { if (alive) setLiveError(e.message); } finally { fetching = false; } };
+    void poll();
+    const liveTimer = setInterval(poll, 1500);
+    const refreshVisible = () => { if (!document.hidden) { void load(); void poll(); } };
+    const summaryTimer = setInterval(() => { if (!document.hidden) void load(); }, 8000);
+    const off = window.aurora?.onUsage(() => { if (!document.hidden) void load(); });
+    document.addEventListener('visibilitychange', refreshVisible);
+    return () => { alive = false; mounted.current = false; loadSequence.current++; off?.(); clearInterval(liveTimer); clearInterval(summaryTimer); document.removeEventListener('visibilitychange', refreshVisible); };
+  }, [load]);
 
   const maxCost = Math.max(0.01, ...(summary?.byDay ?? []).map((d) => d.cost));
 
@@ -27,7 +44,7 @@ export default function Usage({ state }: PageProps) {
       <div className="page-head">
         <div>
           <h1>用量统计</h1>
-          <p>不经过网关的请求统计不到；走网关的每一次调用都会记录 token、缓存、首字延迟和估算费用。</p>
+          <p>实时查看经过网关的请求、缓存与用量。桌面客户端内可开启「用量状态栏」查看原生会话数据。</p>
         </div>
         <div className="actions">
           <div className="seg">
@@ -43,20 +60,25 @@ export default function Usage({ state }: PageProps) {
         </div>
       </div>
 
+      {(summaryError || liveError) && <div className="notice warning" role="alert">{[summaryError, liveError].filter(Boolean).join('；')}</div>}
+      <div className="card" style={{ marginBottom: 16 }}><div className="card-title"><span className={`dot ${live.length ? 'on' : 'off'}`} />实时请求<span className="sub">每 1.5 秒更新 · {live.length} 个进行中</span></div>{!live.length ? <p className="hint">等待下一次对话。请求完成后会自动计入统计和日志。</p> : <div className="list">{live.map(r => <div className="list-row" key={r.id}><div className="grow"><b>{r.model}</b><p className="hint">{r.agent} · {r.providerName || '等待路由'} · {r.phase === 'streaming' ? '生成中' : r.phase === 'retrying' ? '正在重试' : '连接中'} · {Math.max(0, Math.round((Date.now() - r.startedAtMs) / 1000))} 秒{r.threadId ? ` · 会话 ${r.threadId.slice(0, 12)}` : ''}</p></div><div className="tag-list"><span className="chip">输入 {r.inputTokens == null ? '待返回' : fmtNum(r.inputTokens)}</span><span className="chip">输出 {r.outputTokens == null ? r.estimatedOutputTokens == null ? '待返回' : `约 ${fmtNum(r.estimatedOutputTokens)}` : fmtNum(r.outputTokens)}</span><span className="chip">缓存读 {r.cacheRead == null ? '未提供' : fmtNum(r.cacheRead)}</span><span className="chip">缓存写 {r.cacheWrite == null ? '未提供' : fmtNum(r.cacheWrite)}</span></div></div>)}</div>}</div>
+
       <div className="grid cols-4" style={{ marginBottom: 14 }}>
         <div className="card">
-          <Stat k="总花费" v={fmtCost(summary?.totals.cost ?? 0)} />
+          <Stat k="总花费" v={summary ? fmtCost(summary.totals.cost) : '—'} />
         </div>
         <div className="card">
-          <Stat k="总 tokens" v={fmtNum((summary?.totals.inputTokens ?? 0) + (summary?.totals.outputTokens ?? 0))} />
+          <Stat k="总 tokens" v={summary ? fmtNum(summary.totals.inputTokens + summary.totals.outputTokens) : '—'} />
         </div>
         <div className="card">
-          <Stat k="调用次数" v={summary?.totals.calls ?? 0} />
+          <Stat k="调用次数" v={summary?.totals.calls ?? '—'} />
         </div>
         <div className="card">
-          <Stat k="失败请求" v={summary?.totals.errors ?? 0} />
+          <Stat k="失败请求" v={summary?.totals.errors ?? '—'} />
         </div>
       </div>
+
+      <div className="grid cols-4" style={{ marginBottom: 18 }}><div className="card"><Stat k="输入 Token（含缓存）" v={summary ? fmtNum(summary.totals.inputTokens) : '—'} /></div><div className="card"><Stat k="缓存读取 Token" v={summary?.totals.cacheReports ? fmtNum(summary.totals.cacheRead) : '—'} /></div><div className="card"><Stat k="缓存写入 Token" v={summary?.totals.cacheWriteReports ? fmtNum(summary.totals.cacheWrite) : '—'} /></div><div className="card"><Stat k="缓存命中率" v={summary?.totals.cacheReports ? `${((summary.totals.cacheRate || 0) * 100).toFixed(1)}%` : '—'} /></div></div><p className="hint">命中率 = 缓存读取 ÷ 输入总量，仅统计提供缓存数据的请求。上游未返回的字段显示「—」，生成中的输出估算以完成后的上游数据为准。费用按本地价格估算。</p>
 
       <div className="seg" style={{ marginBottom: 12 }}>
         <button className={tab === 'overview' ? 'on' : ''} onClick={() => setTab('overview')}>
@@ -144,6 +166,8 @@ export default function Usage({ state }: PageProps) {
                   <th style={{ width: 140 }}>供应商</th>
                   <th style={{ width: 90 }}>输入</th>
                   <th style={{ width: 90 }}>输出</th>
+                  <th>缓存读 / 写</th>
+                  <th>命中率</th>
                   <th style={{ width: 80 }}>耗时</th>
                   <th style={{ width: 80 }}>费用</th>
                 </tr>
@@ -153,7 +177,7 @@ export default function Usage({ state }: PageProps) {
                   <tr key={r.requestId + i}>
                     <td className="mono" style={{ fontSize: 10.5 }}>{fmtTime(r.ts)}</td>
                     <td>
-                      <span className={`chip ${r.status < 400 ? 'ok' : 'bad'}`}>{r.status || 'ERR'}</span>
+                      <span className={`chip ${r.status >= 200 && r.status < 300 ? 'ok' : 'bad'}`}>{r.status || 'ERR'}</span>
                     </td>
                     <td>
                       <div style={{ fontSize: 11.5 }}>{r.agent}</div>
@@ -166,6 +190,8 @@ export default function Usage({ state }: PageProps) {
                     <td className="ellipsis">{r.providerName}</td>
                     <td className="mono">{fmtNum(r.inputTokens)}</td>
                     <td className="mono">{fmtNum(r.outputTokens)}</td>
+                    <td className="mono">{r.cacheReadKnown || r.cacheRead > 0 ? fmtNum(r.cacheRead) : '—'} / {r.cacheWriteKnown || r.cacheWrite > 0 ? fmtNum(r.cacheWrite) : '—'}</td>
+                    <td>{(r.cacheReadKnown || r.cacheRead > 0) && r.inputTokens > 0 ? `${Math.min(100, r.cacheRead / r.inputTokens * 100).toFixed(1)}%` : '—'}{r.estimated && <small> 估算</small>}</td>
                     <td className="mono">{r.latencyMs}ms</td>
                     <td className="mono">{fmtCost(r.cost)}</td>
                   </tr>

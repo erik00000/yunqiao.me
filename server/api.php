@@ -19,7 +19,7 @@ boot_session();
 $action = $_GET['a'] ?? ($_GET['action'] ?? '');
 $body = body_json();
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
-$readActions = ['whoami', 'catalog.get', 'analytics.get'];
+$readActions = ['whoami', 'catalog.get', 'analytics.get', 'catalog.sync.status'];
 if (!in_array($action, $readActions, true) && $method !== 'POST') {
     header('Allow: POST');
     json_out(['error' => '写操作必须使用 POST'], 405);
@@ -74,7 +74,26 @@ if ($method !== 'GET') {
     check_csrf();
 }
 
+// Stable file lock shared with daily model discovery and curated selection.
+// Keep it across the complete read/modify/write sequence, not only the final rename.
+$catalogLock = null;
+if (in_array($action, ['provider.save', 'provider.delete', 'provider.toggle', 'provider.bulkAdd', 'catalog.import'], true)) {
+    $catalogLock = fopen(data_path('catalog-write.lock'), 'c');
+    if (!$catalogLock || !flock($catalogLock, LOCK_EX)) json_out(['error' => '供应商目录正在更新，请稍后重试'], 503);
+}
+
 switch ($action) {
+    case 'catalog.sync.status':
+    case 'catalog.sync.run':
+    case 'catalog.sync.select': {
+        require_once __DIR__ . '/catalog_sync.php';
+        try {
+            $sync = new CatalogSyncService(MemberService::environment(), AURORA_DATA_DIR);
+            if ($action === 'catalog.sync.status') json_out($sync->status());
+            if ($action === 'catalog.sync.run') json_out($sync->sync('administrator'));
+            json_out($sync->addSelected((string)($body['providerKey'] ?? ''), (array)($body['ids'] ?? [])));
+        } catch (MemberError $error) { json_out(['ok' => false, 'code' => $error->errorCode, 'error' => $error->getMessage()], $error->httpStatus); }
+    }
     /* ---------- 目录 ---------- */
     case 'catalog.get': {
         $c = catalog();
@@ -199,13 +218,7 @@ switch ($action) {
     /* ---------- 更新 ---------- */
     case 'update.save': {
         $cfg = config();
-        $cfg['update'] = [
-            'version' => (string)($body['version'] ?? $cfg['update']['version'] ?? '0.1.0'),
-            'notes' => (string)($body['notes'] ?? ''),
-            'mandatory' => (bool)($body['mandatory'] ?? false),
-            'files' => (object)($body['files'] ?? []),
-            'publishedAt' => now(),
-        ];
+        $cfg['update'] = normalize_update($body, (array)($cfg['update'] ?? []));
         save_config($cfg);
         json_out(['ok' => true, 'update' => $cfg['update']]);
     }

@@ -1,9 +1,11 @@
 """Package reproducible mobile sources, never dependencies, local data or credentials."""
 import pathlib
+import json
 import zipfile
 
 root = pathlib.Path(__file__).resolve().parents[1]
-destination = root / 'build' / 'YunQiaoAI-0.5.0-iOS-source.zip'
+version = json.loads((root / 'package.json').read_text(encoding='utf-8'))['version']
+destination = root / 'build' / f'YunQiaoAI-{version}-iOS-source.zip'
 destination.parent.mkdir(exist_ok=True)
 files = [root / name for name in ['README.md', 'package.json', 'package-lock.json', 'capacitor.config.json', '.gitignore']]
 for name in ['src', 'www', 'scripts', 'tests', 'assets', 'ios']:
@@ -12,6 +14,8 @@ for name in ['src', 'www', 'scripts', 'tests', 'assets', 'ios']:
             continue
         files.append(file)
 with zipfile.ZipFile(destination, 'w', zipfile.ZIP_DEFLATED) as archive:
+    for notice in ['LICENSE', 'THIRD_PARTY_NOTICES.md']:
+        archive.write(root.parent / notice, notice)
     for file in sorted(files):
         archive.write(file, 'mobile/' + file.relative_to(root).as_posix())
-print(f'iOS source package: {destination} ({len(files)} files)')
+print(f'iOS source package: {destination} ({len(files) + 2} files)')

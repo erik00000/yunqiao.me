@@ -3,295 +3,220 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 
-/**
- * 注入式增强（CDP）。
- *
- * 做法：用 --remote-debugging-port 启动官方 Codex 桌面版，
- * 通过 Chrome DevTools Protocol 往页面里塞脚本 / 改样式。
- *
- * 为什么官方一更新就可能失效：注入依赖官方前端的 DOM 结构与类名，
- * 它们不是稳定 API，版本一变选择器就可能落空。所以这里额外做版本监测，
- * 版本变化时明确提示"需要重新适配"，而不是静默失灵。
- */
-
-const CANDIDATES = [
-  path.join(process.env.LOCALAPPDATA ?? '', 'Programs', 'Codex', 'Codex.exe'),
-  path.join(process.env.LOCALAPPDATA ?? '', 'Programs', 'codex', 'Codex.exe'),
-  path.join(process.env.LOCALAPPDATA ?? '', 'OpenAI', 'Codex', 'Codex.exe'),
-  path.join(process.env.LOCALAPPDATA ?? '', 'OpenAI', 'Codex', 'app', 'Codex.exe'),
-  path.join(process.env.PROGRAMFILES ?? '', 'Codex', 'Codex.exe'),
-];
-
-export interface CodexDesktopInfo {
-  installed: boolean;
-  exePath?: string;
-  version?: string;
-  running: boolean;
-  debugPortOpen: boolean;
-  /** 与上次记录的版本不同 → 注入可能需要重新适配 */
-  versionChanged: boolean;
-  lastVersion?: string;
-  message?: string;
+export interface CodingDesktopDetection {
+  installed: boolean; executable?: string; exePath?: string; productName?: string;
+  supportsCodexConfig: boolean; version?: string; evidence: string[];
 }
-
-function findExe(): string | undefined {
-  if (process.platform !== 'win32') {
-    const candidate = process.platform === 'darwin' ? '/Applications/Codex.app/Contents/MacOS/Codex' : '';
-    return candidate && fs.existsSync(candidate) ? candidate : undefined;
-  }
-  for (const p of CANDIDATES) {
-    try {
-      if (fs.existsSync(p)) return p;
-    } catch {
-      /* 忽略 */
-    }
-  }
-  // 商店版 / 非标准安装：查一下开始菜单快捷方式指向
-  try {
-    const out = execFileSync(
-      'powershell',
-      [
-        '-NoProfile',
-        '-Command',
-        "(Get-ChildItem -Path $env:APPDATA\\Microsoft\\Windows\\Start Menu,$env:ProgramData\\Microsoft\\Windows\\Start Menu -Recurse -Filter 'Codex*.lnk' -ErrorAction SilentlyContinue | Select-Object -First 1).FullName",
-      ],
-      { encoding: 'utf8', timeout: 8000, stdio: ['ignore', 'pipe', 'ignore'] },
-    ).trim();
-    if (out) {
-      const target = execFileSync(
-        'powershell',
-        ['-NoProfile', '-Command', `(New-Object -ComObject WScript.Shell).CreateShortcut('${out.replace(/'/g, "''")}').TargetPath`],
-        { encoding: 'utf8', timeout: 8000, stdio: ['ignore', 'pipe', 'ignore'] },
-      ).trim();
-      if (target && fs.existsSync(target)) return target;
-    }
-  } catch {
-    /* 没有就算了 */
-  }
-  return undefined;
+const detectionCache = new Map<string, { at: number; value: CodingDesktopDetection }>();
+function regular(file: string): boolean { try { return fs.statSync(file).isFile(); } catch { return false; } }
+function ps(source: string): string {
+  return execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', source],
+    { encoding: 'utf8', timeout: 8000, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
 }
-
-function fileVersion(exe: string): string | undefined {
-  if (process.platform !== 'win32') return undefined;
-  try {
-    const out = execFileSync(
-      'powershell',
-      ['-NoProfile', '-Command', `(Get-Item '${exe.replace(/'/g, "''")}').VersionInfo.FileVersion`],
-      { encoding: 'utf8', timeout: 8000, stdio: ['ignore', 'pipe', 'ignore'] },
-    ).trim();
-    return out || undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-export function isCodexRunning(): boolean {
-  try {
-    if (process.platform !== 'win32') {
-      const out = execFileSync('pgrep', ['-x', 'Codex'], { encoding: 'utf8', timeout: 4000, stdio: ['ignore', 'pipe', 'ignore'] });
-      return !!out.trim();
-    }
-    const out = execFileSync('tasklist', ['/FI', 'IMAGENAME eq Codex.exe'], {
-      encoding: 'utf8',
-      timeout: 4000,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    return /Codex\.exe/i.test(out);
-  } catch {
-    return false;
-  }
-}
-
-async function portOpen(port = 9222): Promise<boolean> {
-  try {
-    const r = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(1200) });
-    return r.ok;
-  } catch {
-    return false;
-  }
-}
-
-export async function desktopInfo(lastVersion?: string): Promise<CodexDesktopInfo> {
-  const exe = findExe();
-  const running = isCodexRunning();
-  const open = await portOpen();
-  const version = exe ? fileVersion(exe) : undefined;
-  return {
-    installed: !!exe,
-    exePath: exe,
-    version,
-    running,
-    debugPortOpen: open,
-    lastVersion,
-    versionChanged: !!(version && lastVersion && version !== lastVersion),
-    message: !exe
-      ? '没有找到 Codex 桌面版。注入式增强只对桌面版有效，CLI 不需要注入。'
-      : running && !open
-        ? 'Codex 已经在你手动启动的进程里运行，没有开调试端口。请先完全退出，再用下面的按钮启动。'
-        : undefined,
-  };
-}
-
-/* ------------------------------ CDP ------------------------------ */
-
-interface Cdp {
-  send(method: string, params?: any): Promise<any>;
-  close(): void;
-}
-
-async function connect(port = 9222): Promise<Cdp> {
-  const list = (await (await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(2500) })).json()) as any[];
-  const page = list.find((t) => t.type === 'page' && /codex/i.test(`${t.title || ''} ${t.url || ''}`));
-  if (!isCodexRunning() || !page?.webSocketDebuggerUrl) throw new Error('未能确认调试目标属于 Codex，已停止注入');
-  const target = new URL(page.webSocketDebuggerUrl);
-  if (target.protocol !== 'ws:' || !['127.0.0.1', 'localhost', '[::1]'].includes(target.hostname) || Number(target.port) !== port) throw new Error('调试目标地址无效');
-  const ws = new WebSocket(page.webSocketDebuggerUrl);
-  const pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
-  let seq = 0;
-  await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => { ws.close(); reject(new Error('CDP 连接超时')); }, 4000);
-    ws.addEventListener('open', () => { clearTimeout(timer); resolve(); }, { once: true });
-    ws.addEventListener('error', () => { clearTimeout(timer); reject(new Error('CDP 连接失败')); }, { once: true });
-  });
-  ws.addEventListener('message', (ev: any) => {
-    try {
-      const msg = JSON.parse(String(ev.data));
-      if (msg.id && pending.has(msg.id)) {
-        const request = pending.get(msg.id)!;
-        clearTimeout(request.timer);
-        if (msg.error) request.reject(new Error(msg.error.message || 'CDP 请求失败'));
-        else request.resolve(msg.result);
-        pending.delete(msg.id);
+function candidates(): string[] {
+  const isolatedHome = process.env.AURORA_CLIENT_HOME;
+  if (isolatedHome) return ['ChatGPT Beta', 'ChatGPT', 'Codex'].flatMap(name =>
+    [path.join(isolatedHome, 'AppData', 'Local', 'Programs', name, `${name}.exe`), path.join(isolatedHome, 'AppData', 'Local', name, `${name}.exe`)]);
+  if (process.platform === 'darwin') return ['ChatGPT Beta', 'ChatGPT', 'Codex'].flatMap(n =>
+    [path.join('/Applications', `${n}.app`, 'Contents', 'MacOS', n), path.join(os.homedir(), 'Applications', `${n}.app`, 'Contents', 'MacOS', n)]);
+  if (process.platform !== 'win32') return [];
+  const result: string[] = [];
+  for (const name of ['ChatGPT Beta', 'ChatGPT', 'Codex']) {
+    for (const root of [process.env.LOCALAPPDATA, process.env.PROGRAMFILES].filter(Boolean) as string[]) {
+      for (const rel of [path.join('Programs', name), path.join('OpenAI', name), path.join('OpenAI', name, 'app'), name]) {
+        for (const exe of [name, name.replace(' Beta', ''), 'Codex']) result.push(path.join(root, rel, `${exe}.exe`));
       }
-    } catch {
-      /* 忽略非 JSON */
     }
-  });
-  ws.addEventListener('close', () => { for (const request of pending.values()) { clearTimeout(request.timer); request.reject(new Error('CDP 连接已关闭')); } pending.clear(); });
-  return {
-    send: (method, params) =>
-      new Promise((resolve, reject) => {
-        const id = ++seq;
-        const timer = setTimeout(() => { pending.delete(id); reject(new Error('CDP 请求超时')); }, 5000);
-        pending.set(id, { resolve, reject, timer });
-        ws.send(JSON.stringify({ id, method, params }));
-      }),
-    close: () => ws.close(),
-  };
-}
-
-export interface InjectResult {
-  ok: boolean;
-  message: string;
-  launched?: boolean;
-  injected?: number;
-}
-
-/** 启动 Codex（带调试端口）；已启动则直接注入 */
-export async function launchAndInject(
-  scripts: Array<{ id: string; name: string; code: string; enabled: boolean }>,
-  port = 9222,
-): Promise<InjectResult> {
-  const exe = findExe();
-  const active = scripts.filter((s) => s.enabled && s.code.trim());
-  if (!exe) return { ok: false, message: '没有找到 Codex 桌面版' };
-
-  let launched = false;
-  if (!(await portOpen(port))) {
-    if (isCodexRunning()) {
-      return {
-        ok: false,
-        message: 'Codex 正在运行但没开调试端口。请完全退出 Codex（托盘也要退出）后再点一次。',
-      };
-    }
-    spawn(exe, [`--remote-debugging-port=${port}`], { detached: true, stdio: 'ignore' }).unref();
-    launched = true;
-    // 等页面起来
-    for (let i = 0; i < 40; i++) {
-      await new Promise((r) => setTimeout(r, 500));
-      if (await portOpen(port)) break;
-    }
-    if (!(await portOpen(port))) {
-      return { ok: false, launched, message: 'Codex 启动了，但调试端口没有打开（可能被安全软件拦截）' };
-    }
-    // 再等前端渲染
-    await new Promise((r) => setTimeout(r, 2500));
   }
-
-  let cdp: Cdp | null = null;
-  let injected = 0;
   try {
-    cdp = await connect(port);
-    for (const s of active) {
-      // 立即执行一次
-      const evaluated = await cdp.send('Runtime.evaluate', { expression: s.code, awaitPromise: false });
-      if (evaluated?.exceptionDetails) throw new Error(`脚本「${s.name}」执行失败：${evaluated.exceptionDetails.text || '未知错误'}`);
-      // 后续每次页面加载都自动执行
-      await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: s.code });
-      injected++;
-    }
-    await cdp.send('Page.reload', { ignoreCache: false }).catch(() => {});
-    return {
-      ok: true,
-      launched,
-      injected,
-      message: injected
-        ? `已注入 ${injected} 个脚本${launched ? '（Codex 由云桥AI 启动）' : ''}`
-        : '没有启用的脚本，只启动了调试端口',
-    };
-  } catch (e: any) {
-    return { ok: false, launched, message: String(e?.message ?? e) };
-  } finally {
-    cdp?.close();
+    const raw = ps("$a=@(); Get-AppxPackage *OpenAI* -ErrorAction SilentlyContinue | ForEach-Object { $r=$_.InstallLocation; foreach($p in @('app\\ChatGPT.exe','ChatGPT.exe','app\\Codex.exe','Codex.exe')){ $f=Join-Path $r $p; if(Test-Path -LiteralPath $f){$a+=$f} } }; $w=New-Object -ComObject WScript.Shell; Get-ChildItem -Path ($env:APPDATA+'\\Microsoft\\Windows\\Start Menu'),($env:ProgramData+'\\Microsoft\\Windows\\Start Menu') -Filter '*.lnk' -Recurse -ErrorAction SilentlyContinue | Where-Object {$_.Name -match '^(ChatGPT|Codex)'} | ForEach-Object {$a+=$w.CreateShortcut($_.FullName).TargetPath}; $a | Select-Object -Unique | ConvertTo-Json -Compress");
+    const parsed = raw ? JSON.parse(raw) : [];
+    result.push(...(Array.isArray(parsed) ? parsed : [parsed]).filter(x => typeof x === 'string'));
+  } catch { /* Standard paths remain usable when the store query is unavailable. */ }
+  return [...new Set(result)];
+}
+export function inspectCodingDesktop(exe: string): CodingDesktopDetection {
+  if (!path.isAbsolute(exe) || !regular(exe)) return { installed: false, supportsCodexConfig: false, evidence: [] };
+  if (process.platform === 'win32' && !/\.exe$/i.test(exe)) throw new Error('请选择桌面客户端的 .exe 程序');
+  const evidence: string[] = [];
+  let version: string | undefined;
+  let productName = path.basename(exe, path.extname(exe));
+  if (process.platform === 'win32' && !process.env.AURORA_CLIENT_HOME) {
+    try {
+      const meta = JSON.parse(ps(`$v=(Get-Item -LiteralPath '${exe.replace(/'/g, "''")}').VersionInfo; @{version=$v.FileVersion;name=$v.ProductName}|ConvertTo-Json -Compress`));
+      version = meta.version || undefined; productName = meta.name || productName;
+    } catch { /* Binary metadata is optional. */ }
   }
+  if (/^codex(?:\.exe)?$/i.test(path.basename(exe)) || /^codex$/i.test(productName)) evidence.push('Codex 产品程序');
+  const roots = [path.join(path.dirname(exe), 'resources'), path.resolve(path.dirname(exe), '../Resources')];
+  for (const root of roots) {
+    for (const bin of ['codex.exe', 'codex', 'app-server.exe', 'codex-app-server.exe', 'codex-app-server']) {
+      if (regular(path.join(root, bin))) evidence.push(`resources/${bin}`);
+    }
+    const asar = path.join(root, 'app.asar');
+    if (regular(asar)) {
+      let fd: number | undefined;
+      try {
+        fd = fs.openSync(asar, 'r');
+        const header = Buffer.alloc(16); fs.readSync(fd, header, 0, 16, 0);
+        const size = header.readUInt32LE(12);
+        if (size > 0 && size < 32 * 1024 * 1024) {
+          const data = Buffer.alloc(size); fs.readSync(fd, data, 0, size, 16);
+          const text = data.toString('utf8');
+          if (/codex(?:-app-server|-desktop|\.exe)|app-server-client|codex-client/i.test(text)) evidence.push('应用资源包含 Codex 客户端模块');
+        }
+      } catch { /* Unknown resource formats do not imply support. */ }
+      finally { if (fd !== undefined) fs.closeSync(fd); }
+    }
+  }
+  return { installed: true, executable: exe, exePath: exe, productName, version, supportsCodexConfig: evidence.length > 0, evidence };
+}
+export function detectCodingDesktop(exePath?: string): CodingDesktopDetection {
+  const key = exePath || 'auto'; const cached = detectionCache.get(key);
+  if (cached && Date.now() - cached.at < 15_000) return cached.value;
+  const detected = exePath ? [inspectCodingDesktop(path.resolve(exePath))] : candidates().filter(regular).map(inspectCodingDesktop);
+  const value = detected.find(x => x.supportsCodexConfig) || detected.find(x => x.installed) || { installed: false, supportsCodexConfig: false, evidence: [] };
+  detectionCache.set(key, { at: Date.now(), value }); return value;
+}
+export function isCodexRunning(exePath?: string): boolean {
+  const names = exePath ? [path.basename(exePath)] : ['ChatGPT.exe', 'ChatGPT Beta.exe', 'Codex.exe'];
+  try {
+    if (process.platform === 'win32') {
+      const rows = execFileSync('tasklist', ['/FO', 'CSV', '/NH'], { encoding: 'utf8', timeout: 4000, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+      return rows.split(/\r?\n/).some(row => names.some(n => row.toLowerCase().startsWith(`"${n.toLowerCase()}"`)));
+    }
+    return names.some(n => { try { return !!execFileSync('pgrep', ['-x', n.replace(/\.exe$/i, '')], { encoding: 'utf8', timeout: 2000 }).trim(); } catch { return false; } });
+  } catch { return false; }
+}
+export function validateDebugPort(value: unknown): number {
+  const port = Number(value); if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('调试端口必须是 1024–65535 的整数'); return port;
+}
+export async function debugPortOpen(port = 9222): Promise<boolean> {
+  validateDebugPort(port);
+  try { return (await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(1200), redirect: 'error' })).ok; } catch { return false; }
+}
+export interface CodexDesktopInfo extends CodingDesktopDetection {
+  running: boolean; debugPortOpen: boolean; versionChanged: boolean; lastVersion?: string; message?: string;
+}
+export async function desktopInfo(lastVersion?: string, exePath?: string, port = 9222): Promise<CodexDesktopInfo> {
+  const detected = detectCodingDesktop(exePath); const running = isCodexRunning(detected.executable); const open = await debugPortOpen(port);
+  return { ...detected, running, debugPortOpen: open, lastVersion, versionChanged: !!(lastVersion && detected.version && lastVersion !== detected.version),
+    message: !detected.installed ? '没有找到 ChatGPT 桌面版，可指定程序路径。' : !detected.supportsCodexConfig ? '尚未从安装资源确认编程桌面能力；连接时将检测实际页面。旧聊天客户端不支持 Codex 配置。' : running && !open ? '客户端正在运行但没有开启调试端口，请完全退出后使用启动并连接。' : undefined };
 }
 
-/** 只检测端口是否可用（UI 轮询用） */
-export async function injectorStatus(): Promise<{ portOpen: boolean; running: boolean; installed: boolean }> {
-  return { portOpen: await portOpen(), running: isCodexRunning(), installed: !!findExe() };
+export type BridgeHandler = (route: string, payload: any) => Promise<any>;
+export class DesktopCdp {
+  private seq = 0;
+  private pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
+  private scriptIds: string[] = [];
+  private bridge?: BridgeHandler;
+  private contexts = new Map<number, { frameId: string; isDefault: boolean }>();
+  private mainFrameId = '';
+  private mainFrameUrl = '';
+  private frameGeneration = 0;
+  private binding = `__auroraBridge_${Math.random().toString(36).slice(2)}`;
+  connected = true;
+  private constructor(private ws: WebSocket, public readonly target: { title: string; url: string }) {
+    ws.addEventListener('message', e => { void this.message(String(e.data)); });
+    ws.addEventListener('close', () => { this.connected = false; for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(new Error('桌面连接已断开')); } this.pending.clear(); });
+  }
+  static async connect(port: number, surface: 'main' | 'avatar' = 'main'): Promise<DesktopCdp> {
+    validateDebugPort(port);
+    const response = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(3000), redirect: 'error' });
+    if (!response.ok) throw new Error('无法读取桌面调试目标');
+    const list: any = await response.json();
+    if (!Array.isArray(list)) throw new Error('调试目标返回格式无效');
+    const isAvatar = (url: string) => /avatar-overlay|initialRoute=(?:%2F|\/)avatar/i.test(url);
+    for (const page of list.filter(t => t.type === 'page' && /^app:\/\/-\//i.test(t.url || '') && (surface === 'avatar' ? isAvatar(t.url) : !isAvatar(t.url)))) {
+      if (!page.webSocketDebuggerUrl) continue;
+      const target = new URL(page.webSocketDebuggerUrl);
+      if (target.protocol !== 'ws:' || !['127.0.0.1', 'localhost', '[::1]'].includes(target.hostname) || Number(target.port) !== port || target.username || target.password) continue;
+      const ws = new WebSocket(target.href);
+      await new Promise<void>((resolve, reject) => { const timer = setTimeout(() => { ws.close(); reject(new Error('CDP 连接超时')); }, 5000); ws.addEventListener('open', () => { clearTimeout(timer); resolve(); }, { once: true }); ws.addEventListener('error', () => { clearTimeout(timer); reject(new Error('CDP 连接失败')); }, { once: true }); });
+      const cdp = new DesktopCdp(ws, { title: page.title || '', url: page.url });
+      const identity = await cdp.evaluate('({app:location.href,top:window===top,bridge:!!window.electronBridge})').catch(() => null);
+      if (identity?.top && identity.bridge && /^app:\/\/-\//i.test(identity.app)) {
+        const frame = (await cdp.send('Page.getFrameTree')).frameTree?.frame;
+        if (!frame?.id || !/^app:\/\/-\//i.test(frame.url || '')) { cdp.close(); continue; }
+        cdp.mainFrameId = frame.id; cdp.mainFrameUrl = frame.url;
+        await cdp.send('Runtime.enable'); await cdp.send('Page.enable'); return cdp;
+      }
+      cdp.close();
+    }
+    throw new Error('未找到兼容的 ChatGPT/Codex 桌面页面（需要 app://-/ 与 electronBridge），没有注入其他浏览器页面');
+  }
+  send(method: string, params: any = {}): Promise<any> {
+    if (!this.connected) return Promise.reject(new Error('桌面连接已断开'));
+    return new Promise((resolve, reject) => { const id = ++this.seq; const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`${method} 超时`)); }, method === 'Runtime.evaluate' ? 45_000 : 15_000); this.pending.set(id, { resolve, reject, timer }); this.ws.send(JSON.stringify({ id, method, params })); });
+  }
+  async evaluate(expression: string): Promise<any> {
+    const result = await this.send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
+    if (result?.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text || '桌面脚本执行失败');
+    return result.result?.value;
+  }
+  private async message(raw: string): Promise<void> {
+    try {
+      const msg = JSON.parse(raw);
+      if (msg.id && this.pending.has(msg.id)) { const p = this.pending.get(msg.id)!; clearTimeout(p.timer); this.pending.delete(msg.id); msg.error ? p.reject(new Error(msg.error.message || 'CDP 请求失败')) : p.resolve(msg.result); return; }
+      if (msg.method === 'Runtime.executionContextCreated') { const ctx = msg.params?.context; if (ctx?.id) this.contexts.set(ctx.id, { frameId: ctx.auxData?.frameId || '', isDefault: ctx.auxData?.isDefault === true }); return; }
+      if (msg.method === 'Runtime.executionContextDestroyed') { this.contexts.delete(msg.params?.executionContextId); return; }
+      if (msg.method === 'Runtime.executionContextsCleared') { this.contexts.clear(); this.frameGeneration++; return; }
+      if (msg.method === 'Page.frameNavigated' && !msg.params?.frame?.parentId) { this.mainFrameId = msg.params.frame.id; this.mainFrameUrl = msg.params.frame.url || ''; this.frameGeneration++; return; }
+      if (msg.method === 'Page.frameStartedLoading' && msg.params?.frameId === this.mainFrameId) { this.frameGeneration++; return; }
+      if (msg.method !== 'Runtime.bindingCalled' || msg.params?.name !== this.binding || !this.bridge) return;
+      if (typeof msg.params.payload !== 'string' || msg.params.payload.length > 37_000_000) return;
+      const request = JSON.parse(msg.params.payload);
+      if (!request || typeof request.id !== 'string' || request.id.length > 120 || typeof request.route !== 'string' || request.route.length > 128 || (request.route !== '/dictation/transcribe' && msg.params.payload.length > 2_000_000)) return;
+      const contextId = msg.params.executionContextId;
+      const context = this.contexts.get(contextId);
+      if (!context?.isDefault || context.frameId !== this.mainFrameId || !/^app:\/\/-\//i.test(this.mainFrameUrl)) return;
+      const generation = this.frameGeneration;
+      const identity = await this.send('Runtime.evaluate', { contextId, expression: '({app:location.href,top:window===top,bridge:!!window.electronBridge})', returnByValue: true });
+      const verified = identity?.result?.value;
+      if (generation !== this.frameGeneration || !this.contexts.has(contextId) || !verified?.top || !verified.bridge || !/^app:\/\/-\//i.test(verified.app || '')) return;
+      let reply: any;
+      try { reply = { id: request.id, value: await this.bridge(request.route, request.payload || {}) }; }
+      catch (e) { reply = { id: request.id, error: (e as Error).message }; }
+      await this.send('Runtime.evaluate', { expression: `window.__auroraBridgeResolve?.(${JSON.stringify(reply)})`, contextId: msg.params.executionContextId }).catch(() => {});
+    } catch { /* Ignore malformed peer messages. */ }
+  }
+  async setBridge(handler: BridgeHandler): Promise<string> {
+    this.bridge = handler; await this.send('Runtime.addBinding', { name: this.binding });
+    return `(() => { if(window!==top||!/^app:\\/\\/-\\//i.test(location.href))return; const pending=new Map(); let seq=0; window.__auroraBridgeResolve=(r)=>{const p=pending.get(r.id);if(!p)return;clearTimeout(p.timer);pending.delete(r.id);r.error?p.reject(new Error(r.error)):p.resolve(r.value)};window.__codexSessionDeleteBridge=(route,payload)=>new Promise((resolve,reject)=>{const id=Date.now()+':'+(++seq);const timer=setTimeout(()=>{pending.delete(id);reject(new Error('云桥桌面桥接超时'))},30000);pending.set(id,{resolve,reject,timer});window[${JSON.stringify(this.binding)}](JSON.stringify({id,route,payload}));}); })();`;
+  }
+  async updateDocumentSource(source: string): Promise<void> {
+    for (const identifier of this.scriptIds.splice(0)) await this.send('Page.removeScriptToEvaluateOnNewDocument', { identifier });
+    const registered = await this.send('Page.addScriptToEvaluateOnNewDocument', { source }); this.scriptIds.push(registered.identifier);
+  }
+  async replaceScripts(source: string, reload = false): Promise<void> {
+    await this.updateDocumentSource(source);
+    if (reload) await this.send('Page.reload', { ignoreCache: false }); else await this.evaluate(source);
+  }
+  async dispose(reload = true): Promise<void> {
+    if (this.connected) { for (const identifier of this.scriptIds.splice(0)) await this.send('Page.removeScriptToEvaluateOnNewDocument', { identifier }).catch(() => {}); await this.send('Runtime.removeBinding', { name: this.binding }).catch(() => {}); if (reload) await this.send('Page.reload', { ignoreCache: false }).catch(() => {}); } this.close();
+  }
+  close(): void { this.connected = false; this.ws.close(); }
 }
-
-export const BUILTIN_INJECT_SCRIPTS = [
-  {
-    id: 'inject:statusbar',
-    name: '底部状态条',
-    enabled: true,
-    code: `(function(){
-  if (document.getElementById('yq-statusbar')) return;
-  var bar = document.createElement('div');
-  bar.id = 'yq-statusbar';
-  bar.textContent = '云桥AI · 已注入 · ' + new Date().toLocaleTimeString();
-  Object.assign(bar.style, {position:'fixed',left:'50%',bottom:'10px',transform:'translateX(-50%)',
-    zIndex:99999,padding:'4px 12px',borderRadius:'999px',fontSize:'12px',
-    background:'rgba(109,140,255,.18)',border:'1px solid rgba(109,140,255,.45)',color:'#c3ceff',
-    backdropFilter:'blur(8px)',pointerEvents:'none'});
-  document.body.appendChild(bar);
-})();`,
-  },
-  {
-    id: 'inject:wide',
-    name: '加宽对话区',
-    enabled: true,
-    code: `(function(){
-  var st = document.getElementById('yq-wide');
-  if (st) return;
-  st = document.createElement('style');
-  st.id = 'yq-wide';
-  st.textContent = '[class*="composer"]{max-width:1100px!important} [class*="message"]{max-width:1100px!important}';
-  document.head.appendChild(st);
-})();`,
-  },
-  {
-    id: 'inject:watermark',
-    name: '隐藏 AI 生成水印',
-    enabled: false,
-    code: `(function(){
-  var st = document.getElementById('yq-wm');
-  if (st) return;
-  st = document.createElement('style');
-  st.id = 'yq-wm';
-  st.textContent = '[class*="attribution"],[class*="watermark"],[data-testid*="attribution"]{display:none!important}';
-  document.head.appendChild(st);
-})();`,
-  },
-];
+export async function openDesktopConnection(options: { port: number; exePath?: string; launch?: boolean }): Promise<{ cdp: DesktopCdp; launched: boolean }> {
+  const port = validateDebugPort(options.port); let launched = false;
+  if (!await debugPortOpen(port)) {
+    if (!options.launch) throw new Error('调试端口未开启，请完全退出客户端后选择启动并连接');
+    const d = detectCodingDesktop(options.exePath);
+    if (!d.executable) throw new Error('未找到桌面程序，请先指定程序路径');
+    if (isCodexRunning(d.executable)) throw new Error('客户端正在运行且未开启调试端口，请完全退出后重试');
+    const child = spawn(d.executable, [`--remote-debugging-port=${port}`, '--remote-debugging-address=127.0.0.1'], { detached: true, stdio: 'ignore', windowsHide: false });
+    await new Promise<void>((resolve, reject) => { child.once('spawn', () => resolve()); child.once('error', reject); }); child.unref(); launched = true;
+    for (let i = 0; i < 40; i++) { if (await debugPortOpen(port)) break; await new Promise(r => setTimeout(r, 500)); }
+  }
+  let last: unknown;
+  for (let i = 0; i < (launched ? 15 : 1); i++) { try { return { cdp: await DesktopCdp.connect(port), launched }; } catch (e) { last = e; if (launched) await new Promise(r => setTimeout(r, 500)); } }
+  throw last || new Error('桌面连接失败');
+}
+export interface InjectResult { ok: boolean; message: string; launched?: boolean; injected?: number }
+export async function launchAndInject(scripts: Array<{ id: string; name: string; code: string; enabled: boolean }>, port = 9222): Promise<InjectResult> {
+  let cdp: DesktopCdp | undefined;
+  try { const opened = await openDesktopConnection({ port, launch: true }); cdp = opened.cdp; const active = scripts.filter(s => s.enabled && s.code.trim()); for (const s of active) await cdp.evaluate(s.code); return { ok: true, launched: opened.launched, injected: active.length, message: `已执行 ${active.length} 个自定义脚本` }; }
+  catch (e) { return { ok: false, message: (e as Error).message }; } finally { cdp?.close(); }
+}
+export async function injectorStatus(): Promise<{ portOpen: boolean; running: boolean; installed: boolean }> { return { portOpen: await debugPortOpen(), running: isCodexRunning(), installed: detectCodingDesktop().installed }; }
+export const BUILTIN_INJECT_SCRIPTS: Array<{ id: string; name: string; enabled: boolean; code: string }> = [];

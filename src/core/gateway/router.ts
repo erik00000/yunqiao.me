@@ -243,15 +243,17 @@ export class Router {
   }
 
   /** 计算费用（美元） */
-  costOf(provider: Provider, model: ProviderModel, usage: { input: number; output: number; cacheRead?: number }): number {
+  costOf(provider: Provider, model: ProviderModel, usage: { input: number; output: number; cacheRead?: number; cacheWrite?: number }): number {
     const ov = this.store.overrides.read()[`${provider.id}/${model.id}`] ?? {};
     const inPrice = ov.priceIn ?? model.inputPrice ?? 0;
     const outPrice = ov.priceOut ?? model.outputPrice ?? 0;
     const cacheRead = usage.cacheRead ?? 0;
-    const billableIn = Math.max(0, usage.input - cacheRead);
+    const cacheWrite = usage.cacheWrite ?? 0;
+    const billableIn = Math.max(0, usage.input - cacheRead - cacheWrite);
     const raw =
       (billableIn / 1_000_000) * inPrice +
       (cacheRead / 1_000_000) * (model.cacheReadPrice ?? inPrice) +
+      (cacheWrite / 1_000_000) * (model.cacheWritePrice ?? inPrice) +
       (usage.output / 1_000_000) * outPrice;
     return raw * (provider.rateMultiplier ?? 1);
   }

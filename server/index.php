@@ -168,6 +168,8 @@ document.getElementById('pwd').addEventListener('keydown', e=>{ if(e.key==='Ente
     <div class="nav on" data-tab="catalog">供应商目录</div>
     <div class="nav" data-tab="stats">访问统计</div>
     <div class="nav" data-tab="update">版本更新</div>
+    <a class="nav" href="member_admin.php">会员与赠金</a>
+    <a class="nav" href="catalog_sync_admin.php">模型自动同步</a>
     <div class="nav" data-tab="settings">设置</div>
     <div style="flex:1"></div>
     <div class="nav" id="logout" style="color:#ff9b9b">退出登录</div>
@@ -520,16 +522,16 @@ function renderModels(){
   box.innerHTML = (editing.models||[]).map((m,i)=>`
     <div class="mrow">
       <input value="${esc(m.id)}" data-m="${i}" data-k="id" placeholder="deepseek-chat">
-      <input value="${m.contextWindow||''}" data-m="${i}" data-k="contextWindow" type="number" placeholder="128000">
-      <input value="${m.inputPrice??''}" data-m="${i}" data-k="inputPrice" type="number" step="0.01" placeholder="0">
-      <input value="${m.outputPrice??''}" data-m="${i}" data-k="outputPrice" type="number" step="0.01" placeholder="0">
+      <input value="${m.contextWindow||''}" data-m="${i}" data-k="contextWindow" type="number" placeholder="待确认">
+      <input value="${m.inputPrice??''}" data-m="${i}" data-k="inputPrice" type="number" step="0.01" placeholder="待确认">
+      <input value="${m.outputPrice??''}" data-m="${i}" data-k="outputPrice" type="number" step="0.01" placeholder="待确认">
       <button class="btn sm danger" data-del="${i}">×</button>
     </div>`).join('');
   box.querySelectorAll('[data-m]').forEach(inp=>{
     inp.oninput = ()=>{
       const i = +inp.dataset.m, k = inp.dataset.k;
       const v = inp.value;
-      editing.models[i][k] = (k==='id') ? v : Number(v||0);
+      if(k==='id') editing.models[i][k]=v; else if(v==='') delete editing.models[i][k]; else editing.models[i][k]=Number(v);
     };
   });
   box.querySelectorAll('[data-del]').forEach(b=>{
@@ -538,7 +540,7 @@ function renderModels(){
 }
 document.getElementById('btnAddModel').onclick = ()=>{
   editing.models = editing.models || [];
-  editing.models.push({id:'', contextWindow:128000, inputPrice:0, outputPrice:0, capabilities:{tools:true,vision:false,thinking:false}});
+  editing.models.push({id:'',capabilities:{}});
   renderModels();
 };
 document.getElementById('btnCancel').onclick = closeEdit;
@@ -691,6 +693,7 @@ document.querySelector('[data-tab="stats"]').addEventListener('click', loadStats
 reload();
 </script>
 <?php endif; ?>
+<footer style="text-align:center;padding:20px;color:#7b8595;font-size:12px"><a href="https://github.com/jxb412/aurora/tree/v0.6.0" target="_blank" rel="noopener noreferrer">yunqiao.me · v0.6.0 对应源码</a> · <a href="https://github.com/jxb412/aurora/blob/v0.6.0/LICENSE" target="_blank" rel="noopener noreferrer">AGPL-3.0 许可</a></footer>
 </body>
 </html>
 

@@ -1,0 +1,25 @@
+{
+  "version": "0.6.0",
+  "passed": true,
+  "count": 8,
+  "checks": [
+    "Packaged version and AGPL notices",
+    "All 217 packaged resource hashes match pinned source",
+    "Actual packaged EXE renders app.asar with an isolated data directory",
+    "Packaged gateway health is ready and management rejects missing credentials",
+    "Installed runtime loads 5 complete packages, 32 builtins and both pinned markets",
+    "Packaged plugin page renders the five bundled packages without errors",
+    "Packaged membership onboarding renders without authenticated user state",
+    "No page exceptions or changes to isolated client configuration"
+  ],
+  "executable": "release\\win-unpacked\\YunQiaoAI.exe",
+  "exeSha256": "f19f95b206f7ce0ea057a6ad4e43dd35a948ad871454c79332a405918e785a9f",
+  "asarSha256": "539aea26f1180a9396dce4817d7fc0d4d72bd526633e886628b3c0013fc5ecd9",
+  "resourceFilesVerified": 217,
+  "profile": "isolated temporary app, gateway and client directories",
+  "membershipPublicConfigWarning": [],
+  "screenshots": [
+    "docs/images/plugins-v0.6.png",
+    "docs/images/membership-v0.6.png"
+  ]
+}

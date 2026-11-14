@@ -5,16 +5,20 @@
     "Client -> add provider -> model -> live connection test -> redacted preview -> apply",
     "Restore original client configuration byte-for-byte",
     "Session discovery, reading and real Markdown download",
+    "Batch repair UI previews real JSONL and SQLite without writing",
+    "Bulk model selection, edit preview, save and delete through real IPC",
     "Live remote catalog loading and model/vendor search",
     "Persistent theme switch and keyboard command navigation",
     "Settings validation prevents invalid gateway port",
     "Occupied port rolls back settings and restores the actual listener",
     "All primary navigation pages render",
+    "Bundled desktop plugin catalog loads all five real packages",
     "Built-in plugin can be enabled, persisted and disabled in the UI",
     "Codex extension workspace renders local resource categories",
+    "Membership onboarding renders without embedding administrator credentials",
     "Authenticated browser console + mobile responsive layout"
   ],
-  "count": 13,
+  "count": 17,
   "profile": "isolated temporary data and client directories",
   "mockUpstream": true
 }

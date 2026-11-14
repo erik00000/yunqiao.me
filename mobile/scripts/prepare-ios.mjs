@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const version = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version;
+if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('Invalid native app version');
 const cap = path.join(root, 'node_modules/@capacitor/cli/bin/capacitor');
 if (!fs.existsSync(path.join(root, 'ios/App/App.xcodeproj'))) {
   const child = spawnSync(process.execPath, [cap, 'add', 'ios'], { cwd: root, stdio: 'inherit' });
@@ -11,6 +13,7 @@ if (!fs.existsSync(path.join(root, 'ios/App/App.xcodeproj'))) {
 }
 const plistPath = path.join(root, 'ios/App/App/Info.plist');
 let plist = fs.readFileSync(plistPath, 'utf8');
+plist = plist.replace(/(<key>CFBundleDisplayName<\/key>\s*<string>)[^<]*(<\/string>)/, '$1yunqiao.me$2');
 // Local gateway addresses are chosen by the user. Native HTTP handles their network requests;
 // the WebView itself keeps loading only the bundled application.
 const additions = [
@@ -24,7 +27,7 @@ fs.writeFileSync(plistPath, plist);
 const projectPath = path.join(root, 'ios/App/App.xcodeproj/project.pbxproj');
 let project = fs.readFileSync(projectPath, 'utf8');
 project = project.replace(/IPHONEOS_DEPLOYMENT_TARGET = [\d.]+;/g, 'IPHONEOS_DEPLOYMENT_TARGET = 16.0;');
-project = project.replace(/MARKETING_VERSION = [\d.]+;/g, 'MARKETING_VERSION = 0.5.0;');
+project = project.replace(/MARKETING_VERSION = [\d.]+;/g, `MARKETING_VERSION = ${version};`);
 fs.writeFileSync(projectPath, project);
 const podfile = path.join(root, 'ios/App/Podfile');
 if (fs.existsSync(podfile)) fs.writeFileSync(podfile, fs.readFileSync(podfile, 'utf8').replace(/platform :ios, '[^']+'/g, "platform :ios, '16.0'"));

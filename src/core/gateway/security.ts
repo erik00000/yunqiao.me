@@ -34,7 +34,7 @@ export function allowedOrigin(req: IncomingMessage): boolean {
 
 /** The gateway is not a remote shell. Native desktop IPC has a separate action boundary. */
 export const REMOTE_ACTIONS = new Set([
-  'state.get', 'usage.summary', 'usage.recent', 'sessions.scan', 'sessions.read', 'sessions.resume', 'sessions.export',
+  'state.get', 'usage.summary', 'usage.recent', 'usage.live', 'sessions.scan', 'sessions.read', 'sessions.resume', 'sessions.export',
   'cloud.catalog', 'update.check', 'gateway.status', 'gateway.url', 'provider.test', 'provider.models',
   'provider.resetCooldown', 'provider.save', 'provider.toggle', 'agent.detect', 'agents.detect', 'agent.preview',
   'agent.connect', 'agent.disconnect', 'account.scan', 'codex.diagnose', 'codex.assets', 'codex.flags',

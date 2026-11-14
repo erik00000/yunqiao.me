@@ -262,7 +262,8 @@ export function parseOpenAIChatResponse(json: any): IRResponse {
     usage: {
       inputTokens: json?.usage?.prompt_tokens ?? 0,
       outputTokens: json?.usage?.completion_tokens ?? 0,
-      cacheReadTokens: json?.usage?.prompt_tokens_details?.cached_tokens ?? 0,
+      cacheReadTokens: json?.usage?.prompt_tokens_details?.cached_tokens ?? json?.usage?.prompt_cache_hit_tokens,
+      cacheWriteTokens: json?.usage?.cache_creation_input_tokens,
       reasoningTokens: json?.usage?.completion_tokens_details?.reasoning_tokens ?? 0,
     },
   };
@@ -336,7 +337,8 @@ export class OpenAIChatStreamDecoder {
         usage: {
           inputTokens: j.usage.prompt_tokens ?? 0,
           outputTokens: j.usage.completion_tokens ?? 0,
-          cacheReadTokens: j.usage.prompt_tokens_details?.cached_tokens ?? 0,
+          cacheReadTokens: j.usage.prompt_tokens_details?.cached_tokens ?? j.usage.prompt_cache_hit_tokens,
+          cacheWriteTokens: j.usage.cache_creation_input_tokens,
         },
       });
     if (choice?.finish_reason)

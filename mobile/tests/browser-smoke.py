@@ -13,8 +13,8 @@ from playwright.sync_api import sync_playwright, expect
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 STATE = {
-    'version': '0.5.0', 'gateway': {'running': True},
-    'providers': [{'id': 'deepseek', 'name': 'DeepSeek 官方', 'enabled': True, 'format': 'openai-chat', 'models': [{'id': 'deepseek-chat', 'contextWindow': 128000, 'capabilities': {'tools': True}}]}],
+    'version': '0.6.0', 'gateway': {'running': True},
+    'providers': [{'id': 'deepseek', 'name': 'DeepSeek 官方', 'enabled': True, 'format': 'openai-chat', 'models': [{'id': 'deepseek-flash', 'contextWindow': 1000000, 'capabilities': {'tools': True}}]}],
     'agents': {}, 'plugins': [{'id': 'system-prompt', 'name': '统一系统提示', 'enabled': True}],
     'agentCatalog': [
         {'id': 'claude-code', 'name': 'Claude Code', 'support': 'automatic', 'description': '终端编程助手'},
@@ -23,6 +23,7 @@ STATE = {
 }
 SESSION = {'path': '/fixture/session.jsonl', 'title': '移动端验收会话', 'agent': 'Codex', 'updatedAt': '2026-11-15T12:00:00Z', 'project': 'aurora'}
 CALLS = []
+LIVE = [{'id': 'live-1', 'model': 'deepseek-flash', 'agent': 'Claude Code', 'providerName': 'DeepSeek 官方', 'phase': 'streaming', 'startedAtMs': 1794704400000, 'estimatedOutputTokens': 24, 'cacheRead': 0}]
 
 
 class QuietHandler(http.server.SimpleHTTPRequestHandler):
@@ -44,11 +45,13 @@ def route_rpc(route):
     if action == 'state.get':
         result = STATE
     elif action == 'usage.summary':
-        result = {'totals': {'calls': 12, 'inputTokens': 1200, 'outputTokens': 340, 'cost': .04, 'errors': 1}}
+        result = {'totals': {'calls': 12 if LIVE else 13, 'inputTokens': 1200, 'outputTokens': 340, 'cost': .04, 'errors': 1, 'cacheRead': 600, 'cacheWrite': 120, 'cacheRate': .75, 'cacheReports': 2, 'cacheWriteReports': 2}}
     elif action == 'usage.recent':
-        result = [{'model': 'deepseek-chat', 'agent': 'Claude Code', 'providerName': 'DeepSeek 官方', 'status': 200, 'ts': '2026-11-15T12:00:00Z'}]
+        result = [{'model': 'deepseek-flash', 'agent': 'Claude Code', 'providerName': 'DeepSeek 官方', 'status': 200, 'ts': '2026-11-15T12:00:00Z', 'inputTokens': 800, 'outputTokens': 340, 'cacheRead': 600, 'cacheReadKnown': True, 'cacheWrite': 0, 'cacheWriteKnown': False}]
+    elif action == 'usage.live':
+        result = LIVE
     elif action == 'agent.preview':
-        result = {'ok': True, 'revision': 'revision-1', 'files': [{'path': '~/.claude/settings.json', 'after': '{"env":{"ANTHROPIC_MODEL":"deepseek-chat"}}'}], 'warnings': [], 'message': '已生成预览'}
+        result = {'ok': True, 'revision': 'revision-1', 'files': [{'path': '~/.claude/settings.json', 'after': '{"env":{"ANTHROPIC_MODEL":"deepseek-flash"}}'}], 'warnings': [], 'message': '已生成预览'}
     elif action == 'agent.connect':
         assert payload.get('revision') == 'revision-1', 'Configuration revision must accompany apply'
         STATE['agents'][payload['agentId']] = {'connected': True, 'providerId': payload['providerId'], 'model': payload['model']}
@@ -85,6 +88,15 @@ def main():
         page.get_by_label('访问令牌').fill('mobile-test-token')
         page.get_by_role('button', name='连接工作台').click()
         expect(page.get_by_role('heading', name='一切，尽在掌握')).to_be_visible()
+        expect(page.get_by_text('yunqiao.me', exact=True)).to_be_visible()
+        expect(page.get_by_label('缓存用量')).to_contain_text('75.0%')
+        expect(page.get_by_label('实时请求')).to_contain_text('输出 约 24')
+        expect(page.get_by_label('实时请求')).to_contain_text('缓存读 0')
+        expect(page.get_by_label('实时请求')).to_contain_text('缓存写 未提供')
+        expect(page.get_by_text('缓存读 600 · 缓存写 —', exact=True)).to_be_visible()
+        LIVE.clear()
+        expect(page.get_by_label('实时请求')).to_contain_text('0 个进行中', timeout=6000)
+        expect(page.locator('.stat').filter(has_text='请求次数')).to_contain_text('13', timeout=6000)
         page.get_by_role('button', name='客户端', exact=True).click()
         page.get_by_role('button', name='Claude Code').click()
         page.get_by_role('button', name='预览电脑上的配置变更').click()
@@ -118,11 +130,14 @@ def main():
         page.get_by_role('button', name='我的', exact=True).click()
         page.get_by_role('button', name='断开连接', exact=True).click()
         expect(page.get_by_label('访问令牌')).to_have_value('')
+        live_calls = len([call for call in CALLS if call['action'] == 'usage.live'])
+        page.wait_for_timeout(1700)
+        assert len([call for call in CALLS if call['action'] == 'usage.live']) == live_calls, 'Disconnect must stop live polling'
         assert not errors, errors
         assert any(c['action'] == 'agent.connect' for c in CALLS)
         browser.close()
     server.shutdown()
-    print(json.dumps({'passed': True, 'checks': ['auth failure', 'connect', 'preview/apply revision', 'unsupported client', 'provider toggle', 'models', 'sessions safe text', 'theme', 'no overflow', 'no persisted token', 'disconnect'], 'rpc_calls': len(CALLS)}, ensure_ascii=True))
+    print(json.dumps({'passed': True, 'checks': ['auth failure', 'connect', 'brand', 'cache hit rate', 'live reported zero vs missing cache', 'live estimates', 'completion refresh', 'preview/apply revision', 'unsupported client', 'provider toggle', 'models', 'sessions safe text', 'theme', 'no overflow', 'no persisted token', 'disconnect stops polling'], 'rpc_calls': len(CALLS)}, ensure_ascii=True))
 
 
 if __name__ == '__main__':

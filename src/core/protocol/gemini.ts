@@ -186,7 +186,7 @@ export function parseGeminiResponse(json: any): IRResponse {
     usage: {
       inputTokens: u.promptTokenCount ?? 0,
       outputTokens: u.candidatesTokenCount ?? 0,
-      cacheReadTokens: u.cachedContentTokenCount ?? 0,
+      cacheReadTokens: u.cachedContentTokenCount,
       reasoningTokens: u.thoughtsTokenCount ?? 0,
     },
   };
@@ -232,6 +232,7 @@ export class GeminiStreamDecoder {
         type: 'usage',
         usage: {
           inputTokens: j.usageMetadata.promptTokenCount ?? 0,
+          cacheReadTokens: j.usageMetadata.cachedContentTokenCount,
           outputTokens: j.usageMetadata.candidatesTokenCount ?? 0,
         },
       });

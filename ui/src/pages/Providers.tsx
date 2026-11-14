@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import PresetPicker from '../components/PresetPicker';
 import type { PageProps } from '../App';
 import { Btn, Empty, Field, Ico, Modal, Toggle, useToast } from '../components/ui';
 import {
@@ -395,27 +396,7 @@ function ProviderEditor({
         </>
       }
     >
-      <Field label="预设库">
-        <input
-          className="input"
-          placeholder="搜索：deepseek / kimi / glm / openai / claude / 中转…"
-          value={presetQuery}
-          onChange={(e) => setPresetQuery(e.target.value)}
-          style={{ marginBottom: 8 }}
-        />
-        <div className="preset-grid">
-          {presets.map((p) => (
-            <div
-              key={p.id}
-              className={`preset-item ${value.presetId === p.id ? 'on' : ''}`}
-              onClick={() => applyPreset(p)}
-            >
-              <span style={{ color: p.color }}>{p.icon}</span>
-              <span className="ellipsis">{p.nameZh || p.name}</span>
-            </div>
-          ))}
-        </div>
-      </Field>
+      <Field label="官方厂商目录" hint="启动时自动同步并缓存，与客户端接入共用同一份目录。"><PresetPicker presets={presets} value={value.presetId} onChange={p => p ? applyPreset(p) : onChange({ ...EMPTY_PROVIDER(), id: value.id })} /></Field>
 
       <div className="grid cols-2">
         <Field label="显示名称">
@@ -555,7 +536,7 @@ function ProviderEditor({
             <div className="model-row" key={i}>
               <input
                 className="input mono"
-                placeholder="deepseek-chat"
+                placeholder="模型 API ID"
                 value={m.id}
                 onChange={(e) => {
                   const next = [...(value.models ?? [])];
@@ -566,12 +547,12 @@ function ProviderEditor({
               <input
                 className="input"
                 type="number"
-                placeholder="128000"
+                placeholder="待确认"
                 title="上下文窗口（tokens）。超出这个长度会被自动裁剪，或直接报错"
-                value={m.contextWindow ?? 0}
+                value={m.contextWindow ?? ''}
                 onChange={(e) => {
                   const next = [...(value.models ?? [])];
-                  next[i] = { ...m, contextWindow: Number(e.target.value) };
+                  next[i] = { ...m, contextWindow: e.target.value.trim() ? Number(e.target.value) : undefined };
                   set({ models: next });
                 }}
               />
@@ -579,12 +560,12 @@ function ProviderEditor({
                 className="input"
                 type="number"
                 step="0.01"
-                placeholder="0.27"
+                placeholder="待确认"
                 title="输入价：每百万 token 多少美元"
-                value={m.inputPrice ?? 0}
+                value={m.inputPrice ?? ''}
                 onChange={(e) => {
                   const next = [...(value.models ?? [])];
-                  next[i] = { ...m, inputPrice: Number(e.target.value) };
+                  next[i] = { ...m, inputPrice: e.target.value.trim() ? Number(e.target.value) : undefined };
                   set({ models: next });
                 }}
               />
@@ -592,12 +573,12 @@ function ProviderEditor({
                 className="input"
                 type="number"
                 step="0.01"
-                placeholder="1.10"
+                placeholder="待确认"
                 title="输出价：每百万 token 多少美元"
-                value={m.outputPrice ?? 0}
+                value={m.outputPrice ?? ''}
                 onChange={(e) => {
                   const next = [...(value.models ?? [])];
-                  next[i] = { ...m, outputPrice: Number(e.target.value) };
+                  next[i] = { ...m, outputPrice: e.target.value.trim() ? Number(e.target.value) : undefined };
                   set({ models: next });
                 }}
               />
@@ -644,7 +625,7 @@ function ProviderEditor({
                 set({
                   models: [
                     ...(value.models ?? []),
-                    { id: '', contextWindow: 128000, inputPrice: 0, outputPrice: 0, capabilities: { tools: true } } as ProviderModel,
+                    { id: '' } as ProviderModel,
                   ],
                 })
               }
@@ -652,7 +633,7 @@ function ProviderEditor({
               <Ico name="plus" size={12} /> 添加模型
             </Btn>
             <span className="hint">
-              拉取前会先保存供应商。模型上下文与价格是本地元数据，实际能力以上游服务为准。
+              拉取前会先保存供应商。上下文和价格留空表示待确认，0 表示已确认免费；实际能力与计费以上游服务为准。
             </span>
           </div>
         </div>

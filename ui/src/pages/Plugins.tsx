@@ -2,8 +2,17 @@ import React, { useState } from 'react';
 import type { PageProps } from '../App';
 import { Btn, Empty, Field, Ico, Modal, Toggle, useToast } from '../components/ui';
 import { PluginRecord, call, isWebMode } from '../lib/api';
+import DesktopExtensions from './DesktopExtensions';
 
-export default function Plugins({ state, reload, go }: PageProps) {
+export default function Plugins(props: PageProps) {
+  const [tab, setTab] = useState<'desktop' | 'gateway'>('desktop');
+  return <>
+    <div className="filter-bar"><div className="segments"><button className={tab === 'desktop' ? 'selected' : ''} onClick={() => setTab('desktop')}>桌面插件与市场</button><button className={tab === 'gateway' ? 'selected' : ''} onClick={() => setTab('gateway')}>网关中间件</button></div><Btn onClick={() => props.go('codex')}>MCP / Skills / 提示词 →</Btn></div>
+    {tab === 'desktop' ? <><div className="page-head"><div><div className="eyebrow">EXTENSIONS</div><h1>插件中心</h1><p>解锁桌面插件入口，安装增强，查看每一项的实际运行状态。</p></div></div><DesktopExtensions /></> : <GatewayPlugins {...props} />}
+  </>;
+}
+
+function GatewayPlugins({ state, reload, go }: PageProps) {
   const toast = useToast();
   const remote = isWebMode();
   const [editing, setEditing] = useState<Partial<PluginRecord> | null>(null);
@@ -57,7 +66,7 @@ export default function Plugins({ state, reload, go }: PageProps) {
       </div>
     </div>
     {remote && <div className="notice"><Ico name="shield" /><span>远程模式可查看插件状态。安装、启停与脚本编辑请在电脑上的云桥客户端完成。</span></div>}
-    <div className="notice"><Ico name="puzzle" /><span>这里管理网关中间件。客户端自己的 MCP、Skills 与全局提示词在「Codex 工作台」中管理。</span></div>
+    <div className="notice"><Ico name="puzzle" /><span>这里管理网关中间件。客户端自己的 MCP、Skills 与全局提示词在「桌面工作台」中管理。</span></div>
     <div className="row" style={{ marginBottom: 18, gap: 12 }}>
       <div className="grow"><input className="input" style={{ maxWidth: 360 }} value={search} onChange={e => setSearch(e.target.value)} placeholder="搜索插件名称或功能" aria-label="搜索插件" /></div>
       <span className="chip ok">{state.plugins.filter(p => p.enabled).length} 个已启用</span><span className="chip">{state.builtinMiddleware.length} 个内置能力</span>

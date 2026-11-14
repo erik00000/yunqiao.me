@@ -11,6 +11,7 @@ export interface ProviderModel {
   inputPrice?: number;
   outputPrice?: number;
   cacheReadPrice?: number;
+  cacheWritePrice?: number;
   capabilities?: {
     tools?: boolean;
     vision?: boolean;
@@ -119,6 +120,10 @@ export interface AgentState {
 }
 
 export interface UsageRecord {
+  threadId?: string;
+  cacheReadKnown?: boolean;
+  cacheWriteKnown?: boolean;
+  estimated?: boolean;
   ts: string;
   agent: string;
   providerId: string;

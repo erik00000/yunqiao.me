@@ -9,6 +9,8 @@ export interface ProviderModel {
   maxOutput?: number;
   inputPrice?: number;
   outputPrice?: number;
+  cacheReadPrice?: number;
+  cacheWritePrice?: number;
   capabilities?: { tools?: boolean; vision?: boolean; thinking?: boolean };
   thinkingField?: 'reasoning_effort' | 'enable_thinking' | 'none';
   _new?: boolean;
@@ -111,7 +113,7 @@ export interface CloudCatalog {
   version: number;
   updatedAt: string;
   providers: CloudProvider[];
-  source?: 'remote' | 'cache';
+  source?: 'remote' | 'cache' | 'builtin';
   fetchedAt?: string;
   warning?: string;
 }
@@ -214,6 +216,7 @@ export interface AppState {
   agents: Record<string, AgentState>;
   plugins: PluginRecord[];
   presets: Preset[];
+  catalog?: { source: 'remote' | 'cache' | 'builtin'; version: number; fetchedAt?: string; warning?: string; syncing?: boolean };
   builtinMiddleware: Array<{ id: string; name: string; description: string; defaultOptions: any }>;
   agentCatalog: AgentCatalogItem[];
   gateway: GatewayStatus;
@@ -221,11 +224,15 @@ export interface AppState {
   dataDir: string;
   version: string;
   platform: string;
-  detected: Record<string, { installed: boolean; configured?: boolean; version?: string; command?: string; configPath?: string }>;
+  detected: Record<string, { installed: boolean; configured?: boolean; version?: string; command?: string; configPath?: string; productName?: string; supportsCodexConfig?: boolean; evidence?: string }>;
   mode?: 'desktop' | 'web';
 }
 
 export interface UsageRecord {
+  threadId?: string;
+  cacheReadKnown?: boolean;
+  cacheWriteKnown?: boolean;
+  estimated?: boolean;
   ts: string;
   agent: string;
   providerId: string;
@@ -238,6 +245,7 @@ export interface UsageRecord {
   inputTokens: number;
   outputTokens: number;
   cacheRead: number;
+  cacheWrite: number;
   cost: number;
   latencyMs: number;
   firstByteMs?: number;
@@ -247,7 +255,7 @@ export interface UsageRecord {
 }
 
 export interface UsageSummary {
-  totals: { inputTokens: number; outputTokens: number; cacheRead: number; cost: number; calls: number; errors: number };
+  totals: { inputTokens: number; outputTokens: number; cacheRead: number; cacheWrite: number; cacheRate: number; cacheReports: number; cacheWriteReports: number; cost: number; calls: number; errors: number };
   byDay: Array<{ day: string; cost: number; tokens: number; calls: number }>;
   byProvider: Array<{ id: string; name?: string; cost: number; tokens: number; calls: number }>;
   byModel: Array<{ id: string; cost: number; tokens: number; calls: number }>;

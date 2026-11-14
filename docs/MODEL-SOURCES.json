@@ -1,0 +1,493 @@
+{
+  "checkedAt": "2026-11-15",
+  "evidence": [
+    {
+      "provider": "openai",
+      "id": "gpt-6.1-sol",
+      "source": "https://developers.openai.com/api/docs/models",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "0bc96a2533cb131a958ccafcd5f00000fbdaa31ee3d23e7f0b700a65196e1f64",
+      "evidence": "ar-Astra performance for complex work at a lower cost. Model ID gpt-6.1-sol Reasoning low medium high xhigh max Input price $2 / Input MTok Output price $10 / Output MTok Max output 128K tokens Context window 1.05M Knowledge cutoff Apr 30, 2026 Tools Functions, Web"
+    },
+    {
+      "provider": "openai",
+      "id": "gpt-6-astra",
+      "source": "https://developers.openai.com/api/docs/models",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "0bc96a2533cb131a958ccafcd5f00000fbdaa31ee3d23e7f0b700a65196e1f64",
+      "evidence": "ra Our most capable model for the most demanding work. Model ID gpt-6-astra Reasoning low medium high xhigh max Input price $10 / Input MTok Output price $50 / Output MTok Max output 128K tokens Context window 1.05M Knowledge cutoff Apr 30, 2026 Tools Functions, Web"
+    },
+    {
+      "provider": "openai",
+      "id": "gpt-6.1-terra",
+      "source": "https://developers.openai.com/api/docs/models",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "0bc96a2533cb131a958ccafcd5f00000fbdaa31ee3d23e7f0b700a65196e1f64",
+      "evidence": "ing, precise computer use, and clear, natural writing. Model ID gpt-6.1-terra Reasoning none low medium high xhigh max Input price $1 / Input MTok Output price $5 / Output MTok Max output 128K tokens Context window 1.05M Knowledge cutoff Jun 1, 2026 Tools Functions, W"
+    },
+    {
+      "provider": "openai",
+      "id": "gpt-6-luna",
+      "source": "https://developers.openai.com/api/docs/models",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "0bc96a2533cb131a958ccafcd5f00000fbdaa31ee3d23e7f0b700a65196e1f64",
+      "evidence": "r most efficient model for focused, high-volume tasks. Model ID gpt-6-luna Reasoning none low medium high xhigh max Input price $0.1 / Input MTok Output price $0.5 / Output MTok Max output 128K tokens Context window 1.05M Knowledge cutoff May 18, 2026 Tools Functio"
+    },
+    {
+      "provider": "anthropic",
+      "id": "claude-sonnet-5-5",
+      "source": "https://platform.claude.com/docs/en/models/overview.md",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "b8ef27a9e152d10daece98c47123e633b7836b9cc7de1b514fa06d17e376a6a7",
+      "evidence": "| Claude API ID | `claude-fable-5-2` | `claude-opus-5-5` | `claude-sonnet-5-5` | `claude-haiku-5-5` |"
+    },
+    {
+      "provider": "anthropic",
+      "id": "claude-opus-5-5",
+      "source": "https://platform.claude.com/docs/en/models/overview.md",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "b8ef27a9e152d10daece98c47123e633b7836b9cc7de1b514fa06d17e376a6a7",
+      "evidence": "| Claude API ID | `claude-fable-5-2` | `claude-opus-5-5` | `claude-sonnet-5-5` | `claude-haiku-5-5` |"
+    },
+    {
+      "provider": "anthropic",
+      "id": "claude-fable-5-2",
+      "source": "https://platform.claude.com/docs/en/models/overview.md",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "b8ef27a9e152d10daece98c47123e633b7836b9cc7de1b514fa06d17e376a6a7",
+      "evidence": "| Claude API ID | `claude-fable-5-2` | `claude-opus-5-5` | `claude-sonnet-5-5` | `claude-haiku-5-5` |"
+    },
+    {
+      "provider": "anthropic",
+      "id": "claude-haiku-5-5",
+      "source": "https://platform.claude.com/docs/en/models/overview.md",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "b8ef27a9e152d10daece98c47123e633b7836b9cc7de1b514fa06d17e376a6a7",
+      "evidence": "| Claude API ID | `claude-fable-5-2` | `claude-opus-5-5` | `claude-sonnet-5-5` | `claude-haiku-5-5` |"
+    },
+    {
+      "provider": "gemini",
+      "id": "gemini-4-hydrogen",
+      "source": "https://aistudio.google.com/docs/models",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "5333901d8ada9b3acee9551359be6926c7c3eb957744fd11be7dbca681d43516",
+      "evidence": "%} {% section class=\"model-specs\" %} * *Model code* **gemini-4-hydrogen** * *Context* **1M tokens** * *Max output* **64K / 1M tokens** * *Modalities* **Text, Image, Audio, Video, PDF** {% /section %} {% section class=\"card-actions\" %} {% button href=\"https://aistudio.goo"
+    },
+    {
+      "provider": "gemini",
+      "id": "gemini-4-carbon",
+      "source": "https://aistudio.google.com/docs/models",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "5333901d8ada9b3acee9551359be6926c7c3eb957744fd11be7dbca681d43516",
+      "evidence": "%} {% section class=\"model-specs\" %} * *Model code* **gemini-4-carbon** * *Context* **1M tokens** * *Max output* **64K / 1M tokens** * *Modalities* **Text, Image, Audio, Video, PDF** {% /section %} {% section class=\"card-actions\" %} {% button href=\"https://aistudio.goo"
+    },
+    {
+      "provider": "gemini",
+      "id": "gemini-4-argon",
+      "source": "https://aistudio.google.com/docs/models",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "5333901d8ada9b3acee9551359be6926c7c3eb957744fd11be7dbca681d43516",
+      "evidence": "%} {% section class=\"model-specs\" %} * *Model code* **gemini-4-argon** * *Context* **1M tokens** * *Max output* **64K / 1M tokens** * *Modalities* **Text, Image, Audio, Video, PDF** {% /section %} {% section class=\"card-actions\" %} {% button href=\"https://aistudio.goo"
+    },
+    {
+      "provider": "deepseek",
+      "id": "deepseek-flash",
+      "source": "https://api-docs.deepseek.com/quick_start/pricing/",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "ee8682cff496a64ec641b4b506e2a60f5849213a625e4af9aefc3d56e78d08a0",
+      "evidence": "and output tokens by the model. Model Details ​ MODEL deepseek-flash (1) deepseek-v4-pro BASE URL (OpenAI Format) https://api.deepseek.com BASE URL (Anthropic Format) https://api.deepseek.com/anthropic MODEL VERSION DeepSeek-V4.1-Flash-1017 DeepSeek-V4-Pro-0813 THINKI"
+    },
+    {
+      "provider": "deepseek",
+      "id": "deepseek-v4-pro",
+      "source": "https://api-docs.deepseek.com/quick_start/pricing/",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "ee8682cff496a64ec641b4b506e2a60f5849213a625e4af9aefc3d56e78d08a0",
+      "evidence": "by the model. Model Details ​ MODEL deepseek-flash (1) deepseek-v4-pro BASE URL (OpenAI Format) https://api.deepseek.com BASE URL (Anthropic Format) https://api.deepseek.com/anthropic MODEL VERSION DeepSeek-V4.1-Flash-1017 DeepSeek-V4-Pro-0813 THINKING MODE Supports bot"
+    },
+    {
+      "provider": "moonshot",
+      "id": "kimi-k3.1-pro",
+      "source": "https://platform.kimi.com/docs/get-api-key",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "b2141a97973a7ee35cdda291bec5ae3e5c654951870cc17a5210223196989024",
+      "evidence": "1 Pro 开始；追求更高输出速度时可选择 Kimi K3.1 Pro 高速版。 Kimi K3.1 Pro kimi-k3.1-pro 是全新 K3.1 系列的首个旗舰模型——3 万亿级参数、1M token 上下文，代码、3D 创作、金融研究与建模能力显著提升。 Kimi K3.1 Pro 高速版 kimi-k3.1-pro-highspeed 是 Kimi K3.1 Pro 的高速版，能力相同、约为 2～3 倍速度，适合对输出速度要求更高的场景。 3 选择调用方式 Kimi API 兼容 OpenAI 与 Anthropic"
+    },
+    {
+      "provider": "moonshot",
+      "id": "kimi-k3.1-pro-highspeed",
+      "source": "https://platform.kimi.com/docs/get-api-key",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "b2141a97973a7ee35cdda291bec5ae3e5c654951870cc17a5210223196989024",
+      "evidence": "1M token 上下文，代码、3D 创作、金融研究与建模能力显著提升。 Kimi K3.1 Pro 高速版 kimi-k3.1-pro-highspeed 是 Kimi K3.1 Pro 的高速版，能力相同、约为 2～3 倍速度，适合对输出速度要求更高的场景。 3 选择调用方式 Kimi API 兼容 OpenAI 与 Anthropic API 格式，你可以根据项目技术栈选择最合适的接入方式。 Chat Completions API OpenAI 兼容格式，支持 OpenAI SDK 与任意语言 HTTP 接入。 Responses API O"
+    },
+    {
+      "provider": "zhipu",
+      "id": "glm-5.3",
+      "source": "https://docs.bigmodel.cn/cn/guide/models/text/glm-5.3.md",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "665e7c92f161d03dddf1e4ae55bf16be2b3b60950d3e148686479c5eb12de182",
+      "evidence": "洞利用类基准测试中的得分达到 GLM-5.2 的两倍以上。 [技术报告](https://z.ai/blog/glm-5.3) ｜ [体验中心](https://bigmodel.cn/trialcenter/modeltrial/text?modelCode=glm-5.3) ## 功能变更 GLM-5.3 目前仅支持处理文本模态信息，支持 1M 上下文窗口，最大输出 Tokens 为 128K。\\ GLM-5.3 会始终启用思考功能，支持三个思考强度级别：`low`、`high` 和 `max`，并不再支持禁用思考"
+    },
+    {
+      "provider": "zhipu",
+      "id": "glm-5.3-flash",
+      "source": "https://docs.bigmodel.cn/cn/guide/models/vlm/glm-5.3-flash.md",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "3842e5a1d73a26df12c5d95cb48474743c81ae4b668e0bc9bf78ad9a0d56db3b",
+      "evidence": "200 tokens/s**，提供更快、更流畅的模型体验。 [技术报告](https://z.ai/blog/glm-5.3-flash)｜[体验中心](https://bigmodel.cn/trialcenter/modeltrial/visual) > [card] 输入模态 > > 视频、图像、文本、文件 > [card] 输出模态 > > 文本 > [card] 上下文窗口 > > 1M > [card] 最大输出 > > 128K ## 如何使用 #### **模型 API** **Model Code**：`glm-"
+    },
+    {
+      "provider": "zhipu",
+      "id": "glm-5.3-flashx",
+      "source": "https://docs.bigmodel.cn/cn/guide/models/vlm/glm-5.3-flash.md",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "3842e5a1d73a26df12c5d95cb48474743c81ae4b668e0bc9bf78ad9a0d56db3b",
+      "evidence": "# 如何使用 #### **模型 API** **Model Code**：`glm-5.3-flash`/`glm-5.3-flashx`/`glm-5.3-flashx-legal` \\ **接口文档**：[Chat Completion API](https://docs.bigmodel.cn/api-reference/%e6%a8%a1%e5%9e%8b-api/%e5%af%b9%e8%af%9d%e8%a1%a5%e5%85%a8) \\ **参数说明**：文本参数与 GLM-5.3 保持一致，支持 1M 上下文。\\"
+    },
+    {
+      "provider": "qwen",
+      "id": "qwen3.8-max",
+      "source": "https://help.aliyun.com/zh/model-studio/qwen-api-via-openai-chat-completions",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "79350c3af4844c8e51fa1f273c85417bd0f16ccde9bdb75ba9d5f0124909145e",
+      "evidence": "时，会将其进行放大，直到总像素高于 min_pixels 。适用型号及取值见下方说明。 取值范围 输入图像： qwen3.8-max 、 qwen3.8-max-0902 、 qwen3.8-flash 、 qwen3.8-2.4t-a95b 、 qwen3.8-27b 、Qwen3.7、Qwen3.6、Qwen3.5、Qwen3-VL：默认值和最小值均为： 65536 qwen3.8-omni-flash 、Qwen3.5-Omni ：默认值和最小值均为： 24576 Qwen2.5-VL 开源系列及 QVQ 系列模型：默认"
+    },
+    {
+      "provider": "qwen",
+      "id": "qwen3.8-flash",
+      "source": "https://help.aliyun.com/zh/model-studio/qwen-api-via-openai-chat-completions",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "79350c3af4844c8e51fa1f273c85417bd0f16ccde9bdb75ba9d5f0124909145e",
+      "evidence": "号及取值见下方说明。 取值范围 输入图像： qwen3.8-max 、 qwen3.8-max-0902 、 qwen3.8-flash 、 qwen3.8-2.4t-a95b 、 qwen3.8-27b 、Qwen3.7、Qwen3.6、Qwen3.5、Qwen3-VL：默认值和最小值均为： 65536 qwen3.8-omni-flash 、Qwen3.5-Omni ：默认值和最小值均为： 24576 Qwen2.5-VL 开源系列及 QVQ 系列模型：默认值和最小值均为 3136 输入视频文件或图像列表： qwen3.8-m"
+    },
+    {
+      "provider": "minimax",
+      "id": "MiniMax-M3.1-Flash",
+      "source": "https://platform.minimax.cn/docs/api-reference/text-openai-api.md",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "81f30e7aad2715670d11c95516d4e478083f1c20b67aa669bbb5f38c82503562",
+      "evidence": "AI() response = client.chat.completions.create( model=\"MiniMax-M3.1-Flash\", reasoning_effort=\"max\", messages=[ {\"role\": \"system\", \"content\": \"You are a helpful assistant.\"}, {\"role\": \"user\", \"content\": \"Hi, how are you?\"}, ], ) print(f\"Thinking:\\n{response.choices[0].messa"
+    },
+    {
+      "provider": "minimax",
+      "id": "MiniMax-M3",
+      "source": "https://platform.minimax.cn/docs/api-reference/text-openai-api.md",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "81f30e7aad2715670d11c95516d4e478083f1c20b67aa669bbb5f38c82503562",
+      "evidence": "AI() response = client.chat.completions.create( model=\"MiniMax-M3.1-Flash\", reasoning_effort=\"max\", messages=[ {\"role\": \"system\", \"content\": \"You are a helpful assistant.\"}, {\"role\": \"user\", \"content\": \"Hi, how are you?\"}, ], ) print(f\"Thinking:\\n{response.choices["
+    },
+    {
+      "provider": "volcengine",
+      "id": "doubao-seed-2-1-pro-260915",
+      "source": "https://docs.volcengine.com/docs/ark/model-list?lang=zh",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "a7837ebfff5f9539722c3fefdbf05f23e3aa208ae5ab22232dfbf055f1516aaa",
+      "evidence": "\"insert\":\"doubao-seed-2-1-pro-260915\"（官方模型列表的模型 ID 单元格）"
+    },
+    {
+      "provider": "volcengine",
+      "id": "doubao-seed-2-1-lite-260915",
+      "source": "https://docs.volcengine.com/docs/ark/model-list?lang=zh",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "a7837ebfff5f9539722c3fefdbf05f23e3aa208ae5ab22232dfbf055f1516aaa",
+      "evidence": "\"insert\":\"doubao-seed-2-1-lite-260915\"（官方模型列表的模型 ID 单元格）"
+    },
+    {
+      "provider": "volcengine",
+      "id": "deepseek-v4-1-flash-261017",
+      "source": "https://docs.volcengine.com/docs/ark/model-list?lang=zh",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "a7837ebfff5f9539722c3fefdbf05f23e3aa208ae5ab22232dfbf055f1516aaa",
+      "evidence": "\"insert\":\"deepseek-v4-1-flash-261017\"（官方模型列表的模型 ID 单元格）"
+    },
+    {
+      "provider": "stepfun",
+      "id": "step-5-preview",
+      "source": "https://platform.stepfun.com/docs/zh/guides/models/list",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "33b899c051b2836d7bbb02f3f98eeb9575a4f6b7e7c606d7be55cf15d318dd6d",
+      "evidence": "盖编程与专业知识工作，原生支持文本、图片与视频输入，可结合工具与文档持续推进多步骤任务。API 模型 ID： step-5-preview 。 知识工作 编程 Agent 图片与视频理解 开始使用 推理 / 多模态 Step 3.7 Flash 多模态推理旗舰 最大上下文 256K 阶跃星辰旗舰多模态推理模型。在 step-3.5-flash 的高速推理与工具调用能力基础上，新增 原生多模态输入能力 ，可直接理解图片和视频内容，无需借助视觉 MCP 或额外模型。支持三档推理强度（low/medium/high），是智能体、代码与多模"
+    },
+    {
+      "provider": "xai",
+      "id": "grok-4.7",
+      "source": "https://docs.x.ai/developers/models",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "ef1d3afcb3652701590dc39588ca4286265cb5d11ce2166f87325ddfa751e0df",
+      "evidence": "\"name\":\"grok-4.7\",\"version\":\"1.0\",\"inputModalities\":[\"TEXT\",\"IMAGE\"],\"outputModalities\":[\"TEXT\"]"
+    },
+    {
+      "provider": "mistral",
+      "id": "mistral-large-4",
+      "source": "https://docs.mistral.ai/models/mistral-large-4-0",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "533e87c9e26670993cbe19a3541a7f1682dc871ddbc315cc80d1561fac566b0f",
+      "evidence": "and 1.05T total parameters, and a 1.6B vision encoder. mistral-large-4 +2 Speed Performance Modalities Context i 1M Price i USD EUR $0.7 Input /M Tokens $0.07 Cached input /M Tokens $2.1 Output /M Tokens Speed Performance Modalities Context 1M Price USD EUR $0.7 Input /"
+    },
+    {
+      "provider": "groq",
+      "id": "openai/gpt-oss-120b",
+      "source": "https://console.groq.com/docs/models",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "f7f7a4d69aa99d08df5982fa9bf99e3d605601b11a4cdbcc3bb7666519e44933",
+      "evidence": "tact Sales Contact Sales 131,072 32,768 - GPT OSS 120B openai/gpt-oss-120b 500 $0.15 input $0.60 output 250K TPM 1K RPM 131,072 65,536 - GPT OSS 20B openai/gpt-oss-20b 1000 $0.075 input $0.30 output 250K TPM 1K RPM 131,072 65,536 - Whisper whisper-large-v3 - $0.111 per hour"
+    },
+    {
+      "provider": "groq",
+      "id": "openai/gpt-oss-20b",
+      "source": "https://console.groq.com/docs/models",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "f7f7a4d69aa99d08df5982fa9bf99e3d605601b11a4cdbcc3bb7666519e44933",
+      "evidence": "60 output 250K TPM 1K RPM 131,072 65,536 - GPT OSS 20B openai/gpt-oss-20b 1000 $0.075 input $0.30 output 250K TPM 1K RPM 131,072 65,536 - Whisper whisper-large-v3 - $0.111 per hour 200K ASH 300 RPM - - 100 MB Whisper Large V3 Turbo whisper-large-v3-turbo - $0.04 per hour 4"
+    },
+    {
+      "provider": "groq",
+      "id": "qwen/qwen3.8-27b",
+      "source": "https://console.groq.com/docs/models",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "f7f7a4d69aa99d08df5982fa9bf99e3d605601b11a4cdbcc3bb7666519e44933",
+      "evidence": "tput 150K TPM 1K RPM 131,072 65,536 - Qwen/Qwen3.8-27B qwen/qwen3.8-27b 450 $0.80 input $4.00 output 250K TPM 1K RPM 131,072 16,384 20 MB Deprecated Models Deprecated models are models that are no longer supported or will no longer be supported in the future. See our dep"
+    },
+    {
+      "provider": "cerebras",
+      "id": "gpt-oss-120b",
+      "source": "https://inference-docs.cerebras.ai/models/overview",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "73a66574d157f54dd7c625ead103afbd777572e0cb0aef9d65cc343894dedcac",
+      "evidence": "Context (free / paid) Speed (tokens/s) OpenAI GPT OSS gpt-oss-120b 120 billion 65k / 131k ~3000 Qwen 3.8 27B qwen-3.8-27b 27 billion 64k / 128k ~1850 Looking for more models? Many additional model families are available through Dedicated Inference . Model Compressio"
+    },
+    {
+      "provider": "cerebras",
+      "id": "qwen-3.8-27b",
+      "source": "https://inference-docs.cerebras.ai/models/overview",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "73a66574d157f54dd7c625ead103afbd777572e0cb0aef9d65cc343894dedcac",
+      "evidence": "gpt-oss-120b 120 billion 65k / 131k ~3000 Qwen 3.8 27B qwen-3.8-27b 27 billion 64k / 128k ~1850 Looking for more models? Many additional model families are available through Dedicated Inference . Model Compression This section provides transparency about the compress"
+    },
+    {
+      "provider": "cohere",
+      "id": "command-a-plus-05-2026",
+      "source": "https://docs.cohere.com/docs/models",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "e96607baf0bb23f8917b764ea7ed24c4498b7085cdb881c4f1f5a890e8d34a19",
+      "evidence": "odality Context Length Maximum Output Tokens Endpoints command-a-plus-05-2026 Live Command A+ offers the last model in the Command A family, while being Cohere’s first Mixture of Experts model, simultaneously combining vision input support, agentic, reasoning, and world-class"
+    },
+    {
+      "provider": "fireworks",
+      "id": "accounts/fireworks/models/deepseek-v4p1-flash-1017",
+      "source": "https://app.fireworks.ai/models/fireworks/deepseek-v4p1-flash-1017",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "257467eed60573784b6ea45be871656cc01f3382fcd720967859b9aa146a22c9",
+      "evidence": "\"name\":\"accounts/fireworks/models/deepseek-v4p1-flash-1017\",\"displayName\":\"DeepSeek V4.1 Flash 1017\""
+    },
+    {
+      "provider": "openrouter",
+      "id": "openai/gpt-6.1-sol",
+      "source": "https://openrouter.ai/api/v1/models",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "2c399f64808bb7f429163f413b7574ecc687a4fda56f4bb4d8f8ee6ccf34d90f",
+      "evidence": "{\"id\": \"openai/gpt-6.1-sol\", \"context_length\": 1050000, \"pricing\": {\"prompt\": \"0.000002\", \"completion\": \"0.00001\", \"web_search\": \"0.01\", \"input_cache_read\": \"0.0000001\", \"input_cache_write\": \"0.0000025\", \"overrides\": [{\"min_prompt_tokens\": 272000, \"prompt\": \"0.000004\", \"completion\": \"0.000015\", \"input_cache_read\": \"0.0000002\", \"input_cache_write\": \"0.000005\"}]}}"
+    },
+    {
+      "provider": "openrouter",
+      "id": "anthropic/claude-sonnet-5.5",
+      "source": "https://openrouter.ai/api/v1/models",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "2c399f64808bb7f429163f413b7574ecc687a4fda56f4bb4d8f8ee6ccf34d90f",
+      "evidence": "{\"id\": \"anthropic/claude-sonnet-5.5\", \"context_length\": 1000000, \"pricing\": {\"prompt\": \"0.000002\", \"completion\": \"0.00001\", \"web_search\": \"0.01\", \"input_cache_read\": \"0.0000001\", \"input_cache_write\": \"0.0000025\", \"input_cache_write_1h\": \"0.000004\"}}"
+    },
+    {
+      "provider": "openrouter",
+      "id": "google/gemini-4-hydrogen",
+      "source": "https://openrouter.ai/api/v1/models",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "2c399f64808bb7f429163f413b7574ecc687a4fda56f4bb4d8f8ee6ccf34d90f",
+      "evidence": "{\"id\": \"google/gemini-4-hydrogen\", \"context_length\": 1048576, \"pricing\": {\"prompt\": \"0.0000015\", \"completion\": \"0.0000075\", \"image\": \"0.0000015\", \"audio\": \"0.0000015\", \"input_audio_cache\": \"0.000000075\", \"web_search\": \"0.014\", \"internal_reasoning\": \"0.0000075\", \"input_cache_read\": \"0.000000075\", \"input_cache_write\": \"0.0000000833333333333333\"}}"
+    },
+    {
+      "provider": "openrouter",
+      "id": "deepseek/deepseek-v4.1-flash-1017",
+      "source": "https://openrouter.ai/api/v1/models",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "2c399f64808bb7f429163f413b7574ecc687a4fda56f4bb4d8f8ee6ccf34d90f",
+      "evidence": "{\"id\": \"deepseek/deepseek-v4.1-flash-1017\", \"context_length\": 1048576, \"pricing\": {\"prompt\": \"0.000000038\", \"completion\": \"0.0000005\", \"input_cache_read\": \"0.00000001\"}}"
+    },
+    {
+      "provider": "openrouter",
+      "id": "moonshotai/kimi-k3.1-pro",
+      "source": "https://openrouter.ai/api/v1/models",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "2c399f64808bb7f429163f413b7574ecc687a4fda56f4bb4d8f8ee6ccf34d90f",
+      "evidence": "{\"id\": \"moonshotai/kimi-k3.1-pro\", \"context_length\": 1048576, \"pricing\": {\"prompt\": \"0.000002\", \"completion\": \"0.00001\", \"input_cache_read\": \"0.0000002\"}}"
+    },
+    {
+      "provider": "openrouter",
+      "id": "z-ai/glm-5.3",
+      "source": "https://openrouter.ai/api/v1/models",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "2c399f64808bb7f429163f413b7574ecc687a4fda56f4bb4d8f8ee6ccf34d90f",
+      "evidence": "{\"id\": \"z-ai/glm-5.3\", \"context_length\": 1048576, \"pricing\": {\"prompt\": \"0.000000084\", \"completion\": \"0.0000036\", \"input_cache_read\": \"0.000000079\"}}"
+    },
+    {
+      "provider": "openrouter",
+      "id": "minimax/minimax-m3.1-flash",
+      "source": "https://openrouter.ai/api/v1/models",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "2c399f64808bb7f429163f413b7574ecc687a4fda56f4bb4d8f8ee6ccf34d90f",
+      "evidence": "{\"id\": \"minimax/minimax-m3.1-flash\", \"context_length\": 1048576, \"pricing\": {\"prompt\": \"0.000000075\", \"completion\": \"0.0000003\", \"input_cache_read\": \"0.0000000075\", \"overrides\": [{\"utc_start\": 1500, \"utc_end\": 100, \"prompt\": \"0.000000075\", \"completion\": \"0.0000003\", \"input_cache_read\": \"0.0000000075\"}, {\"utc_start\": 100, \"utc_end\": 1500, \"prompt\": \"0.00000015\", \"completion\": \"0.0000006\", \"input_cache_read\": \"0.000000015\"}]}}"
+    },
+    {
+      "provider": "deepinfra",
+      "id": "moonshotai/Kimi-K3.1-Pro",
+      "source": "https://api.deepinfra.com/models/featured",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "42023454f49ad0963e18dc516ccd8bb05b0273d17f7317d9732ff9626097f644",
+      "evidence": "{\"model_name\": \"moonshotai/Kimi-K3.1-Pro\", \"max_tokens\": 1048576, \"tags\": [\"openai\", \"cc-native\", \"json\", \"tools\", \"structured-output\", \"multimodal\", \"reasoning\", \"no-free-anon\", \"can-disable-reasoning\", \"priority\", \"flex\", \"featured\"]}"
+    },
+    {
+      "provider": "deepinfra",
+      "id": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+      "source": "https://api.deepinfra.com/models/featured",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "42023454f49ad0963e18dc516ccd8bb05b0273d17f7317d9732ff9626097f644",
+      "evidence": "{\"model_name\": \"deepseek-ai/DeepSeek-V4.1-Flash-1017\", \"max_tokens\": 1048576, \"tags\": [\"multimodal\", \"reasoning\", \"priority\", \"openai\", \"can-disable-reasoning\", \"cc-native\", \"disable-penalty\", \"structured-output\", \"json\", \"flex\", \"tools\", \"featured\"]}"
+    },
+    {
+      "provider": "deepinfra",
+      "id": "zai-org/GLM-5.3",
+      "source": "https://api.deepinfra.com/models/featured",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "42023454f49ad0963e18dc516ccd8bb05b0273d17f7317d9732ff9626097f644",
+      "evidence": "{\"model_name\": \"zai-org/GLM-5.3\", \"max_tokens\": 1048576, \"tags\": [\"openai\", \"cc-native\", \"tools\", \"json\", \"structured-output\", \"reasoning\", \"flex\", \"featured\"]}"
+    },
+    {
+      "provider": "nvidia",
+      "id": "deepseek-ai/deepseek-v4.1-flash",
+      "source": "https://integrate.api.nvidia.com/v1/models",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "1e1ced1656769516f0d7e5e58663374c7ebcab851d6b38dac1c9551822baa123",
+      "evidence": "{\"id\": \"deepseek-ai/deepseek-v4.1-flash\", \"object\": \"model\", \"created\": 735790403, \"owned_by\": \"deepseek-ai\"}"
+    },
+    {
+      "provider": "nvidia",
+      "id": "stepfun-ai/step-5-preview",
+      "source": "https://integrate.api.nvidia.com/v1/models",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "1e1ced1656769516f0d7e5e58663374c7ebcab851d6b38dac1c9551822baa123",
+      "evidence": "{\"id\": \"stepfun-ai/step-5-preview\", \"object\": \"model\", \"created\": 735790403, \"owned_by\": \"stepfun-ai\"}"
+    },
+    {
+      "provider": "nvidia",
+      "id": "z-ai/glm-5.3-flash",
+      "source": "https://integrate.api.nvidia.com/v1/models",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "1e1ced1656769516f0d7e5e58663374c7ebcab851d6b38dac1c9551822baa123",
+      "evidence": "{\"id\": \"z-ai/glm-5.3-flash\", \"object\": \"model\", \"created\": 735790403, \"owned_by\": \"z-ai\"}"
+    },
+    {
+      "provider": "together",
+      "id": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+      "source": "https://docs.together.ai/docs/serverless/models",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "e807c1b923de0d0133c59a67187b43d7b00505db7e7243c2356660427871f0ad",
+      "evidence": "DeepSeek | DeepSeek V4.1 Flash 1017 | deepseek-ai/DeepSeek-V4.1-Flash-1017 | 1000000 | $0.30 | $0.006 | $1.20 | FP8 | Yes | Yes"
+    },
+    {
+      "provider": "together",
+      "id": "MiniMaxAI/MiniMax-M3.1-Flash",
+      "source": "https://docs.together.ai/docs/serverless/models",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "e807c1b923de0d0133c59a67187b43d7b00505db7e7243c2356660427871f0ad",
+      "evidence": "MiniMax | MiniMax M3.1 Flash | MiniMaxAI/MiniMax-M3.1-Flash | 1048576 | $0.15 | $0.015 | $0.60 | NVFP4 | Yes | Yes"
+    },
+    {
+      "provider": "together",
+      "id": "zai-org/GLM-5.3",
+      "source": "https://docs.together.ai/docs/serverless/models",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "e807c1b923de0d0133c59a67187b43d7b00505db7e7243c2356660427871f0ad",
+      "evidence": "Z.ai | GLM-5.3 | zai-org/GLM-5.3 | 1048575 | $1.40 | $0.26 | $4.40 | FP4 | Yes | Yes"
+    },
+    {
+      "provider": "yunqiao",
+      "id": "gpt-6.1-sol",
+      "source": "https://api.yunqiao.me",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "a8c3b7eb868306755fdca0fb5e658a71d8454421fd8d01d00cd2c187649ce026",
+      "evidence": "{\"models_contains\": \"gpt-6.1-sol\"}",
+      "method": "User-authorized read-only admin account sample, first 100 accounts; not a complete or per-member model inventory",
+      "officialIdReference": "https://developers.openai.com/api/docs/models"
+    },
+    {
+      "provider": "yunqiao",
+      "id": "gpt-6-astra",
+      "source": "https://api.yunqiao.me",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "a8c3b7eb868306755fdca0fb5e658a71d8454421fd8d01d00cd2c187649ce026",
+      "evidence": "{\"models_contains\": \"gpt-6-astra\"}",
+      "method": "User-authorized read-only admin account sample, first 100 accounts; not a complete or per-member model inventory",
+      "officialIdReference": "https://developers.openai.com/api/docs/models"
+    },
+    {
+      "provider": "yunqiao",
+      "id": "gpt-6-luna",
+      "source": "https://api.yunqiao.me",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "a8c3b7eb868306755fdca0fb5e658a71d8454421fd8d01d00cd2c187649ce026",
+      "evidence": "{\"models_contains\": \"gpt-6-luna\"}",
+      "method": "User-authorized read-only admin account sample, first 100 accounts; not a complete or per-member model inventory",
+      "officialIdReference": "https://developers.openai.com/api/docs/models"
+    },
+    {
+      "provider": "yunqiao",
+      "id": "claude-sonnet-5-5",
+      "source": "https://api.yunqiao.me",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "a8c3b7eb868306755fdca0fb5e658a71d8454421fd8d01d00cd2c187649ce026",
+      "evidence": "{\"models_contains\": \"claude-sonnet-5-5\"}",
+      "method": "User-authorized read-only admin account sample, first 100 accounts; not a complete or per-member model inventory",
+      "officialIdReference": "https://platform.claude.com/docs/en/models/overview.md"
+    },
+    {
+      "provider": "yunqiao",
+      "id": "claude-opus-5-5",
+      "source": "https://api.yunqiao.me",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "a8c3b7eb868306755fdca0fb5e658a71d8454421fd8d01d00cd2c187649ce026",
+      "evidence": "{\"models_contains\": \"claude-opus-5-5\"}",
+      "method": "User-authorized read-only admin account sample, first 100 accounts; not a complete or per-member model inventory",
+      "officialIdReference": "https://platform.claude.com/docs/en/models/overview.md"
+    },
+    {
+      "provider": "yunqiao",
+      "id": "claude-haiku-5-5",
+      "source": "https://api.yunqiao.me",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "a8c3b7eb868306755fdca0fb5e658a71d8454421fd8d01d00cd2c187649ce026",
+      "evidence": "{\"models_contains\": \"claude-haiku-5-5\"}",
+      "method": "User-authorized read-only admin account sample, first 100 accounts; not a complete or per-member model inventory",
+      "officialIdReference": "https://platform.claude.com/docs/en/models/overview.md"
+    },
+    {
+      "provider": "yunqiao",
+      "id": "claude-fable-5-2",
+      "source": "https://api.yunqiao.me",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "a8c3b7eb868306755fdca0fb5e658a71d8454421fd8d01d00cd2c187649ce026",
+      "evidence": "{\"models_contains\": \"claude-fable-5-2\"}",
+      "method": "User-authorized read-only admin account sample, first 100 accounts; not a complete or per-member model inventory",
+      "officialIdReference": "https://platform.claude.com/docs/en/models/overview.md"
+    },
+    {
+      "provider": "yunqiao",
+      "id": "deepseek-flash",
+      "source": "https://api.yunqiao.me",
+      "checkedAt": "2026-11-15",
+      "sourceSha256": "a8c3b7eb868306755fdca0fb5e658a71d8454421fd8d01d00cd2c187649ce026",
+      "evidence": "{\"models_contains\": \"deepseek-flash\"}",
+      "method": "User-authorized read-only admin account sample, first 100 accounts; not a complete or per-member model inventory",
+      "officialIdReference": "https://api-docs.deepseek.com/quick_start/pricing/"
+    }
+  ]
+}

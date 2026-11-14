@@ -8,11 +8,13 @@ from remote_ssh import connect, execute
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--apply', action='store_true', help='Perform the displayed deployment plan')
+parser.add_argument('--php-bin', default='/www/server/php/82/bin/php', help='Remote PHP 8.1+ CLI path, matching the website FPM version')
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
 webroot = '/www/wwwroot/ai.haowucm.cn'
-files = ['lib.php', 'api.php', 'pub.php', 'index.php']
+files = ['lib.php', 'api.php', 'pub.php', 'index.php', 'member_service.php', 'member.php', 'member_admin.php', 'catalog_sync.php', 'catalog_sync_admin.php']
 print('PHP deployment:', ', '.join(files), '->', webroot)
+print('Remote PHP syntax checks:', args.php_bin)
 print('Existing catalog, administrator settings and release metadata are preserved.')
 if not args.apply:
     raise SystemExit('Review the files, then run with --apply to deploy.')
@@ -24,7 +26,7 @@ with connect() as client:
     with client.open_sftp() as sftp:
         for name in files:
             sftp.put(str(root / 'server' / name), posixpath.join(stage, name))
-            execute(client, 'php -l ' + shlex.quote(posixpath.join(stage, name)))
+            execute(client, shlex.quote(args.php_bin) + ' -l ' + shlex.quote(posixpath.join(stage, name)))
         # All files pass syntax checks before replacing any live file.
         for name in files:
             target = posixpath.join(webroot, name)

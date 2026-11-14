@@ -1,9 +1,10 @@
 {
   "name": "yunqiao-ai-companion",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "private": true,
+  "license": "AGPL-3.0-only",
   "type": "module",
-  "description": "云桥AI 工具箱 手机伴侣端：远程看用量、切供应商、读会话",
+  "description": "yunqiao.me 手机伴侣：实时请求、缓存用量、远程客户端与会话管理",
   "scripts": {
     "build": "node scripts/build.mjs",
     "test": "node --test tests/*.test.mjs",

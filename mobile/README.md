@@ -1,18 +1,23 @@
-# 云桥 AI 手机伴侣 · iOS / Android
+# yunqiao.me 手机伴侣 0.6.0 · iOS / Android
 
-手机端内置独立管理界面，不再跳转到一个远端网页。连接电脑或服务器上的云桥网关后，可以查看用量与请求、选择客户端并预览/应用供应商和模型、启停供应商、查看模型能力、搜索和阅读本地会话，以及查看插件状态。
+手机端内置独立管理界面。连接电脑或服务器上的云桥网关后，可以查看用量与请求、选择客户端并预览/应用供应商和模型、启停供应商、查看模型能力、搜索和阅读本地会话，以及查看插件状态。
+
+0.6.0 工作台增加缓存读取、缓存写入与命中率，以及每 1.5 秒更新的实时请求。明确区分未提供字段、真实零值和生成中输出估算；请求完成后刷新统计，切换到后台或断开连接后停止轮询。命中率采用服务端对已报告缓存的请求计算的结果，不把未报告缓存的请求当作零命中。
 
 电脑负责网关和客户端配置，手机负责远程管理。API Key 留在电脑；访问令牌只保留在当前应用内存中，断开连接后清除。仅保存网关地址和外观偏好。
 
+本版本按 [AGPL-3.0-only](../LICENSE) 发布，[对应源码与构建材料](https://github.com/jxb412/aurora/tree/v0.6.0)公开可用；源码包附带许可证和第三方声明，应用「我的」页面也提供对应源码入口。
+
 ## 已验证的构建与下载
 
-2026-11-15，GitHub Actions 的 macOS runner 已成功完成依赖安装、移动接口测试、CocoaPods 同步和 Xcode 模拟器编译。
+2026-11-15，0.5.0 的 GitHub Actions macOS runner 已成功完成依赖安装、移动接口测试、CocoaPods 同步，以及 Xcode 模拟器和 iPhone 设备二进制编译。以下是这次已有成功记录；0.6.0 的源码、网页构建及测试已更新，原生二进制以新提交对应的 Actions 结果为准。
 
-- [查看成功的 iOS 构建任务](https://github.com/jxb412/aurora/actions/runs/43617523329/job/132515739714)
-- [下载模拟器构建产物](https://github.com/jxb412/aurora/actions/runs/43617523329/artifacts/14121789391)：`yunqiao-ios-simulator`，内含 `YunQiaoAI-iOS-simulator.zip` 和 `App.app`
-- [查看构建日志产物](https://github.com/jxb412/aurora/actions/runs/43617523329/artifacts/14122960077)
+- [查看成功的 iOS 构建任务](https://github.com/jxb412/aurora/actions/runs/43617930882/job/132517017996)
+- [下载模拟器构建产物](https://github.com/jxb412/aurora/actions/runs/43617930882/artifacts/14122749347)：`yunqiao-ios-simulator`，内含 `YunQiaoAI-iOS-simulator.zip` 和 `App.app`
+- [下载未签名 iPhone 设备产物](https://github.com/jxb412/aurora/actions/runs/43617930882/artifacts/14123405186)：`yunqiao-ios-device-unsigned`，内含 `YunQiaoAI-iOS-device-unsigned.zip` 和 `App.app`
+- [查看两种目标的构建日志](https://github.com/jxb412/aurora/actions/runs/43617930882/artifacts/14122951333)
 
-Actions 产物可能需要登录 GitHub，并受保留期限限制；后续构建见[工作流列表](https://github.com/jxb412/aurora/actions/workflows/build.yml)。这个 `.app` 用于 Mac 上的 iOS 模拟器，**不是可直接安装到 iPhone 的签名 IPA**。
+Actions 产物可能需要登录 GitHub，并受保留期限限制；后续构建见[工作流列表](https://github.com/jxb412/aurora/actions/workflows/build.yml)。模拟器 `.app` 用于 Mac 上的 iOS 模拟器，设备 `.app` 需要补签名后才能安装；**两者都不是可直接安装到 iPhone 的签名 IPA**。
 
 解压出 `App.app`，打开 Xcode 的 Simulator 后，可以将它拖入模拟器安装，或执行：
 
@@ -43,7 +48,7 @@ npm test
 npm run build
 ```
 
-`src/` 是界面源码，`www/` 是构建结果。iOS 使用 Capacitor 原生 HTTP 网络请求，浏览器预览使用 Fetch。`tests/connection.test.mjs` 验证地址、认证头、失败响应等接口边界。
+`src/` 是界面源码，`www/` 是构建结果。iOS 使用 Capacitor 原生 HTTP 网络请求，浏览器预览使用 Fetch。`tests/connection.test.mjs` 验证地址、认证头、失败响应；`tests/usage.test.mjs` 验证缓存缺失与零值、正确的命中率来源，以及估算值被上游真实输出替代。
 
 可选浏览器流程验证（需要 Python Playwright 和 Chromium）：
 
@@ -78,7 +83,7 @@ xcodebuild -workspace ios/App/App.xcworkspace \
 
 产物：`mobile/build/Build/Products/Release-iphonesimulator/App.app`，只能运行在 iOS 模拟器。
 
-仓库根目录 [`.github/workflows/build.yml`](../.github/workflows/build.yml) 的 `ios` job 使用 macOS runner 完成相同流程，上传 `yunqiao-ios-simulator`（内含 `.app` ZIP）和构建日志。构建错误会使任务失败，不会通过管道或 `|| true` 被隐藏。上方链接提供首次模拟器成功的运行记录；最新产物以对应运行结果为准。
+仓库根目录 [`.github/workflows/build.yml`](../.github/workflows/build.yml) 的 `ios` job 使用 macOS runner 完成相同流程，上传 `yunqiao-ios-simulator`（内含 `.app` ZIP）和构建日志。构建错误会使任务失败，不会通过管道或 `|| true` 被隐藏。上方链接提供实际成功的运行记录；后续产物以对应运行结果为准。
 
 ## 编译 iPhone 设备版本（未签名）
 
@@ -103,7 +108,7 @@ npm run open:ios
 
 在 Xcode 中选择 App target，设置自己的 Bundle Identifier 和开发团队，连接 iPhone 运行；要分发则选择 iOS Device → Product → Archive → Distribute App。可分发 IPA 需要有效的 Apple 开发者团队、签名证书及描述文件；App Store / TestFlight 还需要相应账号配置。
 
-Windows 工作区提供源码与网页资源；iOS 模拟器 `.app` 已由 macOS Actions 实际编译，未签名设备包的构建状态以最新工作流结果为准。尚未配置 Apple 签名资料，因此当前不提供可安装到 iPhone 的签名 IPA。`iOS-source` 是源码包，不能当作安装包。
+Windows 工作区提供源码与网页资源；上方所列 **0.5.0** 模拟器与未签名设备 `.app` 已由 macOS Actions 实际编译。**0.6.0** 原生编译状态以对应提交的 Actions 记录为准。尚未配置 Apple 签名资料，因此当前不提供可安装到 iPhone 的签名 IPA。`iOS-source` 是源码包，不能当作安装包。
 
 ## Android
 
@@ -114,7 +119,7 @@ npm run sync
 npm run open:android
 ```
 
-Android Studio 中编译。当前交付 Windows 与 iOS 模拟器版本；Android 不是已验证的产物。
+Android Studio 中编译。当前发布目标是 Windows，以及 iOS 模拟器和未签名设备版本；原生构建状态以对应版本记录为准。Android 不是已验证的产物。
 
 ## 源码包
 
@@ -122,4 +127,4 @@ Android Studio 中编译。当前交付 Windows 与 iOS 模拟器版本；Androi
 python scripts/package-source.py
 ```
 
-生成 `build/YunQiaoAI-0.5.0-iOS-source.zip`，含 mobile 源码、锁文件、资源和已生成的 `ios/` 工程，不含依赖、构建缓存或本地连接信息。在 Mac 解压后进入 `mobile`，运行 `npm ci && npm run sync:ios` 即可补齐依赖并打开工程。
+生成 `build/YunQiaoAI-0.6.0-iOS-source.zip`，含 mobile 源码、锁文件、资源和已生成的 `ios/` 工程，不含依赖、构建缓存或本地连接信息。在 Mac 解压后进入 `mobile`，运行 `npm ci && npm run sync:ios` 即可补齐依赖并打开工程。脚本从 package.json 读取版本号，避免原生工程和界面版本不一致。

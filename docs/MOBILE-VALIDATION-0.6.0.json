@@ -1,0 +1,26 @@
+{
+  "version": "0.6.0",
+  "unit_tests": {
+    "passed": 6,
+    "failed": 0
+  },
+  "browser_checks": {
+    "passed": 16,
+    "failed": 0,
+    "mock_rpc_calls": 20,
+    "environment": "Chromium with isolated mock RPC"
+  },
+  "source_package": {
+    "file": "mobile/build/YunQiaoAI-0.6.0-iOS-source.zip",
+    "files": 51,
+    "sha256": "df2ee0794a64c96a2adc05016bec23d32f118f6e7001cd3312c71b145c88f6ad",
+    "license_and_notices_verified": true,
+    "native_marketing_version": "0.6.0"
+  },
+  "limitations": [
+    "Native build success must be verified for the corresponding Actions commit.",
+    "No signed IPA is provided.",
+    "iPhone device behavior and signing are not validated by browser tests.",
+    "Android artifact has not been validated."
+  ]
+}

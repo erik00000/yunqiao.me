@@ -12,7 +12,7 @@ import type {
   Settings,
   UsageRecord,
 } from './types.js';
-import { findPreset } from '../presets/providers.js';
+import { catalogPresets } from '../catalog.js';
 import { newId, nowIso, dayKey } from '../util.js';
 
 export * from './types.js';
@@ -31,7 +31,7 @@ function validateProvider(provider: Provider): Provider {
   if (new Set(provider.models.map(m => m.id)).size !== provider.models.length) throw new Error('同一供应商的模型 ID 不能重复');
   if (provider.apiKeys.some(k => !k || typeof k.key !== 'string' || /[\r\n]/.test(k.key))) throw new Error('API Key 格式不正确');
   for (const model of provider.models) {
-    for (const field of ['contextWindow', 'maxOutput', 'inputPrice', 'outputPrice', 'cacheReadPrice'] as const) {
+    for (const field of ['contextWindow', 'maxOutput', 'inputPrice', 'outputPrice', 'cacheReadPrice', 'cacheWritePrice'] as const) {
       const value = model[field];
       if (value !== undefined && (!Number.isFinite(value) || value < 0)) throw new Error(`模型 ${model.id} 的 ${field} 必须是非负数字`);
     }
@@ -139,7 +139,7 @@ export class AuroraStore {
         return list[idx];
       }
     }
-    const preset = findPreset(input.presetId);
+    const preset = catalogPresets(this).find(p => p.id === input.presetId);
     const created: Provider = {
       id: newId('prov_', 8),
       name: input.name ?? preset?.nameZh ?? preset?.name ?? '自定义供应商',

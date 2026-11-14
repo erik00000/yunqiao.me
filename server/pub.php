@@ -32,10 +32,10 @@ switch ($action) {
             'updatedAt' => $c['updatedAt'] ?? now(),
             'providers' => array_values(array_map(function ($p) {
                 // Catalogs are public metadata, never a transport for provider keys or arbitrary fields.
-                $allowed = ['key', 'name', 'vendor', 'format', 'baseUrl', 'region', 'color', 'icon', 'docs', 'note', 'tags', 'official', 'sort', 'updatedAt'];
+                $allowed = ['key', 'name', 'vendor', 'format', 'baseUrl', 'customBaseUrl', 'region', 'color', 'icon', 'docs', 'note', 'tags', 'official', 'sort', 'updatedAt'];
                 $out = array_intersect_key($p, array_flip($allowed));
                 $out['models'] = array_map(function ($m) {
-                    $model = array_intersect_key($m, array_flip(['id', 'displayName', 'contextWindow', 'inputPrice', 'outputPrice', 'maxOutput', 'cacheReadPrice']));
+                    $model = array_intersect_key($m, array_flip(['id', 'displayName', 'contextWindow', 'inputPrice', 'outputPrice', 'maxOutput', 'cacheReadPrice', 'cacheWritePrice']));
                     $model['capabilities'] = array_intersect_key((array)($m['capabilities'] ?? []), array_flip(['tools', 'vision', 'thinking']));
                     return $model;
                 }, array_values(array_filter((array)($p['models'] ?? []), 'is_array')));
