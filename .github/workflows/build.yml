@@ -16,7 +16,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: aurora-build-${{ github.ref }}
+  group: aurora-build-${{ github.ref }}-${{ github.event_name }}-${{ inputs.target || 'all' }}
   cancel-in-progress: true
 
 jobs:
