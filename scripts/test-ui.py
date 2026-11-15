@@ -54,7 +54,7 @@ def main():
     (data / 'settings.json').write_text(json.dumps({'theme': 'light', 'gatewayPort': port, 'autoCheckUpdate': False, 'closeToTray': False}), encoding='utf-8')
     server = ThreadingHTTPServer(('127.0.0.1', 0), Upstream)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    env = dict(os.environ, AURORA_HOME=str(data), YUNQIAO_HOME=str(data), AURORA_CLIENT_HOME=str(clients), AURORA_UI_TEST='1')
+    env = dict(os.environ, YUNQIAO_TEST_ISOLATED='1', AURORA_HOME=str(data), YUNQIAO_HOME=str(data), AURORA_CLIENT_HOME=str(clients), AURORA_UI_TEST='1')
     env.pop('ELECTRON_RUN_AS_NODE', None)
     logs = open(profile / 'electron.log', 'w', encoding='utf-8')
     process = subprocess.Popen([str(ROOT / 'node_modules/electron/dist/electron.exe'), str(ROOT), f'--remote-debugging-port={debug_port}', f'--user-data-dir={profile / "chromium"}'], env=env, stdout=logs, stderr=logs, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))

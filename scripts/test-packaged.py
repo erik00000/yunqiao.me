@@ -126,7 +126,7 @@ def main():
         'autoSyncModels': False, 'updateUrl': 'https://ai.haowucm.cn/pub.php?action=update',
         'catalogUrl': f'http://127.0.0.1:{catalog.server_port}/catalog',
     }), encoding='utf-8')
-    environment = dict(os.environ, AURORA_HOME=str(data), YUNQIAO_HOME=str(data), AURORA_CLIENT_HOME=str(clients),
+    environment = dict(os.environ, YUNQIAO_TEST_ISOLATED='1', AURORA_HOME=str(data), YUNQIAO_HOME=str(data), AURORA_CLIENT_HOME=str(clients),
                        APPDATA=str(profile / 'appdata'), LOCALAPPDATA=str(profile / 'localappdata'))
     for key in ['ELECTRON_RUN_AS_NODE', 'AURORA_EXTENSION_ASSETS', 'AURORA_DEV', 'AURORA_UI_URL', 'AURORA_SHOT', 'AURORA_PAGE']:
         environment.pop(key, None)

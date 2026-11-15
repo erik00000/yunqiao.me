@@ -113,7 +113,11 @@ async function trayConnect(agentId: string, providerId: string, model: string) {
   }
   catch (e: any) { dialog.showErrorBox('客户端配置失败', e.message); }
 }
-function applyLoginItem(enable: boolean) { try { app.setLoginItemSettings({ openAtLogin: enable, openAsHidden: false }); } catch {} }
+function applyLoginItem(enable: boolean) {
+  // Isolated acceptance profiles must not change the real Windows/macOS login item.
+  if (process.env.YUNQIAO_TEST_ISOLATED === '1' && process.env.AURORA_CLIENT_HOME && (process.env.AURORA_HOME || process.env.YUNQIAO_HOME)) return;
+  try { app.setLoginItemSettings({ openAtLogin: enable, openAsHidden: false }); } catch {}
+}
 async function handleAction(action: string, payload: any) {
   if (action.startsWith('member.')) return memberAction(store, action, payload);
   const shared = await runAction(deps(), action, payload);
