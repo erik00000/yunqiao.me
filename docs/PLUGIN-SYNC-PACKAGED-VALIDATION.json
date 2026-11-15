@@ -1,0 +1,147 @@
+{
+  "passed": true,
+  "version": "0.6.0",
+  "executable": "release/plugin-sync-debug-0.6.0/win-unpacked/YunQiaoAI.exe",
+  "exeSha256": "3403cf017be1ed9a589569b22ed2dd752606dcdc5ea605c7c9de74ff3c7605f5",
+  "asarSha256": "913bc084efc3a617c04a6683d6c2cf88f4a9e220b7b34b94a96cae1b986c388e",
+  "profile": "isolated temporary application, client and Chromium directories",
+  "isolatedTestFlag": true,
+  "liveRequested": true,
+  "scope": "Actual packaged renderer, IPC and market downloader; rejecting local CONNECT proxy; optional read-only GitHub synchronization; no real client connection or paid requests",
+  "build": {
+    "id": "20261115T044439Z-d8b55a25",
+    "builtAt": "2026-11-15T04:44:39.594Z",
+    "revision": "d8b55a25",
+    "channel": "local"
+  },
+  "live": {
+    "passed": true,
+    "sources": {
+      "public": {
+        "count": 520,
+        "fetchedAt": "2026-11-15T04:45:48.339Z",
+        "revision": "1c13d7180da9717bb5b8b35fdb40261290bacd7d"
+      },
+      "full": {
+        "count": 5491,
+        "fetchedAt": "2026-11-15T04:45:49.280Z",
+        "revision": "64d6b2876644744be29d69f99a8944fc405fd3dc"
+      }
+    },
+    "screenshot": "docs/images/plugin-sync-live-v0.6.png"
+  },
+  "checks": [
+    "The supplied packaged EXE runs its own ASAR in isolated application/client/Chromium profiles with updates disabled",
+    "Real all-market refresh honors the configured proxy, rejects both GitHub routes, blocks duplicate clicks and preserves the list",
+    "Chinese source-specific failure displays the dated local cache and bundled offline index with retry, no success toast or desktop-restart instruction",
+    "After selecting another tab, the real retry still targets the failed full market; HTTP 407 leaves the selected visible list intact",
+    "Real IPC returns both structured fallback results; cached bytes, fixture client configuration and disconnected native runtime remain unchanged",
+    "With only the isolated proxy setting cleared, the actual Electron application synchronizes both live GitHub markets and persists verified caches"
+  ],
+  "count": 6,
+  "refreshResult": {
+    "ok": false,
+    "message": "插件市场暂未更新，继续使用本地目录",
+    "warning": "请查看各市场结果；检查网络或代理后可重试同步。",
+    "results": [
+      {
+        "source": "public",
+        "ok": false,
+        "sourceType": "cache",
+        "count": 520,
+        "fetchedAt": "2026-11-14T10:00:00Z",
+        "message": "无法连接插件市场，请检查网络或系统设置中的 HTTP(S) 代理后重试；继续使用本地缓存"
+      },
+      {
+        "source": "full",
+        "ok": false,
+        "sourceType": "builtin",
+        "count": 5491,
+        "fetchedAt": null,
+        "message": "无法连接插件市场，请检查网络或系统设置中的 HTTP(S) 代理后重试；继续使用随附离线目录"
+      }
+    ]
+  },
+  "proxy": {
+    "mode": "local CONNECT rejection only; no upstream forwarding",
+    "requests": [
+      {
+        "hostname": "raw.githubusercontent.com",
+        "method": "CONNECT",
+        "status": 502,
+        "phase": "all-markets-502"
+      },
+      {
+        "hostname": "raw.githubusercontent.com",
+        "method": "CONNECT",
+        "status": 502,
+        "phase": "all-markets-502"
+      },
+      {
+        "hostname": "api.github.com",
+        "method": "CONNECT",
+        "status": 502,
+        "phase": "all-markets-502"
+      },
+      {
+        "hostname": "api.github.com",
+        "method": "CONNECT",
+        "status": 502,
+        "phase": "all-markets-502"
+      },
+      {
+        "hostname": "raw.githubusercontent.com",
+        "method": "CONNECT",
+        "status": 407,
+        "phase": "full-market-407"
+      },
+      {
+        "hostname": "api.github.com",
+        "method": "CONNECT",
+        "status": 407,
+        "phase": "full-market-407"
+      },
+      {
+        "hostname": "raw.githubusercontent.com",
+        "method": "CONNECT",
+        "status": 407,
+        "phase": "retry-original-full-407"
+      },
+      {
+        "hostname": "api.github.com",
+        "method": "CONNECT",
+        "status": 407,
+        "phase": "retry-original-full-407"
+      },
+      {
+        "hostname": "raw.githubusercontent.com",
+        "method": "CONNECT",
+        "status": 407,
+        "phase": "ipc-contract-407"
+      },
+      {
+        "hostname": "raw.githubusercontent.com",
+        "method": "CONNECT",
+        "status": 407,
+        "phase": "ipc-contract-407"
+      },
+      {
+        "hostname": "api.github.com",
+        "method": "CONNECT",
+        "status": 407,
+        "phase": "ipc-contract-407"
+      },
+      {
+        "hostname": "api.github.com",
+        "method": "CONNECT",
+        "status": 407,
+        "phase": "ipc-contract-407"
+      }
+    ]
+  },
+  "browserErrors": [],
+  "screenshots": [
+    "docs/images/plugin-sync-offline-v0.6.png",
+    "docs/images/plugin-sync-retry-v0.6.png"
+  ]
+}

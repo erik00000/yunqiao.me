@@ -141,7 +141,7 @@ def main():
            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         deadline = time.monotonic() + (60 if args.launcher else 35)
         while time.monotonic() < deadline:
-            assert process.poll() is None, f'Packaged executable exited; see {profile / "packaged.log"}'
+            assert process.poll() is None, f'Packaged executable exited with code {process.returncode}; see {profile / "packaged.log"}'
             try:
                 urllib.request.urlopen(f'http://127.0.0.1:{debug_port}/json/version', timeout=.5).close()
                 break

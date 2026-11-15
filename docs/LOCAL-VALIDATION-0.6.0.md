@@ -2,11 +2,13 @@
 
 当前阶段为本地功能完善，未发布包含本轮改动的新版本，也未更新线上下载元数据。已有早期 0.6.0 安装包不能代替本次调试包。
 
-便携调试包：`release/local-debug-0.6.0/YunQiaoAI-0.6.0-audit-20261115-win-x64.exe`。先从托盘退出早期版本，再启动新包；侧栏显示「调试」，在「系统设置 → 版本更新」可核对构建时间。
+便携调试包：`release/plugin-sync-debug-0.6.0/YunQiaoAI-0.6.0-plugin-sync-20261115-win-x64.exe`。先从托盘退出早期版本，再启动新包；侧栏显示「调试」，在「系统设置 → 版本更新」可核对构建时间。
 
-未压缩调试入口：`release/local-debug-0.6.0/win-unpacked/YunQiaoAI.exe`。运行或复制时保留整个 `win-unpacked` 目录。
+未压缩调试入口：`release/plugin-sync-debug-0.6.0/win-unpacked/YunQiaoAI.exe`。运行或复制时保留整个 `win-unpacked` 目录。当前电脑 C 盘仅剩约 240 MiB，默认便携解压空间不足；建议直接使用 D 盘已解压入口。便携包已在 D 盘独立临时目录完成启动与内容校验。
 
 第二轮全面检查与后续优先级见 [工程审查记录](ENGINEERING-AUDIT-2026-11-15.md)。本地包已包含该轮修复；PHP 修复已完成本机验证，尚未部署到线上。
+
+本次追加修复插件市场同步超时、代理支持、备用请求与缓存验证，详见 [同步修复记录](PLUGIN-SYNC-VALIDATION.md)。真实 Windows 界面同步公开市场 520 项、完整索引 5,491 项成功。
 
 ## 本轮完成
 
@@ -21,6 +23,8 @@
 
 ## 验证结果
 
+下表综合上一轮全面审查与本次专项验证。本次重新执行类型检查、插件后端与界面、真实网络同步及实际打包检查；其余记录保留上一轮的验证范围。
+
 | 检查 | 结果 |
 | --- | --- |
 | TypeScript 类型检查、前端及主进程构建 | 通过 |
@@ -31,7 +35,9 @@
 | 历史区域迁移 / 原生消息索引 | 34 项 / 18 项通过 |
 | 历史迁移真实界面与数据库流程 | 7 项通过 |
 | 桌面扩展后端与真实 Electron 运行 | 29 项通过；另有会话查询 7 项、资源写入 12 项通过 |
-| 插件管理界面 | 17 项通过 |
+| 插件管理界面 | 22 项通过 |
+| 市场同步网络、缓存、代理和并发回归 | 24 项通过 |
+| 实际 Windows 包同步失败、重试与真实联网 | 6 组通过 |
 | 网关中间件 | 21 项通过，普通 Node 与 Electron 内嵌 Node 均验证 |
 | 网关回归 / 主程序界面流程 | 48 项 / 17 项通过 |
 | 本机账号与供应商界面回归 | 7 项通过 |
@@ -47,20 +53,24 @@
 
 测试均使用隔离的数据、Chromium 和客户端目录，未改写真实客户端配置，未执行真实模型计费请求或赠金核销。打包验收会核对 `app.asar` 主进程与本地构建内容一致。记录见 [打包报告](PACKAGED-VALIDATION-0.6.0.json) 和 [共存界面报告](COEXIST-UI-VALIDATION-0.6.0.json)。本轮提交的管理员密钥、API 密钥与 GitHub 凭据形态检查无命中；`git diff --check` 通过。
 
-构建标识：`20261115T042224Z-46102e2c`；北京时间 2026-11-15 12:22:24，源码提交 `46102e2c`。
+构建标识：`20261115T044439Z-d8b55a25`；北京时间 2026-11-15 12:44:39，源码提交 `d8b55a25`。
 
-直接启动便携 EXE 完成 12 项检查，核对其解压后的程序与已通过共存流程的未压缩程序一致。复现命令：
+直接启动便携 EXE 完成 12 项检查，核对其解压后的程序与已通过同步流程的未压缩程序一致。因本机 C 盘空间不足，复现时使用 D 盘临时目录：
 
 ```powershell
-python scripts/test-packaged.py --exe release/local-debug-0.6.0/win-unpacked/YunQiaoAI.exe --launcher release/local-debug-0.6.0/YunQiaoAI-0.6.0-audit-20261115-win-x64.exe
+$taskTemp = 'D:\btc\aurora\release\plugin-sync-debug-0.6.0\acceptance-temp'
+New-Item -ItemType Directory -Path $taskTemp -Force | Out-Null
+$env:TEMP = $taskTemp
+$env:TMP = $taskTemp
+python scripts/test-packaged.py --exe release/plugin-sync-debug-0.6.0/win-unpacked/YunQiaoAI.exe --launcher release/plugin-sync-debug-0.6.0/YunQiaoAI-0.6.0-plugin-sync-20261115-win-x64.exe
 ```
 
 当前调试包 SHA-256：
 
 ```text
-便携 EXE       98834a75cfd22613d9eb8a4e5177e0dc44ed44d43e33053fd2778cbe8c20acde
-YunQiaoAI.exe  811c583b333898c4dbe4dbd919c2c7f5636f6aa292632c814156f6968a8f786b
-app.asar      12bc2729a777cd7709367e9c2ec1ede8066d73a714c58b3ea5de368e183518ca
+便携 EXE       3c5c5fc0c57fb48d1595a500c710366b70b912593bea2e0eb035f3cbb0da0648
+YunQiaoAI.exe  3403cf017be1ed9a589569b22ed2dd752606dcdc5ea605c7c9de74ff3c7605f5
+app.asar      913bc084efc3a617c04a6683d6c2cf88f4a9e220b7b34b94a96cae1b986c388e
 ```
 
 ## 尚需实际联调
