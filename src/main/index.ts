@@ -5,6 +5,8 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { AuroraStore, getStore, setDataDir } from '../core/store/index.js';
 import { memberAction } from './member.js';
+import { describeClientLifecycle, restartClient } from './clientLifecycle.js';
+import { runtimeFor } from '../core/extensions/runtime.js';
 import { syncLocalClients } from '../core/localClients.js';
 import { getCoexistCatalog, isCodexCoexistConfigured } from '../core/gateway/coexist.js';
 import { GatewayServer, resetGateway } from '../core/gateway/server.js';
@@ -128,6 +130,13 @@ async function handleAction(action: string, payload: any) {
     return shared;
   }
   switch (action) {
+    case 'agent.lifecycle': return describeClientLifecycle(payload);
+    case 'agent.restart': {
+      const reconnect = ['chatgpt-desktop', 'codex-desktop'].includes(payload?.agentId) && !!runtimeFor(store).cdp?.connected;
+      const result = await restartClient(payload);
+      if (result.ok && reconnect) result.message += ' 如使用桌面增强，请在增强页面重新连接。';
+      return result;
+    }
     case 'gateway.start': await ensureGateway(); return status();
     case 'gateway.stop': await gateway?.stop(); refreshTray(); return status();
     case 'app.openExternal': await shell.openExternal(allowedExternal(String(payload.url))); return { ok: true };

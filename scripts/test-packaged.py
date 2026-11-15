@@ -283,6 +283,16 @@ def main():
             membership_warning = page.get_by_role('alert').all_text_contents()
             page.screenshot(path=str(images / 'membership-v0.6.png'), animations='disabled', style='.toast-wrap{visibility:hidden!important}')
             checks.append('Packaged membership onboarding renders without authenticated user state')
+            page.locator('nav').get_by_role('button', name='客户端接入', exact=True).click()
+            expect(page.get_by_role('button', name='重新启动客户端', exact=True).first).to_be_visible()
+            expect(page.get_by_role('button', name='新终端打开', exact=True).first).to_be_visible()
+            lifecycle = page.evaluate("() => window.aurora.invoke('agent.lifecycle', {agentId:'claude-desktop'})")
+            assert lifecycle['ok'] and lifecycle['kind'] == 'desktop' and not lifecycle['installed'] and not lifecycle['supported'], lifecycle
+            service = page.evaluate("() => window.aurora.invoke('agent.restart', {agentId:'deepseek'})")
+            assert not service['ok'] and service['operation'] == 'unsupported', service
+            rejected = page.evaluate("() => window.aurora.invoke('agent.restart', {agentId:'claude-desktop', pid:1})")
+            assert rejected.get('error'), 'Native lifecycle accepted a renderer-supplied process ID'
+            checks.append('Packaged client cards expose restart and terminal actions; native IPC rejects API services and process overrides without launching any client')
             assert not errors, errors
             assert all(file.read_bytes() == before for file, before in original.items()), 'A read-only check changed a client config'
             checks.append('No page exceptions or changes to isolated client configuration')

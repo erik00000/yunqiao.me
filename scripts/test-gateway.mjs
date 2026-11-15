@@ -126,6 +126,10 @@ try {
   check('RPC preserves non-secret setting schema keys', () => assert.equal(flagMetadata.result.schema[0].key, 'model_reasoning_effort'));
   response = await post('/api/rpc', { action: 'inject.run', payload: {} });
   check('remote code execution action rejected', () => assert.equal(response.status, 403));
+  for (const action of ['agent.lifecycle', 'agent.restart']) {
+    response = await post('/api/rpc', { action, payload: { agentId: 'claude-desktop' } });
+    check(`desktop client lifecycle is not exposed through gateway RPC: ${action}`, () => assert.equal(response.status, 403));
+  }
   response = await post('/api/rpc', { action: 'provider.save', payload: { id: provider.id, enabled: true, apiKeys: [] } });
   check('remote toggle cannot overwrite stored keys', () => assert.ok((response.status === 200)));
   assert.ok((await response.json()).error);

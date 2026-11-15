@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import PresetPicker from '../components/PresetPicker';
+import ClientRestart from '../components/ClientRestart';
 import type { PageProps } from '../App';
 import { Btn, Empty, Field, Ico, Modal, copyText, useToast } from '../components/ui';
 import { AgentCatalogItem, CloudCatalog, Preset, Provider, PROTOCOL_TEXT, call, fmtCtx } from '../lib/api';
@@ -54,6 +55,7 @@ export default function Agents({ state, reload, go }: PageProps) {
         <p className="client-description">{a.description}</p>
         <div className="tag-list"><span className={`chip ${a.support === 'automatic' ? 'accent' : ''}`}>{a.support === 'automatic' ? '自动配置' : a.support === 'unsupported' ? '官方账号登录' : '手动接入'}</span>{st?.connected && <span className="chip ok ellipsis" title={st.model}>{st.model}</span>}{a.protocol && a.support !== 'unsupported' && <span className="chip">{PROTOCOL_TEXT[a.protocol] || a.protocol}</span>}</div>
         <div className="client-card-actions"><button className="text-button" onClick={() => a.docsUrl ? call('app.openExternal', { url: a.docsUrl }) : setSelected(a)}>接入说明 <span>↗</span></button><div className="grow" />{st?.connected && <Btn variant="ghost" size="sm" onClick={() => setRestoring(a)}>恢复</Btn>}<Btn variant={a.support === 'unsupported' ? 'default' : 'primary'} size="sm" onClick={() => setSelected(a)}>{a.support === 'unsupported' ? '查看说明' : st?.connected ? '更换配置' : '开始配置'} <span>→</span></Btn></div>
+        <ClientRestart agent={a} />
       </article>;
     })}</div>
     {!clients.length && <Empty icon="⌕" title="没有匹配的客户端" hint="调整筛选条件，或搜索 Claude、Codex、WorkBuddy。" />}
@@ -82,6 +84,7 @@ function ConnectWizard({ agent, state, reload, onClose }: { agent: AgentCatalogI
   const [key, setKey] = useState('');
   const [modelIds, setModelIds] = useState('');
   const [busy, setBusy] = useState(false);
+  const [clientActionActive, setClientActionActive] = useState(false);
   const running = useRef(false);
   const [preview, setPreview] = useState<any>(null);
   const [result, setResult] = useState<any>(null);
@@ -122,7 +125,7 @@ function ConnectWizard({ agent, state, reload, onClose }: { agent: AgentCatalogI
     setResult(r); await reload(); toast.push('客户端配置已保存', 'ok');
   }
   if (agent.support === 'unsupported') return <Modal title={agent.name} sub="客户端兼容性说明" onClose={onClose} foot={<><Btn onClick={onClose}>关闭</Btn>{agent.docsUrl && <Btn variant="primary" onClick={() => call('app.openExternal', { url: agent.docsUrl })}>打开官方说明 ↗</Btn>}</>}><div className="compatibility-info"><ClientMark id={agent.id} name={agent.name} /><h2>通过官方账号使用此客户端</h2><p>{agent.supportNote || agent.description}</p><p>如需自定义供应商，可选择支持自定义 API 的编程客户端或 API 工具。</p></div></Modal>;
-  return <Modal title={`配置 ${agent.name}`} sub="选择供应商和模型，预览后再应用到客户端。" onClose={() => { if (!busy) onClose(); }} width={800} foot={<><Btn variant="ghost" disabled={busy} onClick={onClose}>{result ? '完成' : '取消'}</Btn>{!result && step > 0 && <Btn disabled={busy} onClick={() => { setStep(step - 1); setPreview(null); setError(''); }}>上一步</Btn>}{!result && step === 0 && <Btn variant="primary" disabled={busy || (!creating && !provider?.enabled)} onClick={() => run(async () => { if (creating) await saveNew(); else setStep(1); })}>{busy ? '保存中…' : creating ? '保存并选模型 →' : '下一步：选择模型 →'}</Btn>}{!result && step === 1 && <Btn variant="primary" disabled={busy || !chosenModel} onClick={() => run(prepare)}>{busy ? '生成预览…' : '预览配置 →'}</Btn>}{!result && step === 2 && agent.support === 'automatic' && <Btn variant="primary" disabled={busy} onClick={() => run(apply)}>{busy ? '正在应用…' : '备份并应用配置'}</Btn>}</>}>
+  return <Modal title={`配置 ${agent.name}`} sub="选择供应商和模型，预览后再应用到客户端。" onClose={() => { if (!busy && !clientActionActive) onClose(); }} width={800} foot={<><Btn variant="ghost" disabled={busy || clientActionActive} onClick={onClose}>{result ? '完成' : '取消'}</Btn>{!result && step > 0 && <Btn disabled={busy} onClick={() => { setStep(step - 1); setPreview(null); setError(''); }}>上一步</Btn>}{!result && step === 0 && <Btn variant="primary" disabled={busy || (!creating && !provider?.enabled)} onClick={() => run(async () => { if (creating) await saveNew(); else setStep(1); })}>{busy ? '保存中…' : creating ? '保存并选模型 →' : '下一步：选择模型 →'}</Btn>}{!result && step === 1 && <Btn variant="primary" disabled={busy || !chosenModel} onClick={() => run(prepare)}>{busy ? '生成预览…' : '预览配置 →'}</Btn>}{!result && step === 2 && agent.support === 'automatic' && <Btn variant="primary" disabled={busy} onClick={() => run(apply)}>{busy ? '正在应用…' : '备份并应用配置'}</Btn>}</>}>
     <div className="wizard-steps">{['连接供应商', '选择模型', '预览并应用'].map((name, i) => <div key={name} className={step === i ? 'active' : step > i ? 'done' : ''}><span>{step > i ? '✓' : i + 1}</span>{name}</div>)}</div>
     {error && <div className="notice warning" role="alert">{error}</div>}
     <fieldset disabled={busy} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
@@ -161,5 +164,6 @@ function ConnectWizard({ agent, state, reload, onClose }: { agent: AgentCatalogI
       </>}
     </>}
     </fieldset>
+    {result && <div className="client-restart-success"><ClientRestart agent={agent} onActiveChange={setClientActionActive} /></div>}
   </Modal>;
 }

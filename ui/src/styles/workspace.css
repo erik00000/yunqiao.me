@@ -130,6 +130,15 @@ button:disabled { cursor: not-allowed; }
 .client-card .tag-list { margin-top: auto; flex-wrap: nowrap; overflow: hidden; }
 .client-card .chip { flex: none; }
 .client-card-actions { display: flex; align-items: center; gap: 5px; border-top: 1px solid var(--stroke); margin-top: 17px; padding-top: 13px; }
+.client-restart { margin-top: 9px; min-width: 0; }
+.client-restart-row { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+.client-restart-row .hint { font-size: 10px; color: var(--muted); }
+.client-restart-error { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 7px; color: var(--warning, #ad6b0d); font-size: 11px; line-height: 1.65; overflow-wrap: anywhere; }
+.client-restart-error > span { flex: 1 1 150px; }
+.client-restart-message { margin: 7px 0 0; font-size: 11px; color: var(--text-2); line-height: 1.7; overflow-wrap: anywhere; }
+.client-restart-explanation { color: var(--text-2); font-size: 13px; line-height: 1.9; }
+.client-restart-success .client-restart-row { justify-content: center; }
+.client-restart-success .client-restart-message { text-align: center; }
 .page-footnote { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 7px; color: var(--muted); margin-top: 25px; font-size: 10px; }
 .page-footnote .text-button { color: var(--accent); margin-left: 3px; }
 .modal-mask { background: #17234065; backdrop-filter: blur(4px); padding: 24px; }
