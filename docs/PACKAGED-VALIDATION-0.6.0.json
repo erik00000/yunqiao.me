@@ -17,14 +17,14 @@
     "No page exceptions or changes to isolated client configuration"
   ],
   "executable": "release\\local-debug-0.6.0\\win-unpacked\\YunQiaoAI.exe",
-  "exeSha256": "d9ab1a9dc118cf972e788a62458efd4c0d1b50da22f1ca8578d60854651855f8",
-  "asarSha256": "23a62f51fe371bf62260e27c2d5cc01cced2acbbc8880c0642cfc31aa895e253",
-  "portable": "release\\local-debug-0.6.0\\YunQiaoAI-0.6.0-local-debug-win-x64.exe",
-  "portableSha256": "840b04866e3ac1a7120c56022adcd7f7bc8f6f1da33abd2e3e577a0a56605215",
+  "exeSha256": "811c583b333898c4dbe4dbd919c2c7f5636f6aa292632c814156f6968a8f786b",
+  "asarSha256": "12bc2729a777cd7709367e9c2ec1ede8066d73a714c58b3ea5de368e183518ca",
+  "portable": "release\\local-debug-0.6.0\\YunQiaoAI-0.6.0-audit-20261115-win-x64.exe",
+  "portableSha256": "98834a75cfd22613d9eb8a4e5177e0dc44ed44d43e33053fd2778cbe8c20acde",
   "build": {
-    "id": "20261115T034746Z-03346ace",
-    "builtAt": "2026-11-15T03:47:46.435Z",
-    "revision": "03346ace",
+    "id": "20261115T042224Z-46102e2c",
+    "builtAt": "2026-11-15T04:22:24.754Z",
+    "revision": "46102e2c",
     "channel": "local"
   },
   "resourceFilesVerified": 217,

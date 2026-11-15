@@ -1,8 +1,9 @@
 {
   "passed": true,
-  "count": 11,
+  "count": 12,
   "checks": [
     "A provider created from a nonempty preset synchronizes upstream models and preserves the selected preset model",
+    "Pending client preview locks model edits; failed application requires a fresh reviewed selection and revision",
     "unavailable model discovery keeps the saved provider usable; manual IDs are saved before preview without duplicate providers",
     "reject model discovery keeps the saved provider usable; manual IDs are saved before preview without duplicate providers",
     "Official-account models stay restricted to the verified native model catalog",

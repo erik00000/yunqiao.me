@@ -1,0 +1,17 @@
+{
+  "passed": true,
+  "count": 10,
+  "checks": [
+    "Saving a dirty settings field preserves concurrently refreshed port, token and proxy; inactive retention control is hidden",
+    "Canceled import keeps unsaved settings and export write failures stay visible",
+    "Group saves lock editing and closing, display validation errors, and preserve the draft for one explicit retry",
+    "Group deletion failures remain visible and toggling sends only the enabled field",
+    "Supplier model fetch locks the editor, preserves the saved ID after RPC rejection, and retries update that supplier",
+    "Supplier delete and save errors are caught and remain in the relevant page or editor",
+    "Model apply carries the exact reviewed selection and revision; stale catalog rejection requires a fresh preview",
+    "Membership group failure disables adding; successful addition followed by failed model sync still advances without creating duplicates",
+    "Usage distinguishes an unpriced request from a confirmed free request and labels the partial estimate",
+    "A request-log failure does not discard successfully loaded usage totals, and a later refresh recovers"
+  ],
+  "scope": "Real React components, controlled IPC and deferred failures; no client files or paid accounts"
+}

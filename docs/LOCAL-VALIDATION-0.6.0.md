@@ -2,9 +2,11 @@
 
 当前阶段为本地功能完善，未发布包含本轮改动的新版本，也未更新线上下载元数据。已有早期 0.6.0 安装包不能代替本次调试包。
 
-便携调试包：`release/local-debug-0.6.0/YunQiaoAI-0.6.0-local-debug-win-x64.exe`。先从托盘退出早期版本，再启动新包；侧栏显示「调试」，在「系统设置 → 版本更新」可核对构建时间。
+便携调试包：`release/local-debug-0.6.0/YunQiaoAI-0.6.0-audit-20261115-win-x64.exe`。先从托盘退出早期版本，再启动新包；侧栏显示「调试」，在「系统设置 → 版本更新」可核对构建时间。
 
 未压缩调试入口：`release/local-debug-0.6.0/win-unpacked/YunQiaoAI.exe`。运行或复制时保留整个 `win-unpacked` 目录。
+
+第二轮全面检查与后续优先级见 [工程审查记录](ENGINEERING-AUDIT-2026-11-15.md)。本地包已包含该轮修复；PHP 修复已完成本机验证，尚未部署到线上。
 
 ## 本轮完成
 
@@ -26,37 +28,39 @@
 | 共存配置与 TOML 回归 | 20 项通过 |
 | 配置与状态事务故障回归 | 13 项通过 |
 | 共享配置文件事务故障回归 | 14 项通过 |
-| 历史区域迁移 / 原生消息索引 | 31 项 / 18 项通过 |
+| 历史区域迁移 / 原生消息索引 | 34 项 / 18 项通过 |
 | 历史迁移真实界面与数据库流程 | 7 项通过 |
-| 桌面扩展后端与真实 Electron 运行 | 27 项通过；另有会话查询 7 项通过 |
+| 桌面扩展后端与真实 Electron 运行 | 29 项通过；另有会话查询 7 项、资源写入 12 项通过 |
 | 插件管理界面 | 17 项通过 |
 | 网关中间件 | 21 项通过，普通 Node 与 Electron 内嵌 Node 均验证 |
 | 网关回归 / 主程序界面流程 | 48 项 / 17 项通过 |
 | 本机账号与供应商界面回归 | 7 项通过 |
 | 更新后端 / 设置迁移 | 21 项 / 6 项通过 |
 | 更新界面 / 脱敏密钥自动同步 | 18 项 / 7 项通过 |
-| 客户端向导与目录界面 / 慢模型请求并发保护 | 11 项 / 6 项通过 |
+| 客户端向导与目录界面 / 慢模型请求并发保护 | 12 项 / 6 项通过 |
 | 隐藏目录异常与缓存故障回归 | 9 项通过 |
+| 新增工程故障与并发保护 / 管理界面 | 20 项 / 10 项通过 |
+| PHP 真实本机运行 / 手机接口与浏览器 | 64 项 / 6 项与 20 项通过 |
 | 真实 Codex CLI 共存请求、配置继承与认证隔离 | 5 项通过，本地模拟服务；详见 [CLI 验证](CODEX-NATIVE-VALIDATION.md) |
 | 实际打包 EXE 与便携包资源、设置迁移、插件、会员入口与网关 | 12 项通过，便携解压内容与 217 个第三方资源哈希一致 |
 | 实际打包 EXE 自动导入、共存向导、切换与恢复 | 11 项通过 |
 
 测试均使用隔离的数据、Chromium 和客户端目录，未改写真实客户端配置，未执行真实模型计费请求或赠金核销。打包验收会核对 `app.asar` 主进程与本地构建内容一致。记录见 [打包报告](PACKAGED-VALIDATION-0.6.0.json) 和 [共存界面报告](COEXIST-UI-VALIDATION-0.6.0.json)。本轮提交的管理员密钥、API 密钥与 GitHub 凭据形态检查无命中；`git diff --check` 通过。
 
-构建标识：`20261115T034746Z-03346ace`；北京时间 2026-11-15 11:47:46，源码提交 `03346ace`。
+构建标识：`20261115T042224Z-46102e2c`；北京时间 2026-11-15 12:22:24，源码提交 `46102e2c`。
 
 直接启动便携 EXE 完成 12 项检查，核对其解压后的程序与已通过共存流程的未压缩程序一致。复现命令：
 
 ```powershell
-python scripts/test-packaged.py --exe release/local-debug-0.6.0/win-unpacked/YunQiaoAI.exe --launcher release/local-debug-0.6.0/YunQiaoAI-0.6.0-local-debug-win-x64.exe
+python scripts/test-packaged.py --exe release/local-debug-0.6.0/win-unpacked/YunQiaoAI.exe --launcher release/local-debug-0.6.0/YunQiaoAI-0.6.0-audit-20261115-win-x64.exe
 ```
 
 当前调试包 SHA-256：
 
 ```text
-便携 EXE       840b04866e3ac1a7120c56022adcd7f7bc8f6f1da33abd2e3e577a0a56605215
-YunQiaoAI.exe  d9ab1a9dc118cf972e788a62458efd4c0d1b50da22f1ca8578d60854651855f8
-app.asar      23a62f51fe371bf62260e27c2d5cc01cced2acbbc8880c0642cfc31aa895e253
+便携 EXE       98834a75cfd22613d9eb8a4e5177e0dc44ed44d43e33053fd2778cbe8c20acde
+YunQiaoAI.exe  811c583b333898c4dbe4dbd919c2c7f5636f6aa292632c814156f6968a8f786b
+app.asar      12bc2729a777cd7709367e9c2ec1ede8066d73a714c58b3ea5de368e183518ca
 ```
 
 ## 尚需实际联调

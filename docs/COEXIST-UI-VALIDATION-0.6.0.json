@@ -2,7 +2,7 @@
   "version": "0.6.0",
   "passed": true,
   "count": 11,
-  "checkedAt": "2026-11-15T03:48:16.148638+00:00",
+  "checkedAt": "2026-11-15T04:23:00.447188+00:00",
   "checks": [
     "Real Electron startup imports two matching native sources into one supplier without modifying native files",
     "Supplier page separates official identities, credential status and both API configuration sources",
@@ -18,8 +18,8 @@
   ],
   "runtime": "packaged Windows EXE",
   "executable": "D:\\btc\\aurora\\release\\local-debug-0.6.0\\win-unpacked\\YunQiaoAI.exe",
-  "exeSha256": "d9ab1a9dc118cf972e788a62458efd4c0d1b50da22f1ca8578d60854651855f8",
-  "asarSha256": "23a62f51fe371bf62260e27c2d5cc01cced2acbbc8880c0642cfc31aa895e253",
+  "exeSha256": "811c583b333898c4dbe4dbd919c2c7f5636f6aa292632c814156f6968a8f786b",
+  "asarSha256": "12bc2729a777cd7709367e9c2ec1ede8066d73a714c58b3ea5de368e183518ca",
   "profile": "isolated temporary app, Chromium and native client directories",
   "screenshots": [
     "docs/images/coexist-v0.6.png"
