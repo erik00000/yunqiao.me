@@ -80,6 +80,24 @@ try {
     const r = await m.checkUpdate('0.6.0', { ...win, source: 'website', minimumVersion: '0.6.5' }, async () => website()); assert.equal(r.version, version);
     await assert.rejects(() => m.checkUpdate('0.8.0', { ...win, source: 'website' }, async () => website()), /低于当前客户端/);
   });
+  await test('automatic and manual fallback report an unpublished website without inventing a current release', async () => {
+    const unpublished = website({ version: '', url: '', hasUpdate: false });
+    for (const target of [win, { ...win, minimumVersion: version }, { ...win, source: 'website' }, { ...win, source: 'website', minimumVersion: version }]) {
+      const calls = [];
+      await assert.rejects(() => m.checkUpdate('0.6.0', target, async url => { calls.push(url); if (url === m.GITHUB_RELEASE_API) throw new Error('HTTP 404'); return unpublished; }), /官网备用检查未完成：官网尚未发布可用版本/);
+      assert.equal(calls.length, target.source === 'website' ? 1 : 2); assert.ok(calls.at(-1).startsWith(m.OFFICIAL_UPDATE_URL));
+    }
+  });
+  await test('only the explicit unpublished shape receives that explanation; malformed metadata stays invalid', () => {
+    const unpublished = website({ version: '', url: '', hasUpdate: false });
+    for (const patch of [{ version: null }, { version: undefined }, { url: undefined }, { url: null }, { hasUpdate: 'false' }, { hasUpdate: undefined }, { hasUpdate: true }, { platform: 'ios' }, { arch: 'arm64' }, { prerelease: true }, { draft: true }]) {
+      assert.throws(() => m.websiteUpdate({ ...unpublished, ...patch }, '0.6.0', win), error => !error.message.includes('官网尚未发布可用版本'));
+    }
+  });
+  await test('a claimed no-update response cannot bypass the requested minimum mirror version', async () => {
+    const old = website({ version: '0.6.0', url: 'https://ai.haowucm.cn/releases/YunQiaoAI-0.6.0-win-x64-setup.exe', hasUpdate: false });
+    for (const source of [undefined, 'website']) await assert.rejects(() => m.checkUpdate('0.6.0', { ...win, source, minimumVersion: version }, async url => { if (url === m.GITHUB_RELEASE_API) throw new Error('HTTP 404'); return old; }), /尚未同步到 0.7.0/);
+  });
   await test('iOS falls back to a genuine TestFlight installation link', async () => {
     const r = await expectFallback(release({ assets: [asset('YunQiaoAI-0.7.0-ios-device-unsigned.zip')] }), website({ platform: 'ios', arch: 'arm64', url: 'https://testflight.apple.com/join/AbCd1234' }), { platform: 'ios', arch: 'arm64' }); assert.equal(r.url, 'https://testflight.apple.com/join/AbCd1234');
   });

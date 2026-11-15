@@ -63,9 +63,10 @@ switch ($action) {
         $key = $platform . '-' . $arch;
         $fileKey = isset($files[$key]) ? $key : $platform;
         $url = $files[$fileKey] ?? '';
-        $hasUpdate = version_compare((string)($u['version'] ?? '0.0.0'), $current, '>');
+        $version = (string)($u['version'] ?? '');
+        $hasUpdate = $version !== '' && $url !== '' && version_compare($version, $current, '>');
         json_out([
-            'version' => $u['version'] ?? '0.0.0',
+            'version' => $version,
             'notes' => $u['notes'] ?? '',
             'mandatory' => (bool)($u['mandatory'] ?? false),
             'hasUpdate' => $hasUpdate,
@@ -101,7 +102,7 @@ switch ($action) {
             'models' => $models,
             'version' => $c['version'] ?? 0,
             'updatedAt' => $c['updatedAt'] ?? null,
-            'appVersion' => $cfg['update']['version'] ?? '0.1.0',
+            'appVersion' => ($cfg['update']['version'] ?? '') !== '' ? $cfg['update']['version'] : null,
         ]);
     }
 

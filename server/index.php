@@ -270,17 +270,17 @@ document.getElementById('pwd').addEventListener('keydown', e=>{ if(e.key==='Ente
       <div class="head"><div><h1>版本更新</h1><p>客户端启动时会请求这里；填好版本号和下载地址即可自动更新。</p></div></div>
       <div class="panel" style="padding:18px;max-width:760px">
         <div class="grid2">
-          <div class="field"><label>最新版本号</label><input id="uVersion" placeholder="0.2.0"></div>
+          <div class="field"><label>最新版本号</label><input id="uVersion" placeholder="填写实际发布的版本号"></div>
           <div class="field"><label>强制更新</label>
             <select id="uMandatory"><option value="0">否（可跳过）</option><option value="1">是（必须更新）</option></select>
           </div>
         </div>
         <div class="field"><label>更新说明</label><textarea id="uNotes" placeholder="本次更新内容…"></textarea></div>
         <div class="grid2">
-          <div class="field"><label>Windows x64 下载地址</label><input id="uWin" placeholder="https://ai.haowucm.cn/releases/YunQiaoAI-0.2.3-win-x64-setup.exe"></div>
-          <div class="field"><label>macOS 下载地址</label><input id="uMac" placeholder="https://ai.haowucm.cn/releases/YunQiaoAI-0.2.3-mac-arm64.dmg"></div>
+          <div class="field"><label>Windows x64 下载地址</label><input id="uWin" placeholder="填写已上传的 Windows x64 安装包完整地址"></div>
+          <div class="field"><label>macOS 下载地址</label><input id="uMac" placeholder="填写已上传的 macOS arm64 安装包完整地址"></div>
         </div>
-        <div class="field"><label>Linux 下载地址</label><input id="uLinux" placeholder="https://ai.haowucm.cn/releases/YunQiaoAI-0.2.3-linux-x86_64.AppImage"></div>
+        <div class="field"><label>Linux 下载地址</label><input id="uLinux" placeholder="填写已上传的 Linux x64 安装包完整地址"></div>
         <div class="foot" style="position:static;background:none"><button class="btn primary" id="btnSaveUpdate">保存</button></div>
         <p class="sub" style="margin-top:10px">把安装包上传到 <code>/www/wwwroot/ai.haowucm.cn/releases/</code>，再用上面的地址引用即可。</p>
       </div>
@@ -337,7 +337,7 @@ document.getElementById('pwd').addEventListener('keydown', e=>{ if(e.key==='Ente
     <div class="field"><label>排序（小的在前）</label><input id="fSort" type="number" value="100"></div>
   </div>
   <div class="field"><label>官网 / 拿 Key 的地址</label><input id="fDocs" class="mono" placeholder="https://platform.deepseek.com"></div>
-  <div class="field"><label>说明</label><input id="fNote" placeholder="支持 1M 上下文，需要实名"></div>
+  <div class="field"><label>说明</label><input id="fNote" placeholder="填写已核实的服务说明，可留空"></div>
 
   <div class="field">
     <label>模型列表</label>
@@ -521,7 +521,7 @@ function renderModels(){
   const box = document.getElementById('models');
   box.innerHTML = (editing.models||[]).map((m,i)=>`
     <div class="mrow">
-      <input value="${esc(m.id)}" data-m="${i}" data-k="id" placeholder="deepseek-chat">
+      <input value="${esc(m.id)}" data-m="${i}" data-k="id" placeholder="填写供应商实际模型 ID">
       <input value="${m.contextWindow||''}" data-m="${i}" data-k="contextWindow" type="number" placeholder="待确认">
       <input value="${m.inputPrice??''}" data-m="${i}" data-k="inputPrice" type="number" step="0.01" placeholder="待确认">
       <input value="${m.outputPrice??''}" data-m="${i}" data-k="outputPrice" type="number" step="0.01" placeholder="待确认">

@@ -222,6 +222,7 @@ export async function testProvider(deps: ActionDeps, payload: { providerId: stri
 export async function fetchProviderModels(deps: ActionDeps, payload: { providerId: string }) {
   const p = deps.store.getProvider(payload.providerId);
   if (!p) return { ok: false, models: [], message: '供应商已不存在，请刷新列表' };
+  if (!p.baseUrl.trim()) return { ok: false, models: p.models, message: '请先填写供应商的实际 API 地址，再同步模型' };
   const connection = (provider: Provider) => JSON.stringify({ baseUrl: provider.baseUrl, format: provider.format,
     headers: provider.headers, proxy: provider.proxy || deps.store.getSettings().proxy,
     keys: provider.apiKeys.map(k => ({ key: k.key, enabled: k.enabled })) });

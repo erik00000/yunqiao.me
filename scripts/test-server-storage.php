@@ -72,4 +72,12 @@ rmdir($root . '/analytics.json.tmp' . getmypid());
 storage_throws(fn() => store_update('analytics.json', static function (array $previous): array { throw new RuntimeException('Expected failure'); }));
 $reset = store_update('analytics.json', static fn(array $previous): array => ['days' => [], 'clients' => []]);
 storage_check(store_read('analytics.json') === $reset, 'A failed callback must release the analytics lock');
-echo "PASS analytics failures retain complete data and release the shared reset lock\nAll 7 server storage checks passed.\n";
+echo "PASS analytics failures retain complete data and release the shared reset lock\n";
+rmdir($root . '/config.json.tmp' . getmypid());
+unlink($root . '/config.json');
+$fresh = config();
+storage_check($fresh['update']['version'] === '' && $fresh['update']['notes'] === '' && (array)$fresh['update']['files'] === [] && !isset($fresh['update']['publishedAt']), 'A fresh site must not invent a published release');
+storage_check($fresh['stats']['pings'] === 0 && $fresh['stats']['installs'] === 0, 'Fresh statistics must reflect no recorded activity');
+$failed = false; try { normalize_update(['notes' => 'not a release'], $fresh['update']); } catch (InvalidArgumentException $error) { $failed = true; }
+storage_check($failed, 'Publishing without an actual version must not create a default release');
+echo "PASS new installations remain unpublished until an actual release is configured\nAll 8 server storage checks passed.\n";

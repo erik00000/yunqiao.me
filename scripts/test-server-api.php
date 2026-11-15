@@ -75,6 +75,13 @@ try {
     $check($status === 200 && file_get_contents($root . '/data/analytics.json') === $analyticsBefore, 'analytics write failure preserves statistics and public catalog availability');
     [$status] = $request('api.php?a=analytics.reset', 'POST', '{}');
     $check($status === 500 && file_get_contents($root . '/data/analytics.json') === $analyticsBefore, 'failed analytics reset returns an error without losing stored statistics');
+    $configuration['update'] = []; file_put_contents($root . '/data/config.json', json_encode($configuration));
+    [$status, $unpublished] = $request('pub.php?action=update&platform=win&arch=x64&current=0.0.0');
+    $check($status === 200 && $unpublished['version'] === '' && $unpublished['notes'] === '' && $unpublished['url'] === '' && $unpublished['hasUpdate'] === false && $unpublished['publishedAt'] === null, 'an unpublished site does not return a fabricated release');
+    [$status, $statistics] = $request('pub.php?action=stats');
+    $check($status === 200 && $statistics['appVersion'] === null, 'public statistics do not invent a current application version');
+    [$status] = $request('api.php?a=update.save', 'POST', '{"notes":"No release configured"}');
+    $check($status === 400 && json_decode(file_get_contents($root . '/data/config.json'), true)['update'] === [], 'notes alone cannot publish a placeholder release');
     echo 'All ' . $checks . ' isolated server HTTP checks passed.' . PHP_EOL;
 } finally {
     proc_terminate($process); proc_close($process);

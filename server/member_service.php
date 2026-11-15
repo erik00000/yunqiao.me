@@ -270,8 +270,10 @@ final class MemberService
         if (!is_int($user['id'] ?? null) || $user['id'] <= 0 || ($user['status'] ?? '') !== 'active') {
             throw new MemberError('ACCOUNT_INACTIVE', '会员账户不可用', 403);
         }
+        $balance = $user['balance'] ?? null;
         return ['id' => $user['id'], 'email' => (string)($user['email'] ?? ''),
-            'username' => (string)($user['username'] ?? ''), 'balance' => (float)($user['balance'] ?? 0)];
+            'username' => (string)($user['username'] ?? ''),
+            'balance' => is_numeric($balance) && is_finite((float)$balance) ? (float)$balance : null];
     }
 
     private function createSession(string $accessToken, array $credentials, int $expiresIn = 3600): array

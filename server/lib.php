@@ -89,8 +89,8 @@ function config_read_locked(): array
         $cfg['passwordHash'] = password_hash($initialPassword, PASSWORD_DEFAULT);
         $cfg['siteName'] = '云桥AI 工具箱 云端目录';
         $cfg['update'] = [
-            'version' => '0.1.0',
-            'notes' => '首个版本',
+            'version' => '',
+            'notes' => '',
             'mandatory' => false,
             'files' => new stdClass(),
         ];
@@ -153,7 +153,8 @@ function save_catalog(array &$c): void
 /** Keep checksums when editing release notes; never carry a previous build hash to a changed URL/version. */
 function normalize_update(array $body, array $previous): array
 {
-    $version = (string)($body['version'] ?? $previous['version'] ?? '0.1.0');
+    $version = trim((string)($body['version'] ?? $previous['version'] ?? ''));
+    if ($version === '') throw new InvalidArgumentException('请填写实际发布的版本号');
     $previousFiles = (array)($previous['files'] ?? []);
     $files = (array)($body['files'] ?? $previous['files'] ?? []);
     foreach ($files as $platform => $url) {

@@ -7,17 +7,17 @@
   "type": "module",
   "main": "dist/main/main.cjs",
   "author": {
-    "name": "云桥AI",
-    "email": "hello@yunqiao.local"
+    "name": "云桥AI"
   },
   "license": "AGPL-3.0-only",
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "npm run typecheck && node scripts/test-settings-policy.mjs && node scripts/test-updates.mjs && node scripts/test-catalog-resilience.mjs && node scripts/test-model-sync.mjs && node scripts/test-clients.mjs && node scripts/test-gateway.mjs && node scripts/test-history-repair.mjs && node scripts/test-session-index.mjs && node scripts/test-management.mjs && node scripts/test-response-phase.mjs && node scripts/test-extensions.mjs && node scripts/test-market-sync.mjs && node scripts/test-extension-history.mjs && node scripts/test-member-client.mjs && node scripts/test-local-clients.mjs && node scripts/test-coexist.mjs && node scripts/test-coexist-config.mjs && node scripts/test-agent-transactions.mjs && node scripts/test-middleware.mjs && node scripts/test-config-files-transaction.mjs && node scripts/test-codex-resource-writes.mjs && node scripts/test-engineering-regressions.mjs",
+    "test": "npm run typecheck && node scripts/test-settings-policy.mjs && node scripts/test-updates.mjs && node scripts/test-catalog-resilience.mjs && node scripts/test-model-sync.mjs && node scripts/test-clients.mjs && node scripts/test-gateway.mjs && node scripts/test-history-repair.mjs && node scripts/test-session-index.mjs && node scripts/test-management.mjs && node scripts/test-response-phase.mjs && node scripts/test-extensions.mjs && node scripts/test-extension-resources.mjs && node scripts/test-market-sync.mjs && node scripts/test-extension-history.mjs && node scripts/test-member-client.mjs && node scripts/test-local-clients.mjs && node scripts/test-coexist.mjs && node scripts/test-coexist-config.mjs && node scripts/test-agent-transactions.mjs && node scripts/test-middleware.mjs && node scripts/test-config-files-transaction.mjs && node scripts/test-codex-resource-writes.mjs && node scripts/test-engineering-regressions.mjs",
     "build:main": "node scripts/build-main.mjs",
     "build:ui": "vite build",
-    "build": "npm run build:ui && npm run build:main",
+    "build:extensions": "node scripts/prepare-extension-resources.mjs",
+    "build": "npm run build:ui && npm run build:main && npm run build:extensions",
     "start": "npm run build && electron .",
     "gateway": "node scripts/build-main.mjs && node dist/main/gateway-cli.cjs",
     "package:win": "npm run build && electron-builder --win --x64 --publish never",
@@ -48,7 +48,8 @@
       "buildResources": "build"
     },
     "files": [
-      "dist/**/*",
+      "dist/main/**/*",
+      "dist/ui/**/*",
       "package.json",
       "LICENSE",
       "THIRD_PARTY_NOTICES.md"
@@ -98,7 +99,7 @@
     },
     "extraResources": [
       {
-        "from": "third_party/codexplusplus",
+        "from": "dist/extensions",
         "to": "codexplusplus"
       }
     ]

@@ -26,8 +26,11 @@ function fixture(string $directory, string $mode = ''): MemberService
         if ($path === '/auth/me') {
             if (!$userId) return ['status' => 401, 'body' => []];
             $q = $upstream->prepare('SELECT COALESCE(SUM(cents),0) FROM codes WHERE user_id=?'); $q->execute([$userId]);
-            return $okay(['id' => $mode === 'different-user' ? $userId + 1 : $userId, 'email' => 'user' . $userId . '@example.test',
-                'username' => '测试用户', 'balance' => (int)$q->fetchColumn() / 100, 'status' => $mode === 'inactive' ? 'inactive' : 'active']);
+            $profile = ['id' => $mode === 'different-user' ? $userId + 1 : $userId, 'email' => 'user' . $userId . '@example.test',
+                'username' => '测试用户', 'balance' => (int)$q->fetchColumn() / 100, 'status' => $mode === 'inactive' ? 'inactive' : 'active'];
+            if ($mode === 'missing-balance') unset($profile['balance']);
+            if ($mode === 'invalid-balance') $profile['balance'] = 'unavailable';
+            return $okay($profile);
         }
         if ($path === '/groups/available') return $okay([['id' => 7, 'name' => 'OpenAI', 'platform' => 'openai', 'status' => 'active', 'rate_multiplier' => 1], ['id' => 8, 'name' => 'Claude', 'platform' => 'anthropic', 'status' => 'active']]);
         if (str_starts_with($path, '/keys?')) {
@@ -117,6 +120,15 @@ $test('fixed ten-dollar grant, repeated claim and private response', static func
     check((int)upstreamDb($dir)->query('SELECT SUM(cents) FROM codes')->fetchColumn() === 1000, 'exact credit');
     $output = json_encode([$first, $service->publicConfig(), $service->adminOverview()]);
     check(!str_contains($output, 'test-administrator-key') && !str_contains($output, 'user-1'), 'secrets not exposed');
+});
+$test('unknown account balances are never presented as measured zero', static function ($dir): void {
+    foreach (['missing-balance', 'invalid-balance'] as $mode) {
+        $service = fixture($dir, $mode); $credentials = signedIn($service, 1, 1);
+        check($service->handle('status', [], $credentials)['member']['balance'] === null, 'unknown balance remains unknown');
+        check($service->handle('claim', [], $credentials)['member']['balance'] === null, 'confirmed gift does not invent a new account balance');
+    }
+    $service = fixture($dir); $credentials = signedIn($service, 2, 2);
+    check($service->handle('status', [], $credentials)['member']['balance'] === 0.0, 'reported zero balance remains zero');
 });
 $test('same account on another installation cannot receive twice', static function ($dir): void {
     $service = fixture($dir); $service->handle('claim', [], signedIn($service, 1, 1));

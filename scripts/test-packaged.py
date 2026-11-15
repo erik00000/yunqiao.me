@@ -9,6 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
+import re
 import socket
 import struct
 import subprocess
@@ -33,6 +34,51 @@ def free_port():
 def sha256(file):
     with Path(file).open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
+
+
+def release_resource_manifest():
+    """Share the reviewed distribution exclusions with the resource build step."""
+    policy = json.loads((ROOT / 'scripts/extension-resource-policy.json').read_text(encoding='utf-8'))
+    source = ROOT / 'third_party/codexplusplus'
+    manifest = json.loads((source / 'FILES.sha256.json').read_text(encoding='utf-8'))
+    assert policy['schemaVersion'] == 1
+    assert len(manifest) == policy['sourceFiles'], 'Pinned resource count changed; review the distribution policy'
+    assert json.loads((source / 'UPSTREAM.json').read_text(encoding='utf-8'))['commit'] == policy['upstreamCommit']
+    excluded = set(policy['excluded'])
+    assert len(excluded) == len(policy['excluded']), 'Duplicate resource exclusion'
+    paths = set()
+    for record in manifest:
+        name = record['path']
+        assert isinstance(name, str) and name and '\\' not in name, 'Invalid resource path'
+        assert all(part and part not in ('.', '..') and not re.search(r'[<>:"|?*\x00-\x1f]|[. ]$', part) for part in name.split('/')), name
+        assert name != 'FILES.sha256.json' and name.lower() not in paths, 'Duplicate resource path'
+        paths.add(name.lower())
+        assert type(record['bytes']) is int and record['bytes'] >= 0 and re.fullmatch(r'[a-f0-9]{64}', record['sha256']), name
+        if name.endswith('.test.cjs') or name.startswith('source/'):
+            assert name in excluded, f'Unreviewed source-only resource: {name}'
+    assert excluded <= {record['path'] for record in manifest}, 'Excluded source assets are missing'
+    return [record for record in manifest if record['path'] not in excluded]
+
+
+def verify_packaged_resources(bundled):
+    """Require the exact reviewed subset, including no unmanifested test files."""
+    bundled = Path(bundled).absolute()
+    for directory in (bundled, *bundled.parents):
+        assert not directory.is_symlink() and not getattr(directory, 'is_junction', lambda: False)(), f'Linked resource directory: {directory}'
+    expected = release_resource_manifest()
+    actual = set()
+    for file in bundled.rglob('*'):
+        assert not file.is_symlink() and not getattr(file, 'is_junction', lambda: False)(), f'Linked packaged resource: {file}'
+        assert file.is_file() or file.is_dir(), f'Not a regular packaged resource: {file}'
+        if file.is_file():
+            actual.add(file.relative_to(bundled).as_posix())
+    assert actual == {record['path'] for record in expected} | {'FILES.sha256.json'}, 'Unexpected or missing packaged resource files'
+    manifest = json.loads((bundled / 'FILES.sha256.json').read_text(encoding='utf-8'))
+    assert manifest == expected, 'Packaged resource manifest differs from the reviewed source subset'
+    for record in expected:
+        file = bundled / record['path']
+        assert file.stat().st_size == record['bytes'] and sha256(file) == record['sha256'], f'Packaged resource integrity mismatch: {record["path"]}'
+    return manifest
 
 
 def read_asar(file, relative):
@@ -97,14 +143,7 @@ def main():
     assert b'GNU AFFERO GENERAL PUBLIC LICENSE' in read_asar(asar, 'LICENSE')
     assert b'Facebook, Inc.' in read_asar(asar, 'THIRD_PARTY_NOTICES.md')
     bundled = resources / 'codexplusplus'
-    manifest = json.loads((bundled / 'FILES.sha256.json').read_text(encoding='utf-8'))
-    assert manifest == json.loads((ROOT / 'third_party/codexplusplus/FILES.sha256.json').read_text(encoding='utf-8'))
-    assert len(manifest) == 217, f'Expected 217 pinned assets, found {len(manifest)}'
-    for record in manifest:
-        file = (bundled / record['path']).resolve()
-        assert file.is_relative_to(bundled.resolve()), 'Asset path escapes the packaged resource directory'
-        assert file.is_file() and file.stat().st_size == record['bytes'], record['path']
-        assert sha256(file) == record['sha256'], record['path']
+    manifest = verify_packaged_resources(bundled)
 
     profile = Path(tempfile.mkdtemp(prefix='yunqiao-packaged-'))
     data, clients, chromium = profile / 'data', profile / 'clients', profile / 'chromium'
@@ -132,7 +171,7 @@ def main():
         environment.pop(key, None)
     logs = (profile / 'packaged.log').open('w', encoding='utf-8')
     process = None
-    checks = ['Packaged version and AGPL notices', 'All 217 packaged resource hashes match pinned source']
+    checks = ['Packaged version and AGPL notices', f'All {len(manifest)} distributed resource hashes match pinned source; upstream tests and Rust reference sources are absent']
     errors = []
     try:
         process = subprocess.Popen([
@@ -165,10 +204,8 @@ def main():
             assert packaged['dev'] is False and runtime_asar.is_file(), packaged
             if args.launcher:
                 assert sha256(runtime_asar) == sha256(asar), 'Portable wrapper extracted a different app.asar'
-                for record in manifest:
-                    file = runtime_asar.parent / 'codexplusplus' / record['path']
-                    assert file.is_file() and sha256(file) == record['sha256'], record['path']
-                checks.append('Portable wrapper extracts the verified application and all 217 pinned resources')
+                assert verify_packaged_resources(runtime_asar.parent / 'codexplusplus') == manifest
+                checks.append(f'Portable wrapper extracts the verified application and exactly {len(manifest)} distributed resources')
             else:
                 assert runtime_asar == asar.resolve(), packaged
             checks.append('Actual packaged EXE renders app.asar with an isolated data directory')

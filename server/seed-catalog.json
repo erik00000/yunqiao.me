@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "updatedAt": "2026-11-14T17:25:44.452Z",
+  "updatedAt": "2026-11-15T04:57:53.836Z",
   "providers": [
     {
       "key": "yunqiao",
@@ -1158,7 +1158,7 @@
       "vendor": "自定义",
       "region": "relay",
       "format": "openai-chat",
-      "baseUrl": "https://api.example.com/v1",
+      "baseUrl": "",
       "color": "#64748b",
       "icon": "🔌",
       "customBaseUrl": true,
@@ -1174,7 +1174,7 @@
       "vendor": "自定义",
       "region": "relay",
       "format": "anthropic",
-      "baseUrl": "https://api.example.com",
+      "baseUrl": "",
       "color": "#b45309",
       "icon": "🧷",
       "customBaseUrl": true,
@@ -1190,7 +1190,7 @@
       "vendor": "自定义",
       "region": "relay",
       "format": "gemini",
-      "baseUrl": "https://api.example.com",
+      "baseUrl": "",
       "color": "#1d4ed8",
       "icon": "🔗",
       "customBaseUrl": true,

@@ -3,7 +3,7 @@ export function normalizeEndpoint(value) {
   if (!raw) throw new Error('请填写电脑或服务器的网关地址');
   const prefixed = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `http://${raw}`;
   let parsed;
-  try { parsed = new URL(prefixed); } catch { throw new Error('地址格式不正确，例如 http://192.168.1.10:3425'); }
+  try { parsed = new URL(prefixed); } catch { throw new Error('地址格式不正确，请复制电脑端显示的完整 HTTP(S) 网关地址'); }
   if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('网关地址只支持 HTTP 或 HTTPS');
   if (parsed.username || parsed.password || parsed.search || parsed.hash) throw new Error('地址不能包含账号、密码、查询参数或令牌');
   if (!parsed.hostname) throw new Error('请填写有效的电脑或服务器地址');

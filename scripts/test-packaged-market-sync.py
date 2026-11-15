@@ -125,6 +125,7 @@ def main():
     assert packaged_main == built_main.read_bytes(), 'The package does not contain the current main build'
     assert b'YUNQIAO_TEST_ISOLATED' in packaged_main, 'Refusing to launch a package without the isolated-test login-item guard'
     assert HELPERS.read_asar(asar, 'dist/ui/index.html') == (ROOT / 'dist/ui/index.html').read_bytes(), 'The package does not contain the current UI build'
+    resource_manifest = HELPERS.verify_packaged_resources(resources / 'codexplusplus')
 
     profile = Path(tempfile.mkdtemp(prefix='yunqiao-packaged-market-'))
     data, clients, chromium = profile / 'data', profile / 'clients', profile / 'chromium'
@@ -181,6 +182,7 @@ def main():
     checks, errors = [], []
     report = {'passed': False, 'version': args.version, 'executable': relative(executable),
               'exeSha256': HELPERS.sha256(executable), 'asarSha256': HELPERS.sha256(asar),
+              'resourceFilesVerified': len(resource_manifest),
               'profile': 'isolated temporary application, client and Chromium directories',
               'isolatedTestFlag': True, 'liveRequested': args.live,
               'scope': 'Actual packaged renderer, IPC and market downloader; rejecting local CONNECT proxy; optional read-only GitHub synchronization; no real client connection or paid requests'}

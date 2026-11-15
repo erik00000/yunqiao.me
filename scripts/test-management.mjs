@@ -7,8 +7,8 @@ import { createRequire } from 'node:module';
 import { build } from 'esbuild';
 const scratch=fs.mkdtempSync(path.join(os.tmpdir(),'yunqiao-management-'));
 const bundle=path.join(scratch,'core.cjs');
-await build({stdin:{contents:['store/index','catalog','modelManagement','gateway/server','gateway/liveUsage','actions','protocol/index'].map(p=>`export * from './src/core/${p}.ts';`).join('\n'),resolveDir:process.cwd(),loader:'ts'},bundle:true,platform:'node',format:'cjs',outfile:bundle});
-const {AuroraStore,ensureCatalog,refreshCatalog,catalogPresets,manageModels,GatewayServer,activeRequests,summarizeUsage}=createRequire(import.meta.url)(bundle);
+await build({stdin:{contents:['store/index','catalog','cloud','modelManagement','gateway/server','gateway/liveUsage','actions','protocol/index'].map(p=>`export * from './src/core/${p}.ts';`).join('\n'),resolveDir:process.cwd(),loader:'ts'},bundle:true,platform:'node',format:'cjs',outfile:bundle});
+const {AuroraStore,ensureCatalog,refreshCatalog,catalogPresets,validateCloudProvider,fetchProviderModels,manageModels,GatewayServer,activeRequests,summarizeUsage}=createRequire(import.meta.url)(bundle);
 let checks=0;function check(name,fn){fn();checks++;console.log('PASS',name);}
 let reads=0,offline=false,release,releaseCatalog,delayedStarted;
 let delayedReady=new Promise(r=>{delayedStarted=r;});
@@ -26,6 +26,24 @@ const base=`http://127.0.0.1:${upstream.address().port}`;
 const store=new AuroraStore(path.join(scratch,'data'));store.saveSettings({catalogUrl:base+'/catalog'});
 let gateway;
 try {
+ const defaults=new AuroraStore(path.join(scratch,'blank-defaults'));
+ check('A fresh profile contains no demo suppliers, routes, client connections or synthetic usage',()=>{assert.deepEqual(defaults.listProviders(),[]);assert.deepEqual(defaults.listGroups(),[]);assert.deepEqual(defaults.listAgents(),{});assert.deepEqual(defaults.readUsage(),[]);assert.deepEqual(activeRequests(defaults),[]);assert.equal(summarizeUsage(defaults.readUsage()).totals.calls,0);});
+ const custom=catalogPresets(defaults).filter(p=>['relay-openai','relay-anthropic','relay-gemini'].includes(p.id));
+ check('Custom relay templates do not supply example endpoints, credentials or invented models',()=>{
+  assert.equal(custom.length,3);
+  for(const preset of custom){assert.equal(preset.baseUrl,'');assert.equal(preset.customBaseUrl,true);assert.deepEqual(preset.models,[]);const p=defaults.saveProvider({presetId:preset.id});assert.equal(p.baseUrl,'');assert.deepEqual(p.models,[]);assert.ok(p.apiKeys.every(k=>k.key===''));}
+ });
+ check('Legacy custom catalog placeholders are cleared while real custom endpoints remain intact',()=>{
+  const template={key:'relay',name:'Custom relay',format:'openai-chat',customBaseUrl:true,models:[]};
+  for(const baseUrl of ['https://api.example.com','https://api.example.com/v1'])assert.equal(validateCloudProvider({...template,baseUrl}).baseUrl,'');
+  const cached={getSettings:()=>({catalogUrl:base+'/old-custom-directory'}),readExtra:()=>({version:1,providers:[{...template,baseUrl:'https://api.example.com/v1'}]})};
+  assert.equal(catalogPresets(cached)[0].baseUrl,'');
+  assert.equal(validateCloudProvider({...template,baseUrl:base}).baseUrl,base);
+  assert.equal(validateCloudProvider({...template,baseUrl:''}).baseUrl,'');
+  assert.throws(()=>validateCloudProvider({...template,customBaseUrl:false,baseUrl:''}),/地址/);
+ });
+ const unfinished=defaults.listProviders()[0],missingAddress=await fetchProviderModels({store:defaults},{providerId:unfinished.id});
+ check('An unfinished custom supplier asks for its actual API address before model discovery',()=>{assert.equal(missingAddress.ok,false);assert.match(missingAddress.message,/实际 API 地址/);assert.deepEqual(missingAddress.models,[]);assert.equal(defaults.getProvider(unfinished.id).baseUrl,'');});
  await Promise.all([ensureCatalog(store),ensureCatalog(store),ensureCatalog(store)]);
  check('All startup consumers share one official catalog request',()=>assert.equal(reads,1));
  check('All supplier presets use the same remote list, without appended stale vendors',()=>assert.deepEqual(catalogPresets(store).map(p=>p.id),['test']));

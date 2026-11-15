@@ -124,7 +124,7 @@ function renderConnect() {
   hero.append(el('span', 'eyebrow', 'YOUR AI, CONNECTED'), el('h1', '', 'AI 工作台，\n随手可达。'), el('p', 'muted', '连接电脑，随时查看模型、用量与会话。'));
   const form = el('form', 'card connect-form');
   const url = el('input');
-  url.type = 'url'; url.inputMode = 'url'; url.autocapitalize = 'off'; url.spellcheck = false; url.autocomplete = 'url'; url.placeholder = 'http://192.168.1.10:3425'; url.value = endpoint;
+  url.type = 'url'; url.inputMode = 'url'; url.autocapitalize = 'off'; url.spellcheck = false; url.autocomplete = 'url'; url.placeholder = '输入电脑端显示的网关地址'; url.value = endpoint;
   const token = el('input');
   token.type = 'password'; token.autocomplete = 'off'; token.placeholder = '输入网关访问令牌'; token.autocapitalize = 'off'; token.spellcheck = false;
   const error = el('p', 'form-error'); error.setAttribute('role', 'alert');

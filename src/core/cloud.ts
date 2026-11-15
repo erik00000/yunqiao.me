@@ -145,8 +145,12 @@ export function validateCloudProvider(raw: unknown): CloudProvider {
       },
     };
   }).filter((m: { id: string }) => !seen.has(m.id) && !!seen.add(m.id));
+  const customBaseUrl = p.customBaseUrl === true;
+  const baseUrl = customBaseUrl && p.baseUrl === '' ? '' : webUrl(p.baseUrl, `供应商「${p.name}」地址`);
+  // Older bundled/remote templates used this documentation host as a saved default.
+  const legacyPlaceholder = customBaseUrl && baseUrl && new URL(baseUrl).hostname === 'api.example.com';
   return {
-    key: p.key.trim(), name: p.name.trim(), format: p.format, baseUrl: p.customBaseUrl === true && p.baseUrl === '' ? '' : webUrl(p.baseUrl, `供应商「${p.name}」地址`), customBaseUrl: p.customBaseUrl === true,
+    key: p.key.trim(), name: p.name.trim(), format: p.format, baseUrl: legacyPlaceholder ? '' : baseUrl, customBaseUrl,
     vendor: optionalText(p.vendor, 160), region: optionalText(p.region, 40),
     color: typeof p.color === 'string' && /^#[\da-f]{3,8}$/i.test(p.color) ? p.color : undefined,
     icon: optionalText(p.icon, 16), docs: p.docs ? webUrl(p.docs, '文档地址') : undefined,
@@ -346,8 +350,9 @@ export function githubUpdate(data: any, current: string, target: Required<Update
 
 export function websiteUpdate(data: any, current: string, target: Required<UpdateTarget>): UpdateInfo {
   if (!data || typeof data !== 'object' || Array.isArray(data) || data.prerelease === true || data.draft === true) throw new Error('官网更新信息无效');
-  const version = releaseVersion(data.version, true).text;
   if ((data.platform !== undefined && data.platform !== target.platform) || (data.arch !== undefined && data.arch !== target.arch)) throw new Error('官网安装包的平台或架构不匹配');
+  if (data.version === '' && data.url === '' && data.hasUpdate === false) throw new Error('官网尚未发布可用版本');
+  const version = releaseVersion(data.version, true).text;
   const url = secureUpdateUrl(data.url); let assetName: string | undefined;
   if (target.platform === 'ios') {
     if (!((url.hostname === 'apps.apple.com' && /\/id\d+(?:\/)?$/.test(url.pathname)) || (url.hostname === 'testflight.apple.com' && /^\/join\/[a-zA-Z0-9]+\/?$/.test(url.pathname)))) throw new Error('当前 iOS 客户端尚无 App Store 或 TestFlight 安装入口');
