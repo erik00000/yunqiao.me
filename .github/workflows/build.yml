@@ -59,7 +59,8 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install playwright
       - run: python -m playwright install chromium
-      - run: pnpm test
+      - name: Core features and configuration regressions
+        run: node scripts/test-core-all.mjs
       - run: node scripts/test-extensions.mjs --renderer
       - run: node scripts/make-icon.mjs build
       - run: pnpm build
