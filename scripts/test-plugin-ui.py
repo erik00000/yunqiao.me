@@ -32,7 +32,8 @@ window.renderPage=(page='plugins')=>{window.page=page;const Page=page==='codex'?
             for style in ['app.css', 'workspace.css']:
                 page.add_style_tag(path=str(ROOT / 'ui/src/styles' / style))
             page.evaluate("""packages=>{
-              window.generation=0;window.calls=[];window.fail={};window.navigation='';
+              window.generation=0;window.calls=[];window.fail={};window.navigation='';window.okToasts=[];
+              new MutationObserver(records=>{for(const record of records)for(const node of record.addedNodes)if(node instanceof Element){if(node.matches('.toast.ok'))window.okToasts.push(node.textContent);for(const toast of node.querySelectorAll('.toast.ok'))window.okToasts.push(toast.textContent);}}).observe(document.getElementById('root'),{childList:true,subtree:true});
               window.ext={ok:true,upstream:{repository:'https://example.test/source',version:'2.6.9',revision:'fixture123',license:'AGPL-3.0-only'},client:{installed:true,version:'1',running:false},connection:{port:9222},runtime:{connected:false,applied:[],errors:[]},items:[...packages,
                 {id:'builtin:unsupported',name:'暂不支持功能',description:'尚未适配',source:'builtin',installed:true,enabled:true,status:'unsupported',reason:'缺少原生接口'},
                 {id:'public:new',name:'待安装插件',description:'公开插件',source:'public',installed:false,enabled:false,status:'available',version:'1',license:'MIT',tags:['special-search-tag'],requiresAuth:true,requiresRestart:true},
@@ -45,7 +46,10 @@ window.renderPage=(page='plugins')=>{window.page=page;const Page=page==='codex'?
                 window.calls.push({action,payload:structuredClone(payload)});
                 if(window.fail[action])throw new Error(window.fail[action]);
                 if(action==='extension.list')return structuredClone(window.ext);
-                if(action==='extension.refresh')return {ok:true};
+                if(action==='extension.refresh'){
+                  if(window.holdRefresh)await new Promise(resolve=>window.finishRefresh=resolve);
+                  return window.refreshResult||{ok:true,message:'插件目录已更新',results:(payload.source?[payload.source]:['public','full']).map(source=>({source,ok:true,sourceType:'remote',count:2,fetchedAt:'2026-11-15T01:00:00Z'}))};
+                }
                 if(action==='extension.configure') {if(payload.port<1024)return {ok:false,message:'调试端口无效'};return {ok:true};}
                 if(action==='extension.connect'){window.ext.runtime.connected=true;return {ok:true};}
                 if(action==='extension.disconnect'){window.ext.runtime.connected=false;return {ok:true};}
@@ -152,12 +156,79 @@ window.renderPage=(page='plugins')=>{window.page=page;const Page=page==='codex'?
             page.get_by_label('搜索桌面插件', exact=True).fill('')
             checks.append('All-market refresh includes both catalogs, source refresh is scoped, and tag search ignores surrounding spaces')
 
+            page.get_by_role('button', name='完整索引 2', exact=True).click()
+            page.evaluate("window.fail['extension.refresh']='The operation was aborted due to timeout';window.beforeSyncToasts=window.okToasts.length")
+            page.get_by_role('button', name='同步市场索引', exact=True).click()
+            sync_notice = page.get_by_role('alert', name='市场同步状态', exact=True)
+            expect(sync_notice).to_contain_text('连接插件市场超时，请检查网络或代理后重试。')
+            expect(sync_notice).to_contain_text('完整索引 · 市场索引同步失败')
+            assert 'The operation was aborted' not in sync_notice.inner_text()
+            expect(sync_notice.get_by_role('button', name='重试同步', exact=True)).to_be_visible()
+            expect(page.get_by_role('button', name='重新检测', exact=True)).to_have_count(0)
+            expect(page.locator('.extension-card')).to_have_count(2)
+            page.get_by_role('button', name='刷新状态', exact=True).click()
+            expect(sync_notice).to_contain_text('连接插件市场超时')
+            assert page.evaluate('window.okToasts.length === window.beforeSyncToasts')
+            checks.append('Market timeout is translated into Chinese, preserves the list, and stays separate from desktop/list refresh controls')
+
+            page.get_by_role('button', name='公开市场 2', exact=True).click()
+            page.evaluate("delete window.fail['extension.refresh'];window.holdRefresh=true;window.beforeSyncCalls=window.calls.filter(x=>x.action==='extension.refresh').length")
+            sync_notice.get_by_role('button', name='重试同步', exact=True).evaluate('(button)=>{button.click();button.click();}')
+            expect(page.get_by_role('button', name='同步中…', exact=True)).to_be_disabled()
+            expect(page.get_by_role('status', name='市场同步状态', exact=True)).to_contain_text('正在同步完整索引')
+            expect(page.get_by_role('button', name='刷新状态', exact=True)).to_be_disabled()
+            expect(page.locator('.extension-card')).to_have_count(2)
+            assert page.evaluate("window.calls.filter(x=>x.action==='extension.refresh').length === window.beforeSyncCalls+1")
+            assert page.evaluate("window.calls.filter(x=>x.action==='extension.refresh').at(-1).payload") == {'source': 'full'}
+            page.evaluate("window.holdRefresh=false;window.finishRefresh()")
+            expect(page.get_by_role('status', name='市场同步状态', exact=True)).to_contain_text('完整索引：已更新远端索引')
+            expect(page.get_by_role('button', name='同步市场索引', exact=True)).to_be_enabled()
+            assert page.evaluate('window.okToasts.length === window.beforeSyncToasts+1')
+            checks.append('Retry preserves the failed source after filter changes, synchronously blocks duplicate submissions, and shows an in-progress label')
+
+            page.get_by_role('button', name='全部插件', exact=True).click()
+            page.evaluate("""window.beforeSyncToasts=window.okToasts.length;window.refreshResult={ok:false,message:'部分市场未能联网',warning:'完整索引暂时无法联网',results:[{source:'public',ok:true,sourceType:'remote',count:2},{source:'full',ok:false,sourceType:'cache',count:245,fetchedAt:'2026-11-14T10:00:00Z',message:'The operation was aborted due to timeout'}]}""")
+            page.get_by_role('button', name='同步市场索引', exact=True).click()
+            expect(sync_notice).to_contain_text('部分市场索引已更新')
+            expect(sync_notice).to_contain_text('公开市场：已更新远端索引 · 2 项')
+            expect(sync_notice).to_contain_text('完整索引：使用本地缓存 · 245 项')
+            expect(sync_notice).to_contain_text('缓存时间')
+            expect(sync_notice).to_contain_text('可继续浏览已有条目')
+            expect(page.locator('.extension-card')).to_have_count(10)
+            assert page.evaluate('window.okToasts.length === window.beforeSyncToasts')
+            checks.append('Partial market synchronization displays the updated source and dated usable cache without reporting full success')
+
+            page.evaluate("""window.refreshResult={ok:true,message:'目录请求已完成',results:[{source:'public',ok:false,sourceType:'builtin',count:130},{source:'full',ok:false,sourceType:'cache',count:245,message:'Failed to fetch'}]}""")
+            sync_notice.get_by_role('button', name='重试同步', exact=True).click()
+            expect(sync_notice).to_contain_text('市场索引暂未更新')
+            expect(sync_notice).to_contain_text('公开市场：使用随附离线索引 · 130 项')
+            expect(sync_notice).to_contain_text('完整索引：使用本地缓存 · 245 项')
+            expect(sync_notice).to_contain_text('暂时无法连接插件市场')
+            assert page.evaluate('window.okToasts.length === window.beforeSyncToasts')
+            checks.append('Offline cache and bundled indexes stay usable; per-source failure overrides an inconsistent top-level success flag')
+
+            page.evaluate("window.refreshResult={ok:true,message:'目录已完成'}")
+            sync_notice.get_by_role('button', name='重试同步', exact=True).click()
+            expect(sync_notice).to_contain_text('已保留可用的本地索引和当前插件列表')
+            assert page.evaluate('window.okToasts.length === window.beforeSyncToasts')
+            page.evaluate("delete window.refreshResult;window.fail['extension.list']='本地列表暂不可读'")
+            sync_notice.get_by_role('button', name='重试同步', exact=True).click()
+            expect(page.get_by_role('status', name='市场同步状态', exact=True)).to_contain_text('市场索引已同步')
+            expect(page.get_by_role('alert')).to_contain_text('插件列表刷新失败：本地列表暂不可读')
+            expect(page.get_by_role('button', name='重试同步', exact=True)).to_have_count(0)
+            expect(page.locator('.extension-card')).to_have_count(10)
+            assert page.evaluate('window.okToasts.length === window.beforeSyncToasts')
+            page.evaluate("delete window.fail['extension.list']")
+            page.get_by_role('button', name='刷新列表', exact=True).click()
+            expect(page.get_by_role('alert')).to_have_count(0)
+            checks.append('Incomplete results never claim synchronization; a successful remote update with a failed local list refresh offers the correct separate retry')
+
             page.evaluate("window.fail['extension.list']='插件列表暂不可读'")
             page.get_by_role('button', name='刷新状态', exact=True).click()
             expect(page.get_by_role('alert')).to_contain_text('插件列表暂不可读')
             expect(page.locator('.extension-card')).to_have_count(10)
             page.evaluate("delete window.fail['extension.list']")
-            page.get_by_role('button', name='重新检测', exact=True).click()
+            page.get_by_role('button', name='刷新列表', exact=True).click()
             expect(page.get_by_role('alert')).to_have_count(0)
             checks.append('A failed plugin list refresh retains visible installed entries and can recover without restarting')
 

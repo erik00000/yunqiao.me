@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Btn, Empty, Field, Ico, Modal, Toggle, useToast } from '../components/ui';
 import { call } from '../lib/api';
 
@@ -15,6 +15,13 @@ interface ExtensionState {
   items: ExtensionItem[]; connection: { port: number; exePath?: string; lastVersion?: string };
   runtime: { connected: boolean; targetTitle?: string; targetUrl?: string; applied?: number | string[]; errors?: any[] };
 }
+type MarketSource = 'public' | 'full';
+interface MarketRefreshResult {
+  source: MarketSource; ok: boolean; sourceType: 'remote' | 'cache' | 'builtin';
+  message?: string; count?: number; fetchedAt?: string;
+}
+interface MarketRefreshResponse { ok: boolean; message?: string; warning?: string; results?: MarketRefreshResult[] }
+interface MarketSyncState { source?: MarketSource; pending: boolean; complete: boolean; message: string; warning?: string; results: MarketRefreshResult[] }
 const SOURCES: Record<string, string> = { all: '全部插件', builtin: '内置增强', bundled: '官方拓展包', public: '公开市场', full: '完整索引', installed: '已安装' };
 const STATUS: Record<string, string> = { available: '可安装', installed: '已安装', active: '已生效', 'needs-connection': '等待连接', unsupported: '暂不兼容', error: '运行异常' };
 const packageLimitations = (id: string) => id === 'bundled:agent-pet' ? '支持随附图片、动图与音效。自定义音效导入、大肥鱼余额及专项统计尚未接入。' : '';
@@ -24,13 +31,25 @@ const PACKAGE_DESCRIPTIONS: Record<string, string> = {
 };
 const packageDescription = (item: ExtensionItem) => PACKAGE_DESCRIPTIONS[item.id] || item.description;
 const unsupportedPetField = (key: string) => /^codexAppWhaleBalance/.test(key) || ['customSoundPress', 'customSoundRelease'].includes(key);
+function syncMessage(value: unknown): string {
+  const message = typeof value === 'string' ? value : value instanceof Error ? value.message : '';
+  if (/[\u3400-\u9fff]/.test(message)) return message;
+  if (/timeout|timed out|超时/i.test(message)) return '连接插件市场超时，请检查网络或代理后重试。';
+  if (/abort/i.test(message)) return '同步请求已中断，请稍后重试。';
+  if (/fetch failed|failed to fetch|network error|ECONN|ENOTFOUND/i.test(message)) return '暂时无法连接插件市场，请检查网络或代理后重试。';
+  return message || '暂时无法更新插件市场，请稍后重试。';
+}
 
 export default function DesktopExtensions() {
   const [state, setState] = useState<ExtensionState | null>(null);
   const [source, setSource] = useState('all');
   const [query, setQuery] = useState('');
   const [error, setError] = useState('');
+  const [listError, setListError] = useState('');
+  const [sync, setSync] = useState<MarketSyncState | null>(null);
   const [busy, setBusy] = useState('');
+  const operation = useRef('');
+  const loadSequence = useRef(0);
   const [loading, setLoading] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [path, setPath] = useState('');
@@ -43,20 +62,25 @@ export default function DesktopExtensions() {
   const desktop = !!window.aurora;
   const toast = useToast();
   async function load(clearError = true) {
-    if (!desktop) { setLoading(false); return; }
+    if (!desktop) { setLoading(false); return false; }
+    const sequence = ++loadSequence.current;
     setLoading(true);
     try {
       const r = await call<ExtensionState>('extension.list');
       if (!r.ok) throw new Error(r.message || '无法读取插件库');
+      if (sequence !== loadSequence.current) return false;
+      setListError('');
       setState(r); if (clearError) setError('');
-    } catch (e: any) { setError(e.message || String(e)); }
-    finally { setLoading(false); }
+      return true;
+    } catch (e: any) { if (sequence === loadSequence.current) setListError(e.message || String(e)); return false; }
+    finally { if (sequence === loadSequence.current) setLoading(false); }
   }
-  useEffect(() => { load(); }, []);
+  useEffect(() => { void load(); return () => { loadSequence.current++; }; }, []);
   useEffect(() => setVisibleCount(60), [source, query]);
   useEffect(() => setAcknowledgeVersion(false), [state?.client?.version]);
   async function action(name: string, payload: any = {}, id = name) {
-    if (busy) return;
+    if (operation.current) return;
+    operation.current = id;
     setBusy(id); setError('');
     try {
       const r = await call(name, payload);
@@ -64,7 +88,26 @@ export default function DesktopExtensions() {
       await load(false);
       toast.push(r.message || '操作已保存，请查看插件状态', 'ok'); return r;
     } catch (e: any) { const message = e.message || String(e); await load(false); setError(message); return null; }
-    finally { setBusy(''); }
+    finally { operation.current = ''; setBusy(''); }
+  }
+  async function refreshMarkets(target?: MarketSource) {
+    if (operation.current) return;
+    operation.current = 'extension.refresh'; setBusy('extension.refresh');
+    setSync({ source: target, pending: true, complete: false, message: `正在同步${target ? SOURCES[target] : '公开市场与完整索引'}…`, results: [] });
+    try {
+      const response = await call<MarketRefreshResponse>('extension.refresh', target ? { source: target } : {});
+      const results = Array.isArray(response.results) ? response.results : [];
+      const expected: MarketSource[] = target ? [target] : ['public', 'full'];
+      const complete = response.ok === true && !response.warning && expected.every(source => results.some(result => result.source === source && result.ok && result.sourceType === 'remote'));
+      const updated = results.some(result => result.ok && result.sourceType === 'remote');
+      setSync({ source: target, pending: false, complete, results,
+        message: complete ? '市场索引已同步' : updated ? '部分市场索引已更新' : '市场索引暂未更新',
+        warning: !complete && !results.length ? '未收到完整同步结果，已保留当前插件列表。' : response.warning ? syncMessage(response.warning) : !complete && response.message ? syncMessage(response.message) : undefined });
+      const loaded = await load(false);
+      if (complete && loaded) toast.push('市场索引已同步', 'ok');
+    } catch (e: unknown) {
+      setSync({ source: target, pending: false, complete: false, message: '市场索引同步失败', warning: syncMessage(e), results: [] });
+    } finally { operation.current = ''; setBusy(''); }
   }
   const list = useMemo(() => (state?.items || []).filter(i => (source === 'all' || source === 'installed' ? source !== 'installed' || i.installed : i.source === source) && `${i.name} ${i.description} ${i.id} ${(i.tags || []).join(' ')}`.toLowerCase().includes(query.trim().toLowerCase())), [state, source, query]);
   const counts = (state?.items || []).reduce<Record<string, number>>((v, i) => { v[i.source] = (v[i.source] || 0) + 1; if (i.installed) v.installed = (v.installed || 0) + 1; return v; }, {});
@@ -86,10 +129,18 @@ export default function DesktopExtensions() {
       </div>
       {state?.client?.versionChanged && !connected && <div className="notice warning"><label className="checkbox-label"><input type="checkbox" checked={acknowledgeVersion} onChange={e => setAcknowledgeVersion(e.target.checked)} />客户端已更新到 {state.client.version}。确认重新检测插件兼容性并连接此版本。</label></div>}
       {error && !editing && !settingsOpen && !detail && <div className="notice warning" role="alert">{error}<div className="grow" /><Btn size="sm" disabled={!!busy} onClick={load}>重新检测</Btn></div>}
+      {listError && <div className="notice warning" role="alert">插件列表刷新失败：{listError}<div className="grow" /><Btn size="sm" disabled={!!busy || loading} onClick={() => load(false)}>刷新列表</Btn></div>}
       {errors.length > 0 && <details className="notice warning" style={{ display: 'block' }}><summary>有 {errors.length} 个扩展未能生效，查看原因</summary>{errors.map((e, i) => <p key={i}>{typeof e === 'string' ? e : `${e.id || e.name || ''}：${e.message || e.error || '运行失败'}`}</p>)}</details>}
       <div className="extension-banner"><div><div className="eyebrow">云桥桌面扩展</div><h3>为你的桌面工作空间添加更多能力</h3><p>管理内置增强、拓展包与市场插件，查看兼容状态和实际运行结果。</p></div><div className="extension-totals"><div><strong>{counts.builtin || 0}</strong><small>内置增强</small></div><div><strong>{counts.bundled || 0}</strong><small>拓展包</small></div><div><strong>{counts.installed || 0}</strong><small>已安装</small></div></div></div>
       <div className="filter-bar"><div className="segments">{Object.entries(SOURCES).map(([id, label]) => <button key={id} className={source === id ? 'selected' : ''} onClick={() => setSource(id)}>{label}{id !== 'all' && counts[id] ? ` ${counts[id]}` : ''}</button>)}</div></div>
-      <div className="repair-toolbar"><div className="search-input"><Ico name="search" size={14} /><input aria-label="搜索桌面插件" value={query} onChange={e => setQuery(e.target.value)} placeholder="搜索插件名称、功能或标签…" style={{ width: 240 }} /></div><span className="muted">{list.length} 项</span><div className="grow" /><Btn size="sm" disabled={!!busy} onClick={() => action('extension.refresh', source === 'full' || source === 'public' ? { source } : {})}><Ico name="cloud" size={13} />同步市场索引</Btn><Btn size="sm" disabled={!!busy || loading} onClick={load}><Ico name="refresh" size={13} />刷新状态</Btn></div>
+      <div className="repair-toolbar"><div className="search-input"><Ico name="search" size={14} /><input aria-label="搜索桌面插件" value={query} onChange={e => setQuery(e.target.value)} placeholder="搜索插件名称、功能或标签…" style={{ width: 240 }} /></div><span className="muted">{list.length} 项</span><div className="grow" /><Btn size="sm" disabled={!!busy} onClick={() => refreshMarkets(source === 'full' || source === 'public' ? source : undefined)}><Ico name="cloud" size={13} />{busy === 'extension.refresh' ? '同步中…' : '同步市场索引'}</Btn><Btn size="sm" disabled={!!busy || loading} onClick={load}><Ico name="refresh" size={13} />刷新状态</Btn></div>
+      {sync && <div className={`notice ${!sync.pending && !sync.complete ? 'warning' : ''}`} role={!sync.pending && !sync.complete ? 'alert' : 'status'} aria-label="市场同步状态" style={{ alignItems: 'flex-start' }}>
+        <div className="grow"><b>{sync.source ? SOURCES[sync.source] : '公开市场与完整索引'} · {sync.message}</b>{sync.warning && <p>{sync.warning}</p>}
+          {sync.results.map(result => <p key={result.source}><b>{SOURCES[result.source]}：</b>{result.ok && result.sourceType === 'remote' ? '已更新远端索引' : result.sourceType === 'cache' ? '使用本地缓存' : result.sourceType === 'builtin' ? '使用随附离线索引' : '暂未更新'}{typeof result.count === 'number' ? ` · ${result.count} 项` : ''}{result.fetchedAt && Number.isFinite(Date.parse(result.fetchedAt)) ? ` · 缓存时间 ${new Date(result.fetchedAt).toLocaleString('zh-CN', { hour12: false })}` : ''}{result.message ? ` · ${syncMessage(result.message)}` : ''}</p>)}
+          {!sync.complete && <p>{sync.pending ? '同步期间可继续浏览当前插件列表。' : '已保留可用的本地索引和当前插件列表，可继续浏览已有条目。'}</p>}
+        </div>
+        {!sync.pending && !sync.complete && <Btn size="sm" disabled={!!busy} onClick={() => refreshMarkets(sync.source)}>重试同步</Btn>}
+      </div>}
       {loading && !state ? <div className="client-grid">{[1, 2, 3].map(i => <div className="skeleton" style={{ height: 230 }} key={i} />)}</div> : <div className="client-grid extension-grid">{list.slice(0, visibleCount).map(item => <article className={`extension-card ${item.enabled ? 'enabled' : ''}`} key={item.id}>
         <div className="row"><span className={`extension-icon source-${item.source}`}><Ico name={item.source === 'builtin' ? 'bolt' : item.source === 'bundled' ? 'puzzle' : 'cube'} size={23} /></span><div className="grow" /><span className={`chip ${item.status === 'active' ? 'ok' : item.status === 'error' || item.status === 'unsupported' ? 'warn' : ''}`}>{STATUS[item.status] || item.status}</span></div>
         <h3>{item.name}</h3><p className="extension-description" title={packageDescription(item)}>{packageDescription(item) || '暂无插件描述'}</p>

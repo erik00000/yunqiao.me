@@ -4,10 +4,12 @@ import os from 'node:os';
 import { createHash, randomBytes } from 'node:crypto';
 import type { AuroraStore } from '../store/index.js';
 import { applyPlan, patchToml, planned, readText } from '../agents/configFiles.js';
+import { openUpstream } from '../gateway/upstream.js';
 
 export type MarketSource = 'public' | 'full';
 export interface MarketEntry { id: string; name: string; displayName: string; description: string; version: string; author: string; tags: string[]; license: string; path: string; tree: string; bytes: number; skills: number; requiresAuth: boolean; catalogMissing?: boolean }
-export interface MarketIndex { schemaVersion: number; repository: string; revision: string; updatedAt: string; plugins: MarketEntry[] }
+export interface MarketIndex { schemaVersion: number; repository: string; revision: string; updatedAt: string; plugins: MarketEntry[]; fetchedAt?: string; remoteBlobSha?: string; cacheContentSha256?: string }
+export interface MarketRefreshResult { source: MarketSource; ok: boolean; sourceType: 'remote' | 'cache' | 'builtin'; message: string; count: number; fetchedAt?: string }
 export interface NativeInstall { source: MarketSource; id: string; name: string; version: string; tree: string; revision: string; enabled: boolean; installedAt: string; license: string }
 export const REPOSITORIES = { public: 'BigPizzaV3/CodexPlusPlusPluginCache', full: 'BigPizzaV3/CodexPlusPlusFullPluginCache' };
 export function resourceRoot(): string {
@@ -29,25 +31,126 @@ export function validateIndex(value: any, source: MarketSource): MarketIndex {
   }
   return value;
 }
-async function download(url: string, max: number): Promise<Buffer> {
-  const u = new URL(url); if (u.protocol !== 'https:' || !['raw.githubusercontent.com', 'api.github.com'].includes(u.hostname)) throw new Error('插件来源必须是配置的 GitHub 公开仓库');
-  const r = await fetch(u, { signal: AbortSignal.timeout(45000), redirect: 'error', headers: { 'User-Agent': 'Aurora-Desktop-Extensions', Accept: 'application/vnd.github+json' } });
-  if (!r.ok) throw new Error(`插件下载失败：HTTP ${r.status}${r.status === 403 ? '，GitHub 公开 API 可能达到速率限制，请稍后重试' : ''}`);
-  if (Number(r.headers.get('content-length')) > max) throw new Error('插件文件超过大小限制');
-  if (!r.body) throw new Error('插件下载为空'); const chunks: Buffer[] = []; let total = 0;
-  for await (const chunk of r.body as any) { total += chunk.length; if (total > max) throw new Error('插件文件超过大小限制'); chunks.push(Buffer.from(chunk)); }
-  return Buffer.concat(chunks);
+class MarketDownloadError extends Error {}
+function marketError(error: unknown): string {
+  if (error instanceof MarketDownloadError) return error.message;
+  if (/timeout|timed out|abort|cancel/i.test(String((error as Error)?.message) + String((error as Error)?.name))) return '连接插件市场超时，请检查网络或在系统设置中配置 HTTP(S) 代理后重试';
+  return '无法连接插件市场，请检查网络或系统设置中的 HTTP(S) 代理后重试';
 }
-export function loadIndex(store: AuroraStore, source: MarketSource): MarketIndex {
+async function download(store: AuroraStore, url: string, max: number, options: { signal?: AbortSignal; accept?: string; timeoutMs?: number } = {}): Promise<Buffer> {
+  const u = new URL(url); if (u.protocol !== 'https:' || u.username || u.password || !['raw.githubusercontent.com', 'api.github.com'].includes(u.hostname)) throw new MarketDownloadError('插件来源必须是配置的 GitHub 公开仓库');
+  const controller = new AbortController(), timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 45000);
+  const abort = () => controller.abort(); options.signal?.addEventListener('abort', abort, { once: true });
+  if (options.signal?.aborted) controller.abort();
+  const headers = { 'User-Agent': 'YunQiao-Desktop-Extensions', Accept: options.accept || 'application/vnd.github+json' };
+  let dispose: (() => void) | undefined;
+  try {
+    const proxy = store.getSettings().proxy;
+    let status: number, length: string | undefined | null, body: AsyncIterable<Uint8Array> | null;
+    if (proxy) {
+      // Explicit proxy settings must also cover CONNECT, response streaming and cancellation.
+      const response = await openUpstream(url, { method: 'GET', proxy, headers, signal: controller.signal, timeoutMs: options.timeoutMs ?? 45000 });
+      status = response.status; length = response.headers['content-length']; body = response.raw;
+      dispose = () => response.raw.destroy();
+    } else {
+      const response = await fetch(u, { signal: controller.signal, redirect: 'error', headers });
+      status = response.status; length = response.headers.get('content-length'); body = response.body as unknown as AsyncIterable<Uint8Array> | null;
+      dispose = () => { void response.body?.cancel().catch(() => {}); };
+    }
+    if (status < 200 || status >= 300) throw new MarketDownloadError(`插件下载失败：HTTP ${status}${[403, 429].includes(status) ? '，GitHub 公开 API 可能达到速率限制，请稍后重试' : status === 407 ? '，请检查代理认证设置' : ''}`);
+    if (Number(length) > max) throw new MarketDownloadError('插件文件超过大小限制');
+    if (!body) throw new MarketDownloadError('插件下载为空');
+    const chunks: Buffer[] = []; let total = 0;
+    for await (const chunk of body) { total += chunk.length; if (total > max) throw new MarketDownloadError('插件文件超过大小限制'); chunks.push(Buffer.from(chunk)); }
+    return Buffer.concat(chunks);
+  } catch (error) { throw new MarketDownloadError(marketError(error)); }
+  finally { dispose?.(); clearTimeout(timer); options.signal?.removeEventListener('abort', abort); }
+}
+function cacheContentHash(index: MarketIndex): string {
+  const { fetchedAt, remoteBlobSha, cacheContentSha256, ...content } = index;
+  return createHash('sha256').update(JSON.stringify(content)).digest('hex');
+}
+function localIndex(store: AuroraStore, source: MarketSource): { index: MarketIndex; sourceType: 'cache' | 'builtin'; blobSha: string } {
   if (!Object.hasOwn(REPOSITORIES, source)) throw new Error('未知插件市场');
   const cached = store.readExtra<any>(`extension-catalog-${source}.json`, null);
-  if (cached) try { return validateIndex(cached, source); } catch { /* Packaged snapshot remains available. */ }
-  return validateIndex(JSON.parse(fs.readFileSync(path.join(resourceRoot(), 'catalog', `${source}.json`), 'utf8')), source);
+  if (cached) try {
+    const index = validateIndex(cached, source);
+    const blobSha = /^[a-f0-9]{40}$/.test(index.remoteBlobSha || '') && index.cacheContentSha256 === cacheContentHash(index)
+      ? index.remoteBlobSha! : gitBlobHash(fs.readFileSync(path.join(store.dir, `extension-catalog-${source}.json`)));
+    return { index, sourceType: 'cache', blobSha };
+  } catch { /* Packaged snapshot remains available. */ }
+  const bytes = fs.readFileSync(path.join(resourceRoot(), 'catalog', `${source}.json`));
+  return { index: validateIndex(JSON.parse(bytes.toString('utf8')), source), sourceType: 'builtin', blobSha: gitBlobHash(bytes) };
 }
-export async function refreshIndex(store: AuroraStore, source: MarketSource): Promise<MarketIndex> {
-  if (!Object.hasOwn(REPOSITORIES, source)) throw new Error('未知插件市场');
-  const data = await download(`https://raw.githubusercontent.com/${REPOSITORIES[source]}/main/plugin-index.json`, 24 * 1024 * 1024);
-  const index = validateIndex(JSON.parse(data.toString('utf8')), source); store.writeExtra(`extension-catalog-${source}.json`, index); return index;
+export function loadIndex(store: AuroraStore, source: MarketSource): MarketIndex { return localIndex(store, source).index; }
+const refreshJobs = new Map<string, Promise<MarketIndex>>();
+const INDEX_LIMIT = 24 * 1024 * 1024;
+// A changed full catalog can exceed 4 MB. Bound the complete operation, including the body.
+const REFRESH_TIMEOUT_MS = 120000;
+function parseIndex(bytes: Buffer, source: MarketSource): MarketIndex {
+  try { return { ...validateIndex(JSON.parse(bytes.toString('utf8')), source), remoteBlobSha: gitBlobHash(bytes) }; }
+  catch { throw new MarketDownloadError('远端插件目录格式或来源校验失败，已保留本地目录'); }
+}
+async function fetchIndex(store: AuroraStore, source: MarketSource): Promise<MarketIndex> {
+  const previous = localIndex(store, source), controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REFRESH_TIMEOUT_MS);
+  const options = { signal: controller.signal, timeoutMs: REFRESH_TIMEOUT_MS };
+  let startAlternate!: () => void;
+  const alternateReady = new Promise<void>(resolve => { startAlternate = resolve; });
+  const alternateTimer = setTimeout(startAlternate, 1000);
+  // Begin with raw; a blocked raw host must not delay the independent GitHub API route.
+  const primary = download(store, `https://raw.githubusercontent.com/${REPOSITORIES[source]}/main/plugin-index.json`, INDEX_LIMIT, { ...options, timeoutMs: 8000 })
+    .then(bytes => parseIndex(bytes, source)).catch(error => { startAlternate(); throw error; });
+  const alternate = (async () => {
+    await alternateReady;
+    if (controller.signal.aborted) throw new MarketDownloadError('插件同步请求已取消');
+    const url = `https://api.github.com/repos/${REPOSITORIES[source]}/contents/plugin-index.json?ref=main`;
+    // GitHub embeds base64 content for files below 1 MB, so JSON can exceed 1 MB.
+    const bytes = await download(store, url, 2 * 1024 * 1024, options);
+    let metadata: { type: string; path: string; sha: string; size: number; encoding?: string; content?: string };
+    try { metadata = JSON.parse(bytes.toString('utf8')); } catch { throw new MarketDownloadError('GitHub 插件目录元数据格式无效'); }
+    if (!metadata || metadata.type !== 'file' || metadata.path !== 'plugin-index.json' || !/^[a-f0-9]{40}$/.test(metadata.sha) || !Number.isSafeInteger(metadata.size) || metadata.size < 1) throw new MarketDownloadError('GitHub 插件目录元数据无效');
+    if (metadata.size > INDEX_LIMIT) throw new MarketDownloadError('插件文件超过大小限制');
+    // The digest belongs to bytes previously validated locally, never an arbitrary download_url.
+    if (metadata.sha === previous.blobSha) return { ...previous.index, remoteBlobSha: metadata.sha };
+    const data = metadata.encoding === 'base64' && typeof metadata.content === 'string' && metadata.size <= 1024 * 1024
+      ? Buffer.from(metadata.content, 'base64')
+      : await download(store, url, INDEX_LIMIT, { ...options, accept: 'application/vnd.github.raw+json' });
+    if (data.length !== metadata.size || gitBlobHash(data) !== metadata.sha) throw new MarketDownloadError('远端插件目录文件校验失败，请稍后重试');
+    return parseIndex(data, source);
+  })();
+  let index: MarketIndex;
+  try { index = await Promise.any([primary, alternate]); }
+  catch (error) {
+    const messages = error instanceof AggregateError ? [...new Set(error.errors.map(marketError))] : [marketError(error)];
+    throw new MarketDownloadError(messages.join('；'));
+  } finally { clearTimeout(timer); clearTimeout(alternateTimer); controller.abort(); startAlternate(); }
+  index = { ...index, fetchedAt: new Date().toISOString(), cacheContentSha256: cacheContentHash(index) };
+  // Persistence is outside the network attempts: a failed write must not trigger another download.
+  try { store.writeExtra(`extension-catalog-${source}.json`, index); }
+  catch { throw new MarketDownloadError('已连接远端，但无法保存插件目录，请检查本地磁盘空间和目录权限后重试'); }
+  return index;
+}
+export function refreshIndex(store: AuroraStore, source: MarketSource): Promise<MarketIndex> {
+  if (!Object.hasOwn(REPOSITORIES, source)) return Promise.reject(new Error('未知插件市场'));
+  const key = `${path.resolve(store.dir)}:${source}`, pending = refreshJobs.get(key); if (pending) return pending;
+  const job = fetchIndex(store, source).finally(() => refreshJobs.delete(key)); refreshJobs.set(key, job); return job;
+}
+export async function refreshMarkets(store: AuroraStore, sources: MarketSource[]): Promise<{ ok: boolean; message: string; warning?: string; results: MarketRefreshResult[] }> {
+  if (!sources.length || sources.some(source => !Object.hasOwn(REPOSITORIES, source))) throw new Error('未知插件市场');
+  const results = await Promise.all([...new Set(sources)].map(async (source): Promise<MarketRefreshResult> => {
+    try {
+      const index = await refreshIndex(store, source);
+      return { source, ok: true, sourceType: 'remote', count: index.plugins.length, fetchedAt: index.fetchedAt, message: '已与远端核对，当前目录为最新版本' };
+    } catch (error) {
+      const local = localIndex(store, source);
+      return { source, ok: false, sourceType: local.sourceType, count: local.index.plugins.length, fetchedAt: local.index.fetchedAt,
+        message: `${marketError(error)}；继续使用${local.sourceType === 'cache' ? '本地缓存' : '随附离线目录'}` };
+    }
+  }));
+  const ok = results.every(result => result.ok), some = results.some(result => result.ok);
+  return { ok, message: ok ? '插件市场索引已同步' : some ? '部分市场索引已更新，其余继续使用本地目录' : '插件市场暂未更新，继续使用本地目录',
+    ...(ok ? {} : { warning: '请查看各市场结果；检查网络或代理后可重试同步。' }), results };
 }
 export function gitBlobHash(data: Buffer): string { return createHash('sha1').update(Buffer.from(`blob ${data.length}\0`)).update(data).digest('hex'); }
 export interface GitEntry { path: string; mode: string; type: string; sha: string; size?: number }
@@ -130,7 +233,7 @@ export function nativeInstallStatus(store: AuroraStore, source: MarketSource, id
 async function doInstallNative(store: AuroraStore, source: MarketSource, id: string): Promise<NativeInstall> {
   const index = loadIndex(store, source); const p = index.plugins.find(x => x.id === id); if (!p) throw new Error('目录中没有此插件');
   const current = installedPlugins(store); const key = nativeKey(source, id);
-  const tree = JSON.parse((await download(`https://api.github.com/repos/${index.repository}/git/trees/${p.tree}?recursive=1`, 8 * 1024 * 1024)).toString('utf8'));
+  const tree = JSON.parse((await download(store, `https://api.github.com/repos/${index.repository}/git/trees/${p.tree}?recursive=1`, 8 * 1024 * 1024)).toString('utf8'));
   if (tree.truncated || tree.sha !== p.tree || !Array.isArray(tree.tree)) throw new Error('GitHub 返回了不完整的插件树');
   const files = verifyTree(tree.tree, p.tree);
   const root = marketRoot(store, source, id); fs.mkdirSync(root, { recursive: true });
@@ -139,7 +242,7 @@ async function doInstallNative(store: AuroraStore, source: MarketSource, id: str
   let cursor = 0;
   try {
     const downloads = await Promise.allSettled(Array.from({ length: Math.min(8, files.length) }, async () => {
-      while (cursor < files.length) { const e = files[cursor++]; const suffix = `${p.path}/${e.path}`.split('/').map(encodeURIComponent).join('/'); const data = await download(`https://raw.githubusercontent.com/${index.repository}/${index.revision}/${suffix}`, 16 * 1024 * 1024);
+      while (cursor < files.length) { const e = files[cursor++]; const suffix = `${p.path}/${e.path}`.split('/').map(encodeURIComponent).join('/'); const data = await download(store, `https://raw.githubusercontent.com/${index.repository}/${index.revision}/${suffix}`, 16 * 1024 * 1024);
         if (data.length !== e.size || gitBlobHash(data) !== e.sha) throw new Error(`插件文件校验失败：${e.path}`);
         const destination = path.join(temp, ...e.path.split('/')); fs.mkdirSync(path.dirname(destination), { recursive: true }); fs.writeFileSync(destination, data, { mode: e.mode === '100755' ? 0o700 : 0o600, flag: 'wx' });
       }

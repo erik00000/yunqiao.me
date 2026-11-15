@@ -3,7 +3,7 @@ import path from 'node:path';
 import { DesktopCdp, desktopInfo, openDesktopConnection } from '../injector.js';
 import type { AuroraStore } from '../store/index.js';
 import { BUILTINS, BUNDLED, effectiveEntry, loadState, saveState, manifest, validatePackageConfig, type ExtensionState } from './catalog.js';
-import { resourceRoot, loadIndex, managedIndex, refreshIndex, installNative, installedPlugins, nativeKey, nativeRequest, nativeInstallStatus, packagePresent } from './market.js';
+import { resourceRoot, loadIndex, managedIndex, refreshMarkets, installNative, installedPlugins, nativeKey, nativeRequest, nativeInstallStatus, packagePresent } from './market.js';
 import { enhanceUsageSource, threadUsage } from './usage.js';
 import { activeRequests } from '../gateway/liveUsage.js';
 import { extensionClientConfig } from './clientConfig.js';
@@ -143,7 +143,15 @@ export class ExtensionRuntime{
     if(route==='/whale/media'){const dir=path.join(resourceRoot(),'assets','inject','upstream','whale-widget'),assets:Record<string,string>={};for(const f of fs.readdirSync(dir))if(mime[path.extname(f)])assets[f]=dataUrl(path.join(dir,f));return{status:'ok',image:assets['DSniang1.png'],assets};}
     if(['/whale/full','/whale/history','/whale/session'].includes(route))return{status:'unavailable',balance:null,usage:null,message:'此供应商未提供余额/大肥鱼统计接口；实时用量请查看用量状态栏'};
     if(route==='/plugin-market/native')return nativeRequest(this.store,payload);
-    if(route==='/plugin-market/list'){const source=payload.source==='public'?'public':'full',index=managedIndex(this.store,source,payload.refresh===true?await refreshIndex(this.store,source):loadIndex(this.store,source)),installed=installedPlugins(this.store);return{status:'ok',...index,source,plugins:index.plugins.map(p=>{const saved=installed[nativeKey(source,p.id)];return{...p,installed:!!saved,installedVersion:saved?.version,updateAvailable:!p.catalogMissing&&!!saved&&(saved.tree!==p.tree||!packagePresent(this.store,saved)),enabled:saved?.enabled||false};})};}
+    if(route==='/plugin-market/list'){
+      if(payload.source!==undefined&&!['public','full'].includes(payload.source))throw new Error('未知插件市场');
+      const source=payload.source==='public'?'public':'full';
+      const refresh=payload.refresh===true?await refreshMarkets(this.store,[source]):undefined;
+      const index=managedIndex(this.store,source,loadIndex(this.store,source)),installed=installedPlugins(this.store);
+      return{status:'ok',...index,source,refresh,cached:refresh?.ok===false,
+        message:refresh?.results[0]?.message,warning:refresh?.ok===false?refresh.results[0]?.message:undefined,
+        plugins:index.plugins.map(p=>{const saved=installed[nativeKey(source,p.id)];return{...p,installed:!!saved,installedVersion:saved?.version,updateAvailable:!p.catalogMissing&&!!saved&&(saved.tree!==p.tree||!packagePresent(this.store,saved)),enabled:saved?.enabled||false};})};
+    }
     if(route==='/plugin-market/install'){const source=payload.source==='public'?'public':'full';await installNative(this.store,source,String(payload.id));return nativeInstallStatus(this.store,source,String(payload.id));}
     if(route==='/plugin-market/install-status'){const source=payload.source==='public'?'public':'full';return nativeInstallStatus(this.store,source,String(payload.id));}
     if(route==='/user-scripts/set-config')return extensionOperation(this.store,async()=>{

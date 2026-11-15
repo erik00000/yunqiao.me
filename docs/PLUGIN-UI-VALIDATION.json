@@ -1,6 +1,6 @@
 {
   "passed": true,
-  "count": 17,
+  "count": 22,
   "checks": [
     "All five bundled packages use product-facing descriptions while retaining their original license in details",
     "Real upstream format:file exposes the image chooser; picker and validation failures remain inside the open modal",
@@ -9,6 +9,11 @@
     "Pet settings disclose backend limitations and expose only supported native sound choices",
     "Legacy unsupported enhancements can be disabled while unsupported enabling stays blocked",
     "All-market refresh includes both catalogs, source refresh is scoped, and tag search ignores surrounding spaces",
+    "Market timeout is translated into Chinese, preserves the list, and stays separate from desktop/list refresh controls",
+    "Retry preserves the failed source after filter changes, synchronously blocks duplicate submissions, and shows an in-progress label",
+    "Partial market synchronization displays the updated source and dated usable cache without reporting full success",
+    "Offline cache and bundled indexes stay usable; per-source failure overrides an inconsistent top-level success flag",
+    "Incomplete results never claim synchronization; a successful remote update with a failed local list refresh offers the correct separate retry",
     "A failed plugin list refresh retains visible installed entries and can recover without restarting",
     "Market installation remains disabled until explicit enabling and preserves authorization and restart notices",
     "Installed version, update and missing-package repair actions follow the backend contract",

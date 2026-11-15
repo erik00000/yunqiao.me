@@ -1,0 +1,95 @@
+{
+  "checkedAt": "2026-11-15T04:38:42.299Z",
+  "runtime": "v24.18.0",
+  "scope": "Public GitHub requests with isolated temporary application and client directories; unchanged catalog fingerprints; no account credentials or client mutations.",
+  "rounds": [
+    {
+      "round": 1,
+      "elapsedMs": 7680,
+      "result": {
+        "ok": true,
+        "message": "插件市场索引已同步",
+        "results": [
+          {
+            "source": "public",
+            "ok": true,
+            "sourceType": "remote",
+            "count": 520,
+            "fetchedAt": "2026-11-15T04:38:49.884Z",
+            "message": "已与远端核对，当前目录为最新版本"
+          },
+          {
+            "source": "full",
+            "ok": true,
+            "sourceType": "remote",
+            "count": 5491,
+            "fetchedAt": "2026-11-15T04:38:44.141Z",
+            "message": "已与远端核对，当前目录为最新版本"
+          }
+        ]
+      },
+      "catalogs": [
+        {
+          "source": "public",
+          "count": 520,
+          "revision": "1c13d7180da9717bb5b8b35fdb40261290bacd7d",
+          "fetchedAt": "2026-11-15T04:38:49.884Z",
+          "remoteBlobSha": "b448e0935f60dd4999f36d5b15474bf5a9d616d0"
+        },
+        {
+          "source": "full",
+          "count": 5491,
+          "revision": "64d6b2876644744be29d69f99a8944fc405fd3dc",
+          "fetchedAt": "2026-11-15T04:38:44.141Z",
+          "remoteBlobSha": "0992e994dd1f977701fa8b8eb12ed5c796f822a0"
+        }
+      ],
+      "apiBodyDownloads": 0,
+      "fullMetadataBytes": 972
+    },
+    {
+      "round": 2,
+      "elapsedMs": 10442,
+      "result": {
+        "ok": true,
+        "message": "插件市场索引已同步",
+        "results": [
+          {
+            "source": "public",
+            "ok": true,
+            "sourceType": "remote",
+            "count": 520,
+            "fetchedAt": "2026-11-15T04:39:00.315Z",
+            "message": "已与远端核对，当前目录为最新版本"
+          },
+          {
+            "source": "full",
+            "ok": true,
+            "sourceType": "remote",
+            "count": 5491,
+            "fetchedAt": "2026-11-15T04:38:51.479Z",
+            "message": "已与远端核对，当前目录为最新版本"
+          }
+        ]
+      },
+      "catalogs": [
+        {
+          "source": "public",
+          "count": 520,
+          "revision": "1c13d7180da9717bb5b8b35fdb40261290bacd7d",
+          "fetchedAt": "2026-11-15T04:39:00.315Z",
+          "remoteBlobSha": "b448e0935f60dd4999f36d5b15474bf5a9d616d0"
+        },
+        {
+          "source": "full",
+          "count": 5491,
+          "revision": "64d6b2876644744be29d69f99a8944fc405fd3dc",
+          "fetchedAt": "2026-11-15T04:38:51.479Z",
+          "remoteBlobSha": "0992e994dd1f977701fa8b8eb12ed5c796f822a0"
+        }
+      ],
+      "apiBodyDownloads": 0,
+      "fullMetadataBytes": 972
+    }
+  ]
+}

@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { AuroraStore } from '../store/index.js';
 import { desktopInfo, validateDebugPort } from '../injector.js';
 import { BUILTINS, BUNDLED, effectiveEntry, loadState, saveState, manifest, validateConfig, validatePackageConfig } from './catalog.js';
-import { installedPlugins, installNative, loadIndex, nativeKey, packagePresent, refreshIndex, removeNative, resourceRoot, toggleNative, type MarketSource } from './market.js';
+import { installedPlugins, installNative, loadIndex, nativeKey, packagePresent, refreshMarkets, removeNative, resourceRoot, toggleNative, type MarketSource } from './market.js';
 import { runtimeFor } from './runtime.js';
 import { setWorkViewDisabled } from './workView.js';
 import { desktopModelCatalog } from './models.js';
@@ -43,7 +43,7 @@ export async function runExtensionAction(deps:{store:AuroraStore},action:string,
     }
     if(action==='extension.connect')return runtime.connect(payload);
     if(action==='extension.disconnect'){await runtime.disconnect();return{ok:true};}
-    if(action==='extension.refresh'){const sources=payload.source?[payload.source]:['public','full'];for(const source of sources){if(!['public','full'].includes(source))throw new Error('未知插件市场');await refreshIndex(store,source);}return{ok:true,message:'插件目录已更新'};}
+    if(action==='extension.refresh')return refreshMarkets(store,payload.source?[payload.source]:['public','full']);
     const id=String(payload.id||''),native=sourceKey(id);
     if(native){if(action==='extension.install'){const item=await installNative(store,native.source,native.id);return{ok:true,item,message:'插件已校验并安装，启用后重启客户端生效'};}if(action==='extension.toggle'){if(typeof payload.enabled!=='boolean')throw new Error('启用状态无效');return{ok:true,item:toggleNative(store,native.source,native.id,payload.enabled)};}if(action==='extension.remove'){removeNative(store,native.source,native.id);return{ok:true,message:'已移除客户端注册，保留源码与许可证缓存'};}throw new Error('此原生插件不支持该操作');}
     const builtin=BUILTINS.find(b=>`builtin:${b.id}`===id),bundled=id.startsWith('bundled:')&&BUNDLED.includes(id.slice(8));if(!builtin&&!bundled)throw new Error('未知扩展');
