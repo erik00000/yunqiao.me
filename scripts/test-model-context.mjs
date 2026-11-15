@@ -31,6 +31,10 @@ try {
     const missing = { id: 'gpt-6' }, explicit = { id: 'gpt-6', contextWindow: 128000 };
     assert.equal(api.applyContextDefaults(missing).contextWindow, fallback); assert.equal(missing.contextWindow, undefined); assert.equal(api.applyContextDefaults(explicit), explicit);
   });
+  await check('The 90% trigger uses exact positive integer arithmetic and rejects missing or invalid sizes', () => {
+    for (const [window, limit] of [[272000, 244800], [200000, 180000], [128000, 115200], [70001, 63000], [1, 1], [Number.MAX_SAFE_INTEGER, 8106479329266891]]) assert.equal(api.defaultAutoCompactTokenLimit(window), limit);
+    for (const invalid of [undefined, null, '272000', 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, NaN, Infinity]) assert.equal(api.defaultAutoCompactTokenLimit(invalid), undefined);
+  });
   await check('Save and restart persist defaults while keeping explicit values and other families untouched', () => {
     const f = fixture(), provider = f.save([{ id: 'gpt-6' }, { id: 'gpt-4o', contextWindow: 128000 }, { id: 'deepseek-chat' }, { id: 'gpt-image-1' }]);
     assert.deepEqual(provider.models.map(model => model.contextWindow), [fallback, 128000, undefined, undefined]);
@@ -99,7 +103,9 @@ try {
     const before = fs.readFileSync(path.join(f.store.dir, 'providers.json')); f.store.writeExtra = () => { throw new Error('No diagnostic writes allowed'); };
     const catalog = api.getCoexistCatalog(f.store, false), native = id => catalog.nativeCatalog.models.find(model => model.slug === id);
     assert.equal(native('official/gpt-6').context_window, fallback); assert.equal(native('official/gpt-4o').context_window, 128000); assert.equal(native('official/codex-auto-review').context_window, undefined);
+    assert.equal(native('official/gpt-6').auto_compact_token_limit, 244800); assert.equal(native('official/gpt-4o').auto_compact_token_limit, 115200);
     assert.equal(native(`${provider.id}/gpt-6`).context_window, fallback); assert.equal(native(`${provider.id}/gpt-5`).context_window, 96000); assert.equal(native(`${provider.id}/deepseek-chat`).context_window, 32768);
+    assert.equal(native(`${provider.id}/gpt-6`).auto_compact_token_limit, 244800); assert.equal(native(`${provider.id}/gpt-5`).auto_compact_token_limit, 86400); assert.equal(native(`${provider.id}/deepseek-chat`).auto_compact_token_limit, 29491);
     assert.deepEqual(fs.readFileSync(path.join(f.store.dir, 'providers.json')), before); assert(!fs.existsSync(path.join(f.store.dir, 'codex-official-models.json')));
   });
   console.log(`Model context policy: ${checks} checks passed.`);

@@ -104,6 +104,37 @@ try {
   const staleResult = await api.runAction(deps, 'agent.connect', { agentId: 'codex-cli', providerId: supplier.id, model: 'relay-model', authMode: 'coexist', revision: stale.revision });
   check('stale preview cannot overwrite an external config edit', () => { assert.equal(staleResult.ok, false); assert(read(configFile).includes('external edit after preview')); assert.equal(read(authFile), authBefore); });
 
+  const windowConfig = 'model_context_window = 65536\nmodel_auto_compact_token_limit = 58982\n' + originalConfig;
+  write(configFile, windowConfig);
+  const windowPayload = { agentId: 'codex-cli', providerId: supplier.id, model: 'relay-model', authMode: 'coexist' };
+  const windowPreview = await api.runAction(deps, 'agent.preview', windowPayload);
+  assert(windowPreview.ok, windowPreview.message);
+  const windowCatalogBefore = read(catalogFile), windowStatesBefore = JSON.stringify(store.listAgents());
+  store.saveProvider({ id: supplier.id, models: [{ id: 'relay-model', contextWindow: 131072 }], apiKeys: supplier.apiKeys });
+  const staleWindow = await api.runAction(deps, 'agent.connect', { ...windowPayload, revision: windowPreview.revision });
+  check('a changed coexist model window rejects the old preview before any client or catalog write', () => {
+    assert.equal(staleWindow.ok, false); assert.match(staleWindow.message, /预览后已变化/);
+    assert.equal(read(configFile), windowConfig); assert.equal(read(authFile), authBefore); assert.equal(read(catalogFile), windowCatalogBefore); assert.equal(JSON.stringify(store.listAgents()), windowStatesBefore);
+  });
+  const refreshedWindowPreview = await api.runAction(deps, 'agent.preview', windowPayload);
+  check('catalog-only changes produce a new revision while preserving the same redacted client preview', () => {
+    assert(refreshedWindowPreview.ok, refreshedWindowPreview.message); assert.notEqual(refreshedWindowPreview.revision, windowPreview.revision);
+    assert.deepEqual(refreshedWindowPreview.files, windowPreview.files);
+    assert.equal(read(configFile), windowConfig); assert.equal(read(authFile), authBefore); assert.equal(read(catalogFile), windowCatalogBefore);
+    for (const secret of [accessToken, 'fixture-refresh', 'fixture-api-secret', 'fixture-gateway-token']) assert(!JSON.stringify(refreshedWindowPreview).includes(secret));
+  });
+  const appliedWindow = await api.runAction(deps, 'agent.connect', { ...windowPayload, revision: refreshedWindowPreview.revision });
+  check('a refreshed coexist preview applies the new per-model window and 90 percent threshold without global overrides', () => {
+    assert(appliedWindow.ok, appliedWindow.message);
+    const catalogModel = json(catalogFile).models.find(model => model.slug === `${supplier.id}/relay-model`);
+    assert.equal(catalogModel.context_window, 131072); assert.equal(catalogModel.auto_compact_token_limit, 117964);
+    const parsed = parseNativeToml(read(configFile)); assert.equal(parsed.model_context_window, undefined); assert.equal(parsed.model_auto_compact_token_limit, undefined);
+    assert.equal(read(authFile), authBefore); assert.equal(store.listAgents()['codex-cli'].connected, true);
+  });
+  const restoredWindow = await api.runAction(deps, 'agent.disconnect', { agentId: 'codex-cli' });
+  assert(restoredWindow.ok, restoredWindow.message); assert.equal(read(configFile), windowConfig); assert.equal(read(authFile), authBefore);
+  store.saveProvider({ id: supplier.id, models: supplier.models, apiKeys: supplier.apiKeys });
+
   write(configFile, originalConfig);
   const cleanPreview = await api.runAction(deps, 'agent.preview', { agentId: 'codex-cli', providerId: supplier.id, model: 'relay-model', authMode: 'coexist' });
   const catalogBeforeStale = fs.existsSync(path.join(store.dir, 'codex-model-catalog.json')) ? read(path.join(store.dir, 'codex-model-catalog.json')) : '';

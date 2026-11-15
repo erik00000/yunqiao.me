@@ -14,6 +14,13 @@ export function isValidContextWindow(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 }
 
+/** Default trigger is 90% of the configured window, rounded down to a positive token count. */
+export function defaultAutoCompactTokenLimit(contextWindow: unknown): number | undefined {
+  if (!isValidContextWindow(contextWindow)) return undefined;
+  // Integer arithmetic keeps the policy exact even at the safe-integer boundary.
+  return Math.max(1, Number(BigInt(contextWindow) * 9n / 10n));
+}
+
 /** Pure: preserve explicit values; callers validate input before saving. No default is persisted on reads. */
 export function applyContextDefaults<T extends { id: string; contextWindow?: number }>(model: T): T {
   return model.contextWindow === undefined && isChatgptTextModel(model.id)

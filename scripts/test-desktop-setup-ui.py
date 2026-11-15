@@ -15,7 +15,7 @@ FIXTURE = """() => {
  window.readyDetection={...window.initialDetection,installed:true,command:'C:/Fixture/Codex.exe',productName:'Codex',version:'2.0',supportsCodexConfig:true,evidence:['已找到 Codex 编程模块']};
  window.resetFixture=()=>{
    window.generation++;window.calls=[];window.pending=[];window.holdSelect=false;window.holdDetect=false;window.selectFailure='';window.selectCanceled=false;window.previewFailure='';window.connectFailure='';window.detectFailure='';window.selectionNextSupport='automatic';window.selectedDetection=structuredClone(window.readyDetection);window.nextDetection=structuredClone(window.readyDetection);
-   window.state={settings:{},platform:'win32',agents:{},presets:[],providers:[{id:'supplier',name:'已测试供应商',format:'openai-responses',enabled:true,models:[{id:'gpt-5.4'},{id:'gpt-5.4-codex'}],apiKeys:[]}],detected:{'chatgpt-desktop':structuredClone(window.initialDetection)},agentCatalog:[{id:'chatgpt-desktop',name:'ChatGPT 桌面版',category:'desktop',vendor:'OpenAI',description:'桌面客户端',protocol:'openai-responses',configPath:'C:/Fixture/.codex/config.toml',support:'automatic',supportNote:'共享编程配置可直接应用，程序能力单独识别'}],codexCoexist:{identity:{available:false},models:[],warnings:[]}};
+   window.state={settings:{},platform:'win32',agents:{},presets:[],providers:[{id:'supplier',name:'已测试供应商',format:'openai-responses',enabled:true,models:[{id:'gpt-5.4'},{id:'gpt-5.4-codex',contextWindow:128000}],apiKeys:[]}],detected:{'chatgpt-desktop':structuredClone(window.initialDetection)},agentCatalog:[{id:'chatgpt-desktop',name:'ChatGPT 桌面版',category:'desktop',vendor:'OpenAI',description:'桌面客户端',protocol:'openai-responses',configPath:'C:/Fixture/.codex/config.toml',support:'automatic',supportNote:'共享编程配置可直接应用，程序能力单独识别'}],codexCoexist:{identity:{available:false},models:[],warnings:[]}};
  };
  window.resetFixture();
  window.aurora={invoke:async(action,payload={})=>{
@@ -112,6 +112,13 @@ window.renderAgents();"""
                 return panel
 
             dialog = open_wizard(False)
+            expect(dialog.locator('#client-context-compact-hint')).to_have_text('自动压缩：115200 tokens（90%）')
+            dialog.get_by_role('combobox', name='选择模型', exact=True).select_option('gpt-5.4')
+            expect(dialog.locator('#client-context-compact-hint')).to_have_count(0)
+            expect(dialog.get_by_text('应用时按上下文的 90% 同步默认自动压缩阈值', exact=False)).to_be_visible()
+            dialog.get_by_role('combobox', name='选择模型', exact=True).select_option('gpt-5.4-codex')
+            expect(dialog.locator('#client-context-compact-hint')).to_have_text('自动压缩：115200 tokens（90%）')
+            passed('Model selection previews 90 percent of a saved window without inventing a limit for legacy models missing context')
             panel = panel_for(dialog)
             expect(page.locator('.client-card').get_by_text('发现本地配置', exact=True)).to_be_visible()
             expect(panel.get_by_text('C:/Fixture/.codex/config.toml', exact=True)).to_be_visible()
@@ -128,6 +135,10 @@ window.renderAgents();"""
             passed('Existing user configuration can be previewed and applied with no executable and no confirmed programming module')
 
             dialog = open_wizard(setup="window.state.detected['chatgpt-desktop'].configured=false;window.state.codexCoexist.identity.available=true;window.state.codexCoexist.models=[{official:true,upstreamModel:'gpt-official',displayName:'官方模型'}]")
+            dialog.get_by_role('button', name='上一步', exact=True).click()
+            dialog.locator('.provider-choice').filter(has=page.get_by_text('ChatGPT 官方账号', exact=True)).click()
+            dialog.get_by_role('button', name='下一步：选择模型 →', exact=True).click()
+            expect(dialog.locator('#client-context-compact-hint')).to_have_count(0)
             panel = panel_for(dialog)
             expect(panel.get_by_text('应用时创建', exact=True)).to_be_visible()
             dialog.get_by_role('button', name='预览配置 →', exact=True).click()

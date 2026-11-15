@@ -5,7 +5,7 @@ import type { IncomingMessage } from 'node:http';
 import * as zlib from 'node:zlib';
 import { parse } from 'smol-toml';
 import { codexHome } from '../codex.js';
-import { applyContextDefaults, isValidContextWindow } from '../modelContext.js';
+import { applyContextDefaults, defaultAutoCompactTokenLimit, isValidContextWindow } from '../modelContext.js';
 import type { AuroraStore } from '../store/index.js';
 
 /** Official identity and inference routing are separate. This module never writes or refreshes OAuth. */
@@ -234,7 +234,7 @@ export function getCoexistCatalog(store: AuroraStore, persist = true): CoexistCa
     const id = `${CODEX_OFFICIAL_MODEL_PREFIX}${model.slug}`, displayName = `官方 · ${String(model.display_name || model.slug)}`;
     models.push({ id, upstreamModel: model.slug, providerId: 'official', providerName: 'ChatGPT 官方账号', displayName, official: true,
       ...(contextWindow !== undefined ? { contextWindow } : {}) });
-    nativeModels.push({ ...model, ...(contextWindow !== undefined ? { context_window: contextWindow } : {}), slug: id, display_name: displayName, prefer_websockets: false });
+    nativeModels.push({ ...model, ...(contextWindow !== undefined ? { context_window: contextWindow, auto_compact_token_limit: defaultAutoCompactTokenLimit(contextWindow) } : {}), slug: id, display_name: displayName, prefer_websockets: false });
   }
   for (const provider of store.listProviders()) {
     let local = false;
@@ -256,7 +256,7 @@ export function getCoexistCatalog(store: AuroraStore, persist = true): CoexistCa
         experimental_supported_tools: [], supports_search_tool: false, supports_tool_search: false,
         input_modalities: model.capabilities?.vision ? ['text', 'image'] : ['text'],
         context_window: contextWindow ?? 32768, max_context_window: contextWindow ?? null,
-        effective_context_window_percent: 95, auto_compact_token_limit: null,
+        effective_context_window_percent: 95, auto_compact_token_limit: defaultAutoCompactTokenLimit(contextWindow ?? 32768),
         prefer_websockets: false, shell_type: 'shell_command', truncation_policy: { mode: 'tokens', limit: 10000 } });
     }
   }

@@ -17,6 +17,7 @@ import sys
 import tempfile
 import threading
 import time
+import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -328,10 +329,23 @@ def main():
             expect(wizard.get_by_role('heading', name='配置已应用', exact=True)).to_be_visible()
             configured = (clients / '.codex/config.toml').read_text(encoding='utf-8')
             assert 'model_provider = "aurora"' in configured and supplier['id'] + '/gpt-6.1-sol' in configured
+            limits = tomllib.loads(configured)
+            assert limits['model_context_window'] == 272000 and limits['model_auto_compact_token_limit'] == 244800
             assert (clients / '.codex/auth.json').read_bytes() == original[clients / '.codex/auth.json']
             shared = page.evaluate("async () => (await window.aurora.invoke('state.get')).agents")
             assert all(shared[client]['connected'] is True for client in ['codex-cli', 'chatgpt-desktop'])
             wizard.get_by_role('button', name='完成', exact=True).click()
+            page.evaluate("id => window.aurora.invoke('provider.save', {id,models:[{id:'gpt-6.1-sol',contextWindow:200000}]})", supplier['id'])
+            selection = {'agentId': 'chatgpt-desktop', 'providerId': supplier['id'], 'model': 'gpt-6.1-sol', 'authMode': 'api', 'mode': 'gateway'}
+            updated = page.evaluate("p => window.aurora.invoke('agent.preview', p)", selection)
+            assert updated['ok'], updated
+            selection['revision'] = updated['revision']
+            applied = page.evaluate("p => window.aurora.invoke('agent.connect', p)", selection)
+            assert applied['ok'], applied
+            limits = tomllib.loads((clients / '.codex/config.toml').read_text(encoding='utf-8'))
+            assert limits['model_context_window'] == 200000 and limits['model_auto_compact_token_limit'] == 180000
+            assert (clients / '.codex/auth.json').read_bytes() == original[clients / '.codex/auth.json']
+            checks.append('Native model configuration writes 272000/244800, recalculates 200000/180000 on reapply and preserves the original restore point')
             restored = page.evaluate("() => window.aurora.invoke('agent.disconnect', {agentId:'chatgpt-desktop'})")
             assert restored['ok'], restored
             assert all(file.read_bytes() == before for file, before in original.items()), 'Shared configuration restore changed original bytes'

@@ -1,6 +1,6 @@
 {
   "passed": true,
-  "count": 22,
+  "count": 23,
   "checks": [
     "All five bundled packages use product-facing descriptions while retaining their original license in details",
     "Real upstream format:file exposes the image chooser; picker and validation failures remain inside the open modal",
@@ -23,6 +23,7 @@
     "Middleware separates enabled state from waiting, successful, failed and blocked execution with verification time",
     "Custom middleware deletion keeps failure visible and removes the card only after success",
     "Workspace asset failure preserves the last list and the native-plugin card links to managed plugins",
+    "Saving an unchanged context repairs a stale 90 percent threshold; typing or failed saves preserve manual drafts, and an empty window can clear a leftover threshold",
     "Remote mode exposes no desktop mutation controls or editable middleware scripts; no renderer exceptions"
   ],
   "scope": "Chromium UI with real bundled manifest schemas and controlled IPC responses; no real client injection or downloads"

@@ -3,6 +3,8 @@ import PresetPicker from '../components/PresetPicker';
 import ClientRestart from '../components/ClientRestart';
 import ClientDiagnostics from '../components/ClientDiagnostics';
 import DesktopSetupRecovery from '../components/DesktopSetupRecovery';
+import ContextCompactHint from '../components/ContextCompactHint';
+import { applyContextDefaults } from '../../../src/core/modelContext';
 import type { PageProps } from '../App';
 import { Btn, Empty, Field, Ico, Modal, copyText, useToast } from '../components/ui';
 import { AgentCatalogItem, AgentDetection, CloudCatalog, Preset, Provider, PROTOCOL_TEXT, call, fmtCtx } from '../lib/api';
@@ -102,6 +104,9 @@ function ConnectWizard({ agent, state, reload, onClose }: { agent: AgentCatalogI
   const toast = useToast();
   const provider = choices.find(p => p.id === providerId);
   const chosenModel = manualModel ? model : model || provider?.models[0]?.id || '';
+  const selectedModel = provider?.models.find(m => m.id === chosenModel);
+  const selectedContextWindow = selectedModel || providerId === 'official' ? selectedModel?.contextWindow
+    : chosenModel ? applyContextDefaults<{ id: string; contextWindow?: number }>({ id: chosenModel }).contextWindow : undefined;
   const payload = { agentId: agent.id, providerId, model: chosenModel, mode: 'gateway', authMode: providerId === 'official' ? 'coexist' : codex ? authMode : 'api' };
   async function run(task: () => Promise<void>) { if (running.current) return; running.current = true; setBusy(true); setError(''); try { await task(); } catch (e: any) { setError(e.message || String(e)); } finally { running.current = false; setBusy(false); } }
   async function saveNew() {
@@ -177,6 +182,7 @@ function ConnectWizard({ agent, state, reload, onClose }: { agent: AgentCatalogI
         {codingDesktop && <DesktopSetupRecovery agent={agent} detected={detected} platform={state.platform} busy={busy} operation={recoveryOperation} canPreview={!!chosenModel} onDetect={() => { void run(() => recoverDesktop('detect')); }} onSelect={() => { void run(() => recoverDesktop('select')); }} />}
         <div className="review-summary"><b>{provider?.name}</b><span className="chip">{PROTOCOL_TEXT[provider?.format || '']}</span><span className="grow" /><Btn size="sm" disabled={busy || providerId === 'official'} onClick={() => run(async () => { const r = await call('provider.models', { providerId }); if (!r.ok) throw new Error(r.message); await reload(); toast.push(`模型已同步，新增 ${r.added || 0} 个`, 'ok'); })}><Ico name="refresh" size={12} />同步模型</Btn></div>
         <Field label="选择模型"><select aria-label="选择模型" className="select" disabled={manualModel} value={chosenModel} onChange={e => { setModel(e.target.value); setTest(null); }}><option value="" disabled>请选择模型</option>{provider?.models.map(m => <option key={m.id} value={m.id}>{m.displayName || m.id}{m.contextWindow ? ` · ${fmtCtx(m.contextWindow)} 上下文` : ''}</option>)}</select></Field>
+        {codex && <div><ContextCompactHint value={selectedContextWindow} id="client-context-compact-hint" /><p className="hint">应用时按上下文的 90% 同步默认自动压缩阈值，重启客户端后生效。其他压缩策略与实际触发时机由客户端决定。</p></div>}
         {providerId !== 'official' && <>
           {!!provider?.models.length && <Btn size="sm" onClick={() => { setManualModel(!manualModel); if (manualModel) setModel(provider.models[0]?.id || ''); setTest(null); }}>{manualModel ? '返回模型列表' : '手动输入其他模型 ID'}</Btn>}
           {(manualModel || !provider?.models.length) && <Field label="手动模型 ID" hint="模型不在列表中时，填写供应商提供的准确 ID；预览前会保存到该供应商。"><input className="input mono" aria-label="手动模型 ID" value={model} onChange={e => { setModel(e.target.value.trim()); setTest(null); }} placeholder="填写该服务实际提供的模型 ID" /></Field>}

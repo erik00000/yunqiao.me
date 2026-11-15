@@ -7,6 +7,7 @@ import { useProviderBalances } from '../hooks/useProviderBalances';
 import { persistProviderView, providerBalanceFacts, readProviderView, type BalanceFilter, type ProviderView } from '../lib/providerPresentation';
 import '../styles/providers.css';
 import { applyContextDefaults, DEFAULT_CHATGPT_CONTEXT_WINDOW, isChatgptTextModel, isValidContextWindow } from '../../../src/core/modelContext';
+import ContextCompactHint from '../components/ContextCompactHint';
 import { LocalIdentityCard, LocalScanDetails, localTime, useLocalClientScan } from '../components/LocalClients';
 import type { PageProps } from '../App';
 import { Btn, Empty, Field, Ico, Modal, Toggle, useToast } from '../components/ui';
@@ -506,6 +507,10 @@ function ProviderEditor({
   const keys = value.apiKeys ?? [];
   const models = value.models ?? [];
   const contextDraft = (model: ProviderModel, index: number) => contextDrafts[index] ?? String(model.contextWindow ?? '');
+  const contextForCompactHint = (model: ProviderModel, index: number) => {
+    const raw = contextDraft(model, index);
+    return !raw.trim() && isChatgptTextModel(model.id) ? DEFAULT_CHATGPT_CONTEXT_WINDOW : parseContextDraft(raw).value;
+  };
   const batchMatches = (model: ProviderModel, index: number) => (batchScope === 'all' || isChatgptTextModel(model.id)) && (batchMode === 'overwrite' || !contextDraft(model, index).trim());
   const batchCount = models.filter(batchMatches).length;
 
@@ -713,7 +718,7 @@ function ProviderEditor({
 
       <Field label={`模型列表（${(value.models ?? []).length}）`}>
         <p className="provider-context-hint" id="provider-context-help">上下文窗口可直接输入正整数 tokens，空白也可以编辑。GPT/Codex 文本模型留空时，保存会采用推荐值 {DEFAULT_CHATGPT_CONTEXT_WINDOW}；其他模型留空表示未设置。推荐值不改变模型的真实能力，以上游限制为准。</p>
-        <p className="provider-context-hint">修改后，已接入的 ChatGPT/Codex 请到“客户端接入”重新预览并应用，再重启客户端。保存不会自动覆盖正在使用的客户端配置。</p>
+        <p className="provider-context-hint">修改后，已接入的 ChatGPT/Codex 请到“客户端接入”重新预览并应用，再重启客户端；应用时按上下文的 90% 同步自动压缩阈值。保存不会自动覆盖正在使用的客户端配置。</p>
         <div className="provider-context-tools">
           <button className="btn sm" type="button" aria-expanded={batchOpen} aria-controls="provider-context-batch" onClick={() => setBatchOpen(open => !open)}>批量设置上下文</button>
         </div>
@@ -721,7 +726,7 @@ function ProviderEditor({
           <div className="provider-context-batch-fields">
             <label>模型范围<select className="select" aria-label="批量上下文模型范围" value={batchScope} onChange={e => { setBatchScope(e.target.value as 'chatgpt' | 'all'); setBatchResult(''); }}><option value="chatgpt">GPT/Codex 文本模型</option><option value="all">当前供应商的全部模型</option></select></label>
             <label>应用方式<select className="select" aria-label="批量上下文应用方式" value={batchMode} onChange={e => { setBatchMode(e.target.value as 'missing' | 'overwrite'); setBatchResult(''); }}><option value="missing">仅填写当前空白项</option><option value="overwrite">覆盖范围内的已有值</option></select></label>
-            <label>上下文窗口（tokens）<input className="input" type="text" inputMode="numeric" aria-label="批量上下文窗口" aria-invalid={!!batchError} value={batchContext} onChange={e => { setBatchContext(e.target.value); setBatchError(''); setBatchResult(''); }} /></label>
+            <label>上下文窗口（tokens）<input className="input" type="text" inputMode="numeric" aria-label="批量上下文窗口" aria-describedby="provider-batch-compact-hint" aria-invalid={!!batchError} value={batchContext} onChange={e => { setBatchContext(e.target.value); setBatchError(''); setBatchResult(''); }} /><ContextCompactHint id="provider-batch-compact-hint" value={parseContextDraft(batchContext).value} /></label>
           </div>
           <p className="provider-context-hint">{batchScope === 'chatgpt' ? '根据模型 ID 识别 GPT/Codex 文本模型，跳过图像、音频和其他厂商模型。' : '将包含当前供应商所有类型及厂商的模型，请确认此范围适合本次修改。'}当前将修改 <b>{batchCount}</b> 项。</p>
           {batchError && <p className="provider-context-error" role="alert">{batchError}</p>}
@@ -756,7 +761,7 @@ function ProviderEditor({
                   inputMode="numeric"
                   placeholder="未设置，可填写"
                   aria-label={`第 ${i + 1} 行上下文窗口`}
-                  aria-describedby={contextErrors[i] ? `provider-context-error-${i} provider-context-help` : 'provider-context-help'}
+                  aria-describedby={`${contextErrors[i] ? `provider-context-error-${i} ` : ''}provider-context-help provider-compact-hint-${i}`}
                   aria-invalid={!!contextErrors[i]}
                   ref={element => { contextInputs.current[i] = element; }}
                   title="填写正整数 tokens；此值不改变上游模型的实际限制。"
@@ -764,6 +769,7 @@ function ProviderEditor({
                   onChange={e => { setContextDrafts(previous => ({ ...previous, [i]: e.target.value })); setContextErrors(previous => { const next = { ...previous }; delete next[i]; return next; }); setBatchResult(''); }}
                   onBlur={() => commitContext(i)}
                 />
+                <ContextCompactHint id={`provider-compact-hint-${i}`} value={contextForCompactHint(m, i)} />
                 {contextErrors[i] && <span className="provider-context-error" id={`provider-context-error-${i}`} role="alert">{contextErrors[i]}</span>}
               </div>
               <input

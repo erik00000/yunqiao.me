@@ -102,14 +102,22 @@ window.renderProviders();"""
             assert context(0).bounding_box()['width'] >= 140
             expect(dialog.get_by_text('推荐值不改变模型的真实能力', exact=False)).to_be_visible()
             expect(dialog.get_by_text('请到“客户端接入”重新预览并应用', exact=False)).to_be_visible()
+            expect(dialog.get_by_text('应用时按上下文的 90% 同步自动压缩阈值', exact=False)).to_be_visible()
+            expect(dialog.locator('#provider-compact-hint-0')).to_have_text('自动压缩：244800 tokens（90%）')
+            expect(dialog.locator('#provider-compact-hint-7')).to_have_text('自动压缩：180000 tokens（90%）')
+            expect(dialog.locator('#provider-compact-hint-8')).to_have_count(0)
             assert page.evaluate("window.calls.filter(call=>call.action==='provider.save').length") == 0
             passed('Initial GPT/Codex recommendation preserves explicit limits and excludes image, audio, other vendors and GPT OSS; all fields are editable')
 
             context(0).fill('')
             context(0).blur()
             expect(context(0)).to_have_value('')
+            expect(dialog.locator('#provider-compact-hint-0')).to_have_text('自动压缩：244800 tokens（90%）')
             context(8).press_sequentially('272000')
             expect(context(8)).to_have_value('272000')
+            expect(dialog.locator('#provider-compact-hint-8')).to_have_text('自动压缩：244800 tokens（90%）')
+            context(8).fill('200000')
+            expect(dialog.locator('#provider-compact-hint-8')).to_have_text('自动压缩：180000 tokens（90%）')
             context(8).fill('000320000')
             context(8).blur()
             expect(context(8)).to_have_value('000320000')
@@ -129,6 +137,7 @@ window.renderProviders();"""
                 page.evaluate('window.calls=[]')
                 context(8).fill(invalid)
                 expect(context(8)).to_have_value(invalid)
+                expect(dialog.locator('#provider-compact-hint-8')).to_have_count(0)
                 context(8).blur()
                 expect(context(8)).to_have_attribute('aria-invalid', 'true')
                 dialog.get_by_role('button', name='保存', exact=True).click()
@@ -137,6 +146,7 @@ window.renderProviders();"""
                 assert page.evaluate("window.calls.filter(call=>['provider.save','provider.models'].includes(call.action)).length") == 0
                 expect(context(8)).to_have_value(invalid)
             context(8).fill('1')
+            expect(dialog.locator('#provider-compact-hint-8')).to_have_text('自动压缩：1 tokens（90%）')
             context(8).blur()
             expect(context(8)).to_have_attribute('aria-invalid', 'false')
             dialog.get_by_role('button', name='保存', exact=True).click()
@@ -149,6 +159,7 @@ window.renderProviders();"""
             context(0).blur()
             dialog.get_by_role('button', name='批量设置上下文', exact=True).click()
             batch = dialog.get_by_role('group', name='批量设置上下文', exact=True)
+            expect(batch.locator('#provider-batch-compact-hint')).to_have_text('自动压缩：244800 tokens（90%）')
             expect(batch.get_by_role('combobox', name='批量上下文模型范围')).to_have_value('chatgpt')
             expect(batch.get_by_role('combobox', name='批量上下文应用方式')).to_have_value('missing')
             batch.get_by_role('textbox', name='批量上下文窗口').fill('288000')
@@ -179,10 +190,12 @@ window.renderProviders();"""
             for invalid in ['', '0', '-10', '2.5', '3e5', '9007199254740992']:
                 before = model_values()
                 batch.get_by_role('textbox', name='批量上下文窗口').fill(invalid)
+                expect(batch.locator('#provider-batch-compact-hint')).to_have_count(0)
                 batch.get_by_role('button', name='应用到 5 项', exact=True).click()
                 expect(batch.get_by_role('alert')).to_be_visible()
                 assert model_values() == before
             batch.get_by_role('textbox', name='批量上下文窗口').fill('64000')
+            expect(batch.locator('#provider-batch-compact-hint')).to_have_text('自动压缩：57600 tokens（90%）')
             batch.get_by_role('button', name='应用到 5 项', exact=True).click()
             for index in [4, 5, 8, 11, 12]:
                 expect(context(index)).to_have_value('64000')

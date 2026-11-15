@@ -4,7 +4,7 @@ import path from 'node:path';
 import { parse as parseToml } from 'smol-toml';
 import type { AgentId, Provider } from '../store/types.js';
 import { nowIso } from '../util.js';
-import { isValidContextWindow } from '../modelContext.js';
+import { defaultAutoCompactTokenLimit, isValidContextWindow } from '../modelContext.js';
 import { detectCodingDesktop } from '../injector.js';
 import { clearDesktopDetectionCache } from '../desktopDetection.js';
 import { cliCandidates, desktopCandidates, type ClientPathContext } from '../clientPaths.js';
@@ -178,15 +178,21 @@ function codexPlan(ctx: ConnectContext): PlannedFile[] {
   const endpoint = codexCoexistBaseUrl(Number(new URL(ctx.gatewayUrl).port) || 80);
   const ownEndpoint = (value: unknown) => { try { const url = new URL(String(value)); return ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) && url.pathname.replace(/\/$/, '') === CODEX_COEXIST_BASE_PATH; } catch { return false; } };
   const routing: Record<string, string | number | null> = { ...selection };
+  const contextWindow = ctx.provider.models.find(model => model.id === ctx.model)?.contextWindow;
   if (coexist) {
     routing.openai_base_url = endpoint;
     routing.model_catalog_json = ctx.modelCatalogPath!;
     if (current.forced_login_method === 'api') routing.forced_login_method = null;
+    // Each catalog entry supplies its own window and 90% trigger. A global
+    // override would pin every model in the menu to the previously selected size.
+    routing.model_context_window = null;
+    routing.model_auto_compact_token_limit = null;
   } else {
-    const contextWindow = ctx.provider.models.find(model => model.id === ctx.model)?.contextWindow;
     // Context limits are root-level Codex settings, not ConfigProfile fields.
-    // Keep explicit compaction policy intact and avoid inventing unknown model limits.
-    if (isValidContextWindow(contextWindow)) routing.model_context_window = contextWindow;
+    if (isValidContextWindow(contextWindow)) {
+      routing.model_context_window = contextWindow;
+      routing.model_auto_compact_token_limit = defaultAutoCompactTokenLimit(contextWindow)!;
+    }
     if (ownEndpoint(current.openai_base_url)) routing.openai_base_url = null;
     if (current.model_catalog_json === ctx.modelCatalogPath) routing.model_catalog_json = null;
   }
@@ -199,12 +205,16 @@ function codexPlan(ctx: ConnectContext): PlannedFile[] {
     if (profile.openai_base_url !== undefined && (coexist || ownEndpoint(profile.openai_base_url))) values.openai_base_url = null;
     if (profile.model_catalog_json !== undefined && (coexist || profile.model_catalog_json === ctx.modelCatalogPath)) values.model_catalog_json = null;
     if (coexist && profile.forced_login_method === 'api') values.forced_login_method = null;
+    if (coexist || isValidContextWindow(contextWindow)) {
+      if (profile.model_context_window !== undefined) values.model_context_window = null;
+      if (profile.model_auto_compact_token_limit !== undefined) values.model_auto_compact_token_limit = null;
+    }
     text = patchToml(text, `profiles.${JSON.stringify(current.profile)}`, values);
   }
   if (!coexist) text = patchToml(text, 'model_providers.aurora', { name: '云桥 AI', base_url: ep.baseUrl, wire_api: 'responses', experimental_bearer_token: ep.apiKey, env_key: null, requires_openai_auth: false, stream_idle_timeout_ms: 300000 });
   return [planned(file, text)];
 }
-const CODEX_CONTEXT_WARNING = '普通 API 接入会应用所选模型已填写的上下文窗口；已有自动压缩阈值保持不变，修改后需重启客户端。官方账号共存保留现有窗口覆盖。';
+const CODEX_CONTEXT_WARNING = '应用上下文窗口时，自动压缩阈值同步设为其 90%（向下取整，至少 1 Token），修改后需重启客户端。共存模式按模型目录分别设置，并清除旧的全局窗口和阈值覆盖，让切换模型时使用各自的设置。';
 const codexCli = makeAdapter({
   id: 'codex-cli', name: 'Codex CLI', vendor: 'OpenAI', category: 'cli', support: 'automatic', protocol: 'openai-responses', description: 'OpenAI 终端编程助手，使用 Responses 协议。',
   supportNote: '配置独立的 aurora provider，保留账号登录态和其他 TOML 配置。', docsUrl: 'https://developers.openai.com/codex/config-reference', command: 'codex', paths: () => [codexConfig()], hint: '完全退出后重新运行 codex', plan: codexPlan,

@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import HistoryRepair from '../components/HistoryRepair';
+import ContextCompactHint from '../components/ContextCompactHint';
+import { defaultAutoCompactTokenLimit } from '../../../src/core/modelContext';
 import type { PageProps } from '../App';
 import { Btn, Empty, Field, Ico, Modal, Stat, Toggle, useToast } from '../components/ui';
 import { call, isWebMode } from '../lib/api';
@@ -63,6 +65,13 @@ export default function CodexEnhance({ go }: PageProps) {
     if (value && f.type === 'number' && (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value) <= 0)) { toast.push('请输入大于 0 的整数，留空可恢复默认', 'bad'); return; }
     await perform(f.key, 'codex.setFlag', { key: f.key, value });
   }
+  function flagUnchanged(f: Flag) {
+    const draft = flagDrafts[f.key] || '';
+    if (draft !== (flags?.flags[f.key] || '')) return false;
+    if (f.key !== 'model_context_window') return true;
+    const savedLimit = flags?.flags.model_auto_compact_token_limit;
+    return draft.trim() ? defaultAutoCompactTokenLimit(Number(draft)) === Number(savedLimit) : !savedLimit?.trim();
+  }
   return <>
     <div className="page-head"><div><div className="eyebrow">DESKTOP WORKSPACE</div><h1>桌面工作台</h1><p>管理本机扩展与工作约定，查看会话状态和客户端配置。</p></div><div className="actions"><Btn onClick={() => go('sessions')}><Ico name="chat" size={14} /> 历史会话</Btn><Btn disabled={remote || loading || !!busy} onClick={load}><Ico name="refresh" size={14} /> {loading ? '检测中…' : '重新检测'}</Btn></div></div>
     {remote ? <div className="card"><Empty icon="⌘" title="在电脑客户端管理本地资源" hint="远程控制台不开放本机插件、提示词和数据库写入。请在电脑上的云桥 AI 打开此页；远程查看会话可使用「历史会话」。" /></div> : <>
@@ -89,7 +98,7 @@ export default function CodexEnhance({ go }: PageProps) {
         <div className="card" style={{ marginBottom: 18 }}><div className="card-title">Codex 配置<span className="sub">显式保存 · 备份原文件 · 重启后生效</span></div>
           <div className="notice">参数是否支持取决于 Codex 版本和当前模型。留空表示移除覆盖值，使用客户端默认设置。</div>
           {errors['codex.flags'] && <div className="notice warning">{errors['codex.flags']}</div>}
-          <div className="grid cols-2">{flags?.schema.map(f => <Field key={f.key} label={f.label} hint={f.hint}><div className="row" style={{ gap: 8 }}>{f.type === 'enum' || f.type === 'bool' ? <select className="select grow" value={flagDrafts[f.key] || ''} onChange={e => setFlagDrafts({ ...flagDrafts, [f.key]: e.target.value })}><option value="">使用默认设置</option>{(f.type === 'bool' ? ['true', 'false'] : f.options || []).map(o => <option key={o} value={o}>{o}</option>)}</select> : <input className="input mono grow" inputMode="numeric" value={flagDrafts[f.key] || ''} onChange={e => setFlagDrafts({ ...flagDrafts, [f.key]: e.target.value })} placeholder="使用默认设置" />}<Btn size="sm" disabled={!!busy || (flagDrafts[f.key] || '') === (flags.flags[f.key] || '')} onClick={() => saveFlag(f)}>保存</Btn></div></Field>)}</div>
+          <div className="grid cols-2">{flags?.schema.map(f => <Field key={f.key} label={f.label} hint={f.hint}><div className="row" style={{ gap: 8 }}>{f.type === 'enum' || f.type === 'bool' ? <select className="select grow" value={flagDrafts[f.key] || ''} onChange={e => setFlagDrafts({ ...flagDrafts, [f.key]: e.target.value })}><option value="">使用默认设置</option>{(f.type === 'bool' ? ['true', 'false'] : f.options || []).map(o => <option key={o} value={o}>{o}</option>)}</select> : <input className="input mono grow" inputMode="numeric" value={flagDrafts[f.key] || ''} onChange={e => setFlagDrafts({ ...flagDrafts, [f.key]: e.target.value })} placeholder="使用默认设置" />}<Btn size="sm" disabled={!!busy || flagUnchanged(f)} onClick={() => saveFlag(f)}>保存</Btn></div>{f.key === 'model_context_window' && <ContextCompactHint value={/^\d+$/.test(flagDrafts[f.key] || '') ? Number(flagDrafts[f.key]) : undefined} id="codex-context-compact-hint" />}</Field>)}</div>
         </div>
         <div className="card"><div className="card-title">桌面插件与市场</div><p>自动识别 ChatGPT 桌面版，连接后启用内置增强、拓展包和插件市场。</p><Btn onClick={() => go('plugins')}>前往插件中心 →</Btn></div>
       </>}

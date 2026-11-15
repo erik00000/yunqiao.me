@@ -4,6 +4,7 @@ import path from 'node:path';
 import { parse as parseToml } from 'smol-toml';
 import { applyPlan, patchToml, planned, readText } from './agents/configFiles.js';
 import { runningCodingClientsSync } from './clientProcesses.js';
+import { defaultAutoCompactTokenLimit } from './modelContext.js';
 
 /**
  * Codex 增强：会话诊断/修复 + 插件·技能·提示词管理。
@@ -371,8 +372,8 @@ export function writeAgentsMd(text: string): { ok: boolean; message: string; bac
 /** 只读写这几个安全的键，不动 [model_providers] 那些关键配置 */
 export const CODEX_FLAGS = [
   { key: 'model_reasoning_effort', label: '思考强度', type: 'enum', options: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'], hint: '仅选择当前模型实际支持的强度；留空使用默认值' },
-  { key: 'model_context_window', label: '上下文窗口', type: 'number', hint: '超出会被 Codex 自己压缩，填小了浪费长上下文' },
-  { key: 'model_auto_compact_token_limit', label: '自动压缩阈值', type: 'number', hint: '接近这个 token 数时自动压缩历史' },
+  { key: 'model_context_window', label: '上下文窗口', type: 'number', hint: '保存时同时将自动压缩阈值设为窗口的 90%；留空会同时删除窗口与阈值覆盖，恢复客户端原生计算' },
+  { key: 'model_auto_compact_token_limit', label: '自动压缩阈值', type: 'number', hint: '达到此 token 数时自动压缩历史，可单独手动修改；下次保存上下文窗口时会重新按窗口的 90% 设置，留空使用原生计算' },
   { key: 'sandbox_workspace_write.network_access', label: '工作区沙箱联网', type: 'bool', hint: '仅适用于 workspace-write 沙箱；组织策略仍然生效' },
 ] as const;
 
@@ -395,10 +396,13 @@ export function writeCodexFlag(key: string, value: string): { ok: boolean; messa
     const dot = key.lastIndexOf('.');
     const table = dot < 0 ? '' : key.slice(0, dot), field = dot < 0 ? key : key.slice(dot + 1);
     const parsed = !value ? null : schema.type === 'number' ? Number(value) : schema.type === 'bool' ? value === 'true' : value;
-    const txt = patchToml(original, table, { [field]: parsed });
+    const values: Record<string, string | number | boolean | null> = { [field]: parsed };
+    if (key === 'model_context_window') values.model_auto_compact_token_limit = defaultAutoCompactTokenLimit(parsed) ?? null;
+    const txt = patchToml(original, table, values);
     plan.after = txt;
     applyPlan('codex-setting', [plan]);
-    return { ok: true, message: `${value ? '已保存' : '已恢复默认'}「${schema.label}」，重启 Codex 生效` };
+    const linked = key === 'model_context_window' ? value ? '，自动压缩阈值已同步为窗口的 90%' : '，窗口与自动压缩阈值已恢复客户端原生计算' : '';
+    return { ok: true, message: `${value ? '已保存' : '已恢复默认'}「${schema.label}」${linked}，重启 Codex 生效` };
   } catch (e: any) {
     return { ok: false, message: String(e?.message ?? e) };
   }

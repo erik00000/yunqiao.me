@@ -49,6 +49,8 @@ window.render=()=>root.render(<ToastHost><Models state={structuredClone(window.s
         field = dialog.get_by_label('批量上下文窗口', exact=True)
         dialog.get_by_role('button', name='填入 ChatGPT 建议值 272000', exact=True).click()
         expect(field).to_have_value('272000')
+        expect(dialog.locator('#model-batch-compact-hint')).to_have_text('自动压缩：244800 tokens（90%）')
+        expect(page.get_by_text('应用时按上下文的 90% 同步自动压缩阈值', exact=False)).to_be_visible()
         dialog.get_by_role('button', name='预览修改', exact=True).click()
         reviewed = page.evaluate('window.calls.at(-1).payload')
         assert reviewed['patch'] == {'contextWindow': 272000}
@@ -65,12 +67,16 @@ window.render=()=>root.render(<ToastHost><Models state={structuredClone(window.s
         before = page.evaluate('window.calls.length')
         for invalid in ['0', '-1', '12.5', '1e6', '9007199254740992', 'NaN']:
             field.fill(invalid)
+            expect(dialog.locator('#model-batch-compact-hint')).to_have_count(0)
             dialog.get_by_role('button', name='预览修改', exact=True).click()
             expect(dialog.get_by_role('alert')).to_contain_text('正整数')
             assert page.evaluate('window.calls.length') == before
+        field.fill('200000')
+        expect(dialog.locator('#model-batch-compact-hint')).to_have_text('自动压缩：180000 tokens（90%）')
         field.fill('300000')
         dialog.get_by_role('button', name='预览修改', exact=True).click()
         field.fill('400000')
+        expect(dialog.locator('#model-batch-compact-hint')).to_have_text('自动压缩：360000 tokens（90%）')
         expect(dialog.get_by_role('button', name='确认更新 1 条', exact=True)).to_have_count(0)
         dialog.get_by_role('button', name='预览修改', exact=True).click()
         page.evaluate('window.fail=true')
@@ -100,6 +106,7 @@ window.render=()=>root.render(<ToastHost><Models state={structuredClone(window.s
         page.get_by_role('button', name='批量编辑', exact=True).click()
         expect(dialog.get_by_role('button', name='填入 ChatGPT 建议值 272000', exact=True)).to_be_disabled()
         expect(field).to_have_value('')
+        expect(dialog.locator('#model-batch-compact-hint')).to_have_count(0)
         checks.append('Single-model editing loads its current window; mixed selections do not enable the ChatGPT-specific preset')
         assert not errors, errors
         browser.close()

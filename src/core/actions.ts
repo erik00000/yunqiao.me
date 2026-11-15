@@ -546,11 +546,16 @@ export async function runAction(deps: ActionDeps, action: string, payload: any):
         authMode, modelCatalogPath: path.join(store.dir, 'codex-model-catalog.json'),
       };
       const preview = adapter.preview(context);
+      const clientRevision = preview.revision;
+      // A coexistence apply also publishes the model catalog. Bind that content
+      // to the review even when a changed model limit leaves config.toml identical.
+      if (coexist && clientRevision) preview.revision = digest(JSON.stringify({ clientRevision, nativeCatalog: coexist.nativeCatalog }));
       if (action === 'agent.preview' || !preview.ok) return preview;
       if (action === 'agent.parameters') return { ok: true, ...connectionParameters(context, adapter.protocol), script: exportEnvScript(context, adapter.protocol), note: adapter.supportNote };
       if (context.mode === 'gateway' && !deps.gatewayStatus().running) return { ok: false, message: '本地网关未运行，请先启动网关后再应用配置' };
       if (context.expectedRevision && context.expectedRevision !== preview.revision) return { ok: false, message: '配置或连接参数在预览后已变化，请重新预览再应用' };
-      context.expectedRevision = preview.revision;
+      // The adapter independently checks only its client-file plan.
+      context.expectedRevision = clientRevision;
       const catalogFile = context.modelCatalogPath!;
       let clientBefore: ClientFileSnapshot[], catalogBefore: ClientFileSnapshot[];
       try {
