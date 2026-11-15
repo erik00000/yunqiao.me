@@ -1,6 +1,11 @@
 {
   "date": "2026-11-15",
-  "scope": ["client diagnostics", "Claude Desktop configuration roots", "provider list and filters", "parent and subagent sessions"],
+  "scope": [
+    "client diagnostics",
+    "Claude Desktop configuration roots",
+    "provider list and filters",
+    "parent and subagent sessions"
+  ],
   "windows": {
     "platform": "win32 x64",
     "coreSuites": 34,
@@ -11,15 +16,52 @@
     "sessionRelationChecks": 8,
     "newBrowserChecks": 21,
     "newBrowserPassed": true,
-    "existingBrowserRegressions": ["client lifecycle", "provider balance", "provider model sync", "history repair"],
+    "existingBrowserRegressions": [
+      "client lifecycle",
+      "provider balance",
+      "provider model sync",
+      "history repair"
+    ],
     "nativeShellChecks": 4,
     "nativeShellPassed": true,
-    "productionBuildPassed": true
+    "productionBuildPassed": true,
+    "package": {
+      "passed": true,
+      "count": 13,
+      "executable": "release\\community-debug-0.6.0\\win-unpacked\\YunQiaoAI.exe",
+      "exeSha256": "a630ec776c38ea7f09e1c0055aab506ca1d03630e2dae4cb4fca424cf0ba0d5c",
+      "asarSha256": "18656f36b8b722b149f2630df0de25361873b6050ede71f8047ef3741367e9c1",
+      "build": {
+        "id": "20261115T080843Z-ba873685",
+        "builtAt": "2026-11-15T08:08:43.888Z",
+        "revision": "ba873685",
+        "channel": "local"
+      },
+      "resourceFilesVerified": 188
+    }
   },
-  "macos": { "status": "pending native CI" },
+  "macos": {
+    "status": "passed",
+    "runUrl": "https://github.com/jxb412/aurora/actions/runs/43693120142",
+    "revision": "ba8736859bca318892f74ff895d71cabcb528806",
+    "architectures": [
+      "arm64",
+      "x64"
+    ],
+    "coreSuitesPerArchitecture": 34,
+    "configurationRootChecksPerArchitecture": 14,
+    "diagnosticChecksPerArchitecture": 12,
+    "nativeLifecycleChecksPerArchitecture": 6,
+    "nativeShellChecksPerArchitecture": 5,
+    "newBrowserChecksPerArchitecture": 21,
+    "packagedChecksPerArchitecture": 12,
+    "terminalAppleEvents": "simulated only",
+    "releasePublished": false
+  },
   "limitations": [
     "Diagnostics validate local configuration only; no upstream model request was sent.",
     "UI service responses are mocked; test histories and client configurations use isolated directories.",
     "No real client was restarted and no public release was published."
-  ]
+  ],
+  "revision": "ba8736859bca318892f74ff895d71cabcb528806"
 }
