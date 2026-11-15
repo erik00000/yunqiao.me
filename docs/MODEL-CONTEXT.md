@@ -29,3 +29,5 @@ GPT / Codex 文本模型没有容量数据时推荐 `272000` tokens。已有上�
 依据：[官方配置说明](https://developers.openai.com/codex/config-reference)、[客户端窗口与阈值计算](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs#L573)。不同安装版本的实际行为以该版本为准。
 
 验证包含 `test-model-context.mjs`、`test-client-model-context.mjs`、`test-model-context-ui.py` 和 `test-model-batch-context-ui.py`，并已接入 Windows / macOS CI。全部测试使用隔离配置，不修改真实客户端或请求付费模型。
+
+最新 90% 联动实现及双平台验证见 [压缩阈值验证记录](AUTO-COMPACT-VALIDATION.json)。

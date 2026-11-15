@@ -1,0 +1,117 @@
+{
+  "date": "2026-11-15",
+  "revision": "937e67208f0c41b3f2158e30b72daac66b191c51",
+  "rule": {
+    "autoCompactPercent": 90,
+    "rounding": "floor, minimum 1 token",
+    "examples": {
+      "272000": 244800,
+      "200000": 180000,
+      "128000": 115200
+    }
+  },
+  "windows": {
+    "coreSuites": 40,
+    "corePassed": true,
+    "note": "All 39 core scripts passed. Initial typecheck overlapped an in-progress UI edit; final typecheck passed after that edit completed.",
+    "contextBackendChecks": 37,
+    "coexistConfigurationChecks": 23,
+    "modelEditorUIChecks": 12,
+    "clientWizardUIChecks": 10,
+    "pluginAndAdvancedSettingsUIChecks": 23,
+    "package": {
+      "passed": true,
+      "count": 14,
+      "checks": [
+        "Packaged version and AGPL notices",
+        "All 188 distributed resource hashes match pinned source; upstream tests and Rust reference sources are absent",
+        "Actual native packaged application renders app.asar with platform-specific controls and isolated data",
+        "Packaged gateway health is ready and management rejects missing credentials",
+        "Installed runtime loads 5 complete packages, 32 builtins and both pinned markets",
+        "Packaged settings hide catalog controls and migrate legacy preferences to automatic sync and GitHub releases",
+        "The packaged build is identifiable and source links do not depend on an unpublished release tag",
+        "Native packaged IPC exposes history region selection and provider discovery",
+        "Packaged plugin page renders the five bundled packages without errors",
+        "Packaged membership onboarding renders without authenticated user state",
+        "Packaged client cards expose restart and terminal actions; native IPC rejects API services and process overrides without launching any client",
+        "Read-only views leave isolated client configurations unchanged",
+        "Native model configuration writes 272000/244800, recalculates 200000/180000 on reapply and preserves the original restore point",
+        "Native wizard previews, backs up, applies and restores shared Codex configuration without a desktop executable; auth bytes stay intact and CLI state stays synchronized"
+      ],
+      "executable": "release\\auto-compact-debug-0.6.0\\win-unpacked\\YunQiaoAI.exe",
+      "exeSha256": "661c0cdc61e9ff691870ada39068e8f7911dcf3d4f669ef26cfaae1011eb50ba",
+      "asarSha256": "3087b6f332abfc3c2a5362973c0975233bdc3c7813e080a3dede12e66691b997",
+      "build": {
+        "id": "20261115T093152Z-937e6720",
+        "builtAt": "2026-11-15T09:31:52.417Z",
+        "revision": "937e6720",
+        "channel": "local"
+      },
+      "resourceFilesVerified": 188
+    }
+  },
+  "macOS": {
+    "workflow": "https://github.com/jxb412/aurora/actions/runs/43699763727",
+    "status": "passed",
+    "architectures": [
+      "x64",
+      "arm64"
+    ],
+    "results": {
+      "arm64": {
+        "coreSuites": 40,
+        "corePassed": true,
+        "modelEditorUIChecks": 12,
+        "clientWizardUIChecks": 10,
+        "pluginAndAdvancedSettingsUIChecks": 23,
+        "package": {
+          "passed": true,
+          "count": 14,
+          "exeSha256": "6c79cc7a0ee3a36276867f1751e7b688005900b06c7c1006c7876e010d1fecfe",
+          "asarSha256": "4e46f59ff48ec8dcacc6592afb8a79598b972adc0f070a030fddb756a2b7ee78",
+          "build": {
+            "id": "20261115T093433Z-937e6720",
+            "builtAt": "2026-11-15T09:34:33.780Z",
+            "revision": "937e6720",
+            "channel": "release"
+          },
+          "resourceFilesVerified": 188
+        }
+      },
+      "x64": {
+        "coreSuites": 40,
+        "corePassed": true,
+        "modelEditorUIChecks": 12,
+        "clientWizardUIChecks": 10,
+        "pluginAndAdvancedSettingsUIChecks": 23,
+        "package": {
+          "passed": true,
+          "count": 14,
+          "exeSha256": "97253ff5f2b8cbec1d90345fc68d096aacc65290c58d7f1c399bc2a3f79b0e15",
+          "asarSha256": "2198cc45be9e27a6d77b1e75b8e36a6e94d475d44fc231e9626c92adefa6ed2f",
+          "build": {
+            "id": "20261115T093613Z-937e6720",
+            "builtAt": "2026-11-15T09:36:13.968Z",
+            "revision": "937e6720",
+            "channel": "release"
+          },
+          "resourceFilesVerified": 188
+        }
+      }
+    }
+  },
+  "scope": [
+    "Single and batch model editors preview the derived trigger",
+    "API connections atomically write the selected window and 90% threshold",
+    "Coexistence catalogs carry each model window and threshold; global overrides are removed when applying",
+    "Coexistence review revisions include model catalog contents",
+    "Direct context settings atomically update or clear both fields",
+    "Independent manually configured post-turn and token-counting policies remain unchanged"
+  ],
+  "limitations": [
+    "Changing model metadata requires reapplying client configuration and restarting the client",
+    "No real client configuration or credentials were modified during tests",
+    "Third-party coexistence compact endpoint remains unsupported",
+    "No public release was published"
+  ]
+}
