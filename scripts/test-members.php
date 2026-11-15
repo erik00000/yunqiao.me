@@ -3,7 +3,7 @@
 declare(strict_types=1);
 require __DIR__ . '/../server/member_service.php';
 
-function fixture(string $directory, string $mode = ''): MemberService
+function fixture(string $directory, string $mode = '', ?callable $intercept = null): MemberService
 {
     $config = ['enabled' => true, 'origin' => 'https://members.example.test', 'adminKey' => 'test-administrator-key-only',
         'secret' => str_repeat('fixture-secret-', 4), 'dataDir' => $directory . '/ledger'];
@@ -13,8 +13,9 @@ function fixture(string $directory, string $mode = ''): MemberService
     $upstream->exec('CREATE TABLE IF NOT EXISTS codes (code TEXT PRIMARY KEY, user_id INTEGER NOT NULL, cents INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS counters (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS keys (key TEXT PRIMARY KEY, user_id INTEGER NOT NULL, group_id INTEGER NOT NULL);');
-    $transport = static function (string $method, string $path, array $headers, ?array $body) use ($upstream, $mode): array {
+    $transport = static function (string $method, string $path, array $headers, ?array $body) use ($upstream, $mode, $intercept): array {
         $okay = static fn(array $data): array => ['status' => 200, 'body' => ['code' => 0, 'data' => $data]];
+        if ($intercept) { $override = $intercept($method, $path, $headers, $body); if ($override !== null) return $override; }
         $userId = 0;
         foreach ($headers as $header) if (preg_match('/^Authorization: Bearer user-([0-9]+)$/', $header, $m)) $userId = (int)$m[1];
         if ($path === '/auth/login') {
@@ -54,6 +55,8 @@ function fixture(string $directory, string $mode = ''): MemberService
         }
         if ($path !== '/admin/redeem-codes/create-and-redeem') throw new RuntimeException('Unexpected endpoint');
         if ($body['value'] !== 10 || $body['type'] !== 'balance' || !in_array('Idempotency-Key: ' . $body['code'], $headers, true)) throw new RuntimeException('Unsafe grant request');
+        // The HTTP validator accepts 128 characters, but the actual redeem-code entity/database accepts only 32.
+        if (strlen($body['code']) > 32) return ['status' => 500, 'body' => ['code' => 500, 'reason' => 'INTERNAL_ERROR', 'message' => 'fixture schema: redeem code exceeds 32 characters']];
         $upstream->exec('BEGIN IMMEDIATE');
         try {
             $upstream->exec("INSERT INTO counters(key,value) VALUES('fulfill',1) ON CONFLICT(key) DO UPDATE SET value=value+1");
@@ -91,6 +94,32 @@ function expectCode(callable $run, string $code): void
 }
 function db(string $directory): PDO { return new PDO('sqlite:' . $directory . '/ledger/members.sqlite'); }
 function upstreamDb(string $directory): PDO { return new PDO('sqlite:' . $directory . '/upstream.sqlite'); }
+function seedLegacyGrant(string $directory, int $userId = 1, string $status = 'pending'): string
+{
+    $database = db($directory);
+    $installation = $database->query('SELECT installation_hash FROM member_sessions WHERE user_id=' . $userId)->fetchColumn();
+    $code = 'YQ-WELCOME-' . strtoupper(hash_hmac('sha256', 'aurora-first-member-v1:https://members.example.test:' . $userId, str_repeat('fixture-secret-', 4)));
+    $q = $database->prepare('INSERT INTO welcome_grants(user_id,installation_hash,code,status,amount_cents,created_at,claimed_at) VALUES(?,?,?,?,1000,?,?)');
+    $q->execute([$userId, $installation, $code, $status, time() - 3600, $status === 'claimed' ? time() - 1800 : null]);
+    return $code;
+}
+function runClaimWorkers(string $directory, array $credentials): void
+{
+    $credentialsPath = $directory . '/worker.json'; file_put_contents($credentialsPath, json_encode($credentials));
+    $workers = [];
+    for ($i = 0; $i < 8; $i++) {
+        $command = [PHP_BINARY];
+        if (PHP_OS_FAMILY === 'Windows') array_push($command, '-d', 'extension_dir=' . ini_get('extension_dir'), '-d', 'extension=pdo_sqlite', '-d', 'extension=openssl');
+        array_push($command, __FILE__, '--worker', $directory, $credentialsPath);
+        $process = proc_open($command, [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+        check(is_resource($process), 'worker launch'); fclose($pipes[0]); $workers[] = [$process, $pipes];
+    }
+    foreach ($workers as [$process, $pipes]) {
+        $out = stream_get_contents($pipes[1]); $err = stream_get_contents($pipes[2]); fclose($pipes[1]); fclose($pipes[2]);
+        check(proc_close($process) === 0, 'worker success ' . $err);
+        check((json_decode($out, true)['gift']['status'] ?? '') === 'claimed', 'worker result');
+    }
+}
 
 if (($argv[1] ?? '') === '--worker') {
     $directory = $argv[2];
@@ -117,6 +146,7 @@ $test('fixed ten-dollar grant, repeated claim and private response', static func
     $first = $service->handle('claim', [], $credentials); $second = $service->handle('claim', [], $credentials);
     check($first['gift']['status'] === 'claimed' && $first['gift']['amountUsd'] === 10 && $first['member']['balance'] === 10.0, 'credit confirmed');
     check($first['gift']['code'] === $second['gift']['code'], 'stable code');
+    check(strlen($first['gift']['code']) === 32 && str_starts_with($first['gift']['code'], 'YQW-'), 'redeem code respects actual storage limit');
     check((int)upstreamDb($dir)->query('SELECT SUM(cents) FROM codes')->fetchColumn() === 1000, 'exact credit');
     $output = json_encode([$first, $service->publicConfig(), $service->adminOverview()]);
     check(!str_contains($output, 'test-administrator-key') && !str_contains($output, 'user-1'), 'secrets not exposed');
@@ -160,6 +190,78 @@ $test('timeout after upstream credit recovers by code lookup', static function (
     check(db($dir)->query('SELECT status FROM welcome_grants')->fetchColumn() === 'pending', 'pending durable');
     $result = fixture($dir)->handle('claim', [], $credentials);
     check($result['gift']['status'] === 'claimed' && (int)upstreamDb($dir)->query("SELECT value FROM counters WHERE key='fulfill'")->fetchColumn() === 1, 'read-only reconciliation');
+});
+$test('legacy pending code migrates only after a complete empty lookup', static function ($dir): void {
+    $service = fixture($dir); $credentials = signedIn($service, 1, 1); $oldCode = seedLegacyGrant($dir);
+    $before = db($dir)->query('SELECT * FROM welcome_grants')->fetch(PDO::FETCH_ASSOC);
+    expectCode(fn() => $service->adminReconcile(1, false), 'GRANT_PENDING');
+    check(db($dir)->query('SELECT code FROM welcome_grants')->fetchColumn() === $oldCode, 'read-only reconciliation does not migrate');
+    $result = $service->handle('claim', [], $credentials);
+    $after = db($dir)->query('SELECT * FROM welcome_grants')->fetch(PDO::FETCH_ASSOC);
+    check($result['gift']['status'] === 'claimed' && strlen($after['code']) === 32 && $after['code'] !== $oldCode, 'legacy code replaced and fulfilled');
+    foreach (['user_id', 'installation_hash', 'amount_cents', 'created_at'] as $field) check($before[$field] === $after[$field], 'migration preserves entitlement ' . $field);
+    check((int)upstreamDb($dir)->query('SELECT SUM(cents) FROM codes')->fetchColumn() === 1000, 'exactly one new credit');
+});
+$test('legacy used receipt reconciles without replacing the code or crediting again', static function ($dir): void {
+    $service = fixture($dir); $credentials = signedIn($service, 1, 1); $oldCode = seedLegacyGrant($dir);
+    $q = upstreamDb($dir)->prepare('INSERT INTO codes(code,user_id,cents) VALUES(?,1,1000)'); $q->execute([$oldCode]);
+    $result = $service->handle('claim', [], $credentials);
+    check($result['gift']['status'] === 'claimed' && $result['gift']['code'] === $oldCode, 'original used receipt retained');
+    check((int)upstreamDb($dir)->query('SELECT COUNT(*) FROM counters')->fetchColumn() === 0, 'no fulfillment request');
+    $other = signedIn($service, 2, 2); $mismatched = seedLegacyGrant($dir, 2);
+    $q = upstreamDb($dir)->prepare('INSERT INTO codes(code,user_id,cents) VALUES(?,3,1000)'); $q->execute([$mismatched]);
+    expectCode(fn() => $service->handle('claim', [], $other), 'GRANT_REVIEW_REQUIRED');
+    check(db($dir)->query('SELECT code FROM welcome_grants WHERE user_id=2')->fetchColumn() === $mismatched, 'mismatched used receipt never replaced');
+});
+$test('legacy unused receipt stays reserved for review and is never replaced', static function ($dir): void {
+    $base = fixture($dir); $credentials = signedIn($base, 1, 1); $oldCode = seedLegacyGrant($dir); $posts = 0;
+    $service = fixture($dir, '', static function ($method, $path) use ($oldCode, &$posts) {
+        if ($method === 'POST') $posts++;
+        if (str_starts_with($path, '/admin/redeem-codes?')) return ['status' => 200, 'body' => ['code' => 0, 'data' => ['total' => 1, 'items' => [['id' => 10, 'code' => $oldCode, 'type' => 'balance', 'value' => 10, 'status' => 'unused']]]]];
+        return null;
+    });
+    expectCode(fn() => $service->handle('claim', [], $credentials), 'GRANT_REVIEW_REQUIRED');
+    check(db($dir)->query('SELECT code FROM welcome_grants')->fetchColumn() === $oldCode && db($dir)->query('SELECT status FROM welcome_grants')->fetchColumn() === 'review', 'unused reservation retained');
+    check($posts === 0, 'no new code or redemption request');
+});
+$test('claimed, review and unrecognized long codes cannot enter automatic migration', static function ($dir): void {
+    $service = fixture($dir);
+    foreach (['claimed', 'review', 'pending'] as $index => $status) {
+        $userId = $index + 1; $credentials = signedIn($service, $userId, $userId); $oldCode = seedLegacyGrant($dir, $userId, $status);
+        if ($status === 'pending') { $oldCode = 'YQ-WELCOME-' . str_repeat('0', 64); $q = db($dir)->prepare('UPDATE welcome_grants SET code=? WHERE user_id=?'); $q->execute([$oldCode, $userId]); }
+        if ($status === 'claimed') check($service->handle('claim', [], $credentials)['gift']['status'] === 'claimed', 'claimed stays claimed');
+        else expectCode(fn() => $service->handle('claim', [], $credentials), 'GRANT_REVIEW_REQUIRED');
+        check(db($dir)->query('SELECT code FROM welcome_grants WHERE user_id=' . $userId)->fetchColumn() === $oldCode, 'original code remains reserved');
+    }
+    check((int)upstreamDb($dir)->query('SELECT COUNT(*) FROM codes')->fetchColumn() === 0, 'no new credits');
+});
+$test('incomplete legacy searches never establish absence', static function ($dir): void {
+    $base = fixture($dir); $credentials = signedIn($base, 1, 1); $oldCode = seedLegacyGrant($dir);
+    foreach ([['total' => 1, 'items' => []], ['items' => []], ['total' => '0', 'items' => []]] as $found) {
+        $service = fixture($dir, '', static function ($method, $path) use ($found) {
+            if (str_starts_with($path, '/admin/redeem-codes?')) return ['status' => 200, 'body' => ['code' => 0, 'data' => $found]];
+            return null;
+        });
+        expectCode(fn() => $service->handle('claim', [], $credentials), 'GRANT_LOOKUP_INCOMPLETE');
+        check(db($dir)->query('SELECT code FROM welcome_grants')->fetchColumn() === $oldCode && db($dir)->query('SELECT status FROM welcome_grants')->fetchColumn() === 'pending', 'reservation unchanged');
+    }
+});
+$test('a delayed legacy lookup reloads a concurrently migrated and claimed grant', static function ($dir): void {
+    $base = fixture($dir); $credentials = signedIn($base, 1, 1); $oldCode = seedLegacyGrant($dir); $delayed = false;
+    $service = fixture($dir, '', static function ($method, $path) use ($dir, $credentials, $oldCode, &$delayed) {
+        if (!$delayed && str_contains($path, rawurlencode($oldCode))) {
+            $delayed = true; fixture($dir)->handle('claim', [], $credentials);
+            return ['status' => 200, 'body' => ['code' => 0, 'data' => ['total' => 0, 'items' => []]]];
+        }
+        return null;
+    });
+    check($service->handle('claim', [], $credentials)['gift']['status'] === 'claimed', 'latest result returned');
+    check((int)upstreamDb($dir)->query("SELECT value FROM counters WHERE key='fulfill'")->fetchColumn() === 1, 'late worker never fulfills stale code');
+});
+$test('concurrent legacy migrations preserve one grant and credit exactly once', static function ($dir): void {
+    $credentials = signedIn(fixture($dir), 1, 1); seedLegacyGrant($dir); runClaimWorkers($dir, $credentials);
+    check((int)upstreamDb($dir)->query('SELECT SUM(cents) FROM codes')->fetchColumn() === 1000, 'one upstream migrated grant');
+    check((int)db($dir)->query('SELECT COUNT(*) FROM welcome_grants')->fetchColumn() === 1 && strlen(db($dir)->query('SELECT code FROM welcome_grants')->fetchColumn()) === 32, 'one migrated entitlement');
 });
 $test('mismatched receipt requires review, admin read-only reconcile', static function ($dir): void {
     $service = fixture($dir, 'wrong-receipt'); $credentials = signedIn($service, 1, 1);
@@ -205,24 +307,50 @@ $test('user-scoped API key, allowed group and stable retries', static function (
     check((int)upstreamDb($dir)->query('SELECT COUNT(*) FROM keys')->fetchColumn() === 1, 'one user key');
     check(!str_contains(json_encode($service->handle('status', [], $credentials)), 'sk-yunqiao-'), 'status does not reveal key');
 });
+$test('key creation business denials do not masquerade as an expired member login', static function ($dir): void {
+    $credentials = signedIn(fixture($dir), 1, 1);
+    foreach ([[403, 'GROUP_NOT_ALLOWED', 'GROUP_NOT_ALLOWED'], [403, 'API_KEY_COUNT_EXCEEDED', 'KEY_LIMIT_REACHED'], [429, 'API_KEY_CREATE_RATE_LIMITED', 'KEY_CREATE_RATE_LIMITED'], [409, 'API_KEY_EXISTS', 'KEY_REVIEW_REQUIRED'], [401, 'INVALID_TOKEN', 'AUTH_REJECTED']] as [$status, $reason, $expected]) {
+        $service = fixture($dir, '', static function ($method, $path) use ($status, $reason) {
+            if ($method === 'POST' && $path === '/keys') return ['status' => $status, 'body' => ['code' => $status, 'reason' => $reason, 'message' => 'fixture-private-upstream-details', 'metadata' => ['token' => 'fixture-private-token']]];
+            return null;
+        });
+        try { $service->handle('create-client-key', ['groupId' => 7], $credentials); throw new RuntimeException('expected key failure'); }
+        catch (MemberError $error) { check($error->errorCode === $expected, 'precise key error'); check(!str_contains($error->getMessage(), 'fixture-private'), 'key error redacted'); }
+        check($service->handle('status', [], $credentials)['member']['id'] === 1, 'local session remains available');
+    }
+});
+$test('gift diagnostics distinguish admin credentials, route support and upstream fulfillment failure', static function ($dir): void {
+    $credentials = signedIn(fixture($dir), 1, 1);
+    foreach ([
+        ['GET', 401, 'INVALID_ADMIN_KEY', 'UPSTREAM_ADMIN_AUTH_REJECTED', '平台管理凭据'],
+        ['GET', 403, 'FORBIDDEN', 'UPSTREAM_ADMIN_AUTH_REJECTED', '平台管理凭据'],
+        ['GET', 423, 'ADMIN_COMPLIANCE_ACK_REQUIRED', 'UPSTREAM_ADMIN_ACTION_REQUIRED', '管理员确认'],
+        ['POST', 404, 'NOT_FOUND', 'UPSTREAM_API_UNSUPPORTED', '发放赠金'],
+        ['POST', 500, 'INTERNAL_ERROR', 'UPSTREAM_UNAVAILABLE', '发放赠金未获会员站点确认（HTTP 500）'],
+    ] as [$failureMethod, $status, $reason, $expected, $message]) {
+        $service = fixture($dir, '', static function ($method, $path) use ($failureMethod, $status, $reason) {
+            if ($method === $failureMethod && str_starts_with($path, '/admin/redeem-codes')) return ['status' => $status, 'body' => ['code' => $method === 'GET' ? $reason : $status, 'reason' => $reason, 'message' => 'fixture-private-admin-key', 'metadata' => ['request' => 'fixture-private-body']]];
+            return null;
+        });
+        try { $service->handle('claim', [], $credentials); throw new RuntimeException('expected gift failure'); }
+        catch (MemberError $error) { check($error->errorCode === $expected && str_contains($error->getMessage(), $message), 'precise gift stage'); check(!str_contains($error->getMessage(), 'fixture-private'), 'gift error redacted'); }
+        check(db($dir)->query('SELECT status FROM welcome_grants')->fetchColumn() === 'pending', 'unconfirmed grant remains pending');
+        check(db($dir)->query('SELECT last_error FROM welcome_grants')->fetchColumn() === $expected, 'safe diagnostic code retained');
+    }
+    check((int)upstreamDb($dir)->query('SELECT COUNT(*) FROM codes')->fetchColumn() === 0, 'diagnostics never imply credit');
+});
+$test('malformed successful upstream replies identify their operation without exposing content', static function ($dir): void {
+    $credentials = signedIn(fixture($dir), 1, 1);
+    $service = fixture($dir, '', static function ($method, $path) {
+        if ($method === 'POST' && $path === '/keys') return ['status' => 200, 'body' => ['code' => 0, 'data' => 'fixture-private-content']];
+        return null;
+    });
+    try { $service->handle('create-client-key', ['groupId' => 7], $credentials); throw new RuntimeException('expected incompatible response'); }
+    catch (MemberError $error) { check($error->errorCode === 'UPSTREAM_RESPONSE_INVALID' && str_contains($error->getMessage(), '创建客户端密钥'), 'incompatible key response identified'); check(!str_contains($error->getMessage(), 'fixture-private'), 'response content redacted'); }
+});
 $test('concurrent PHP processes credit exactly once', static function ($dir): void {
     $credentials = signedIn(fixture($dir), 1, 1);
-    $credentialsPath = $dir . '/worker.json'; file_put_contents($credentialsPath, json_encode($credentials));
-    $workers = [];
-    for ($i = 0; $i < 8; $i++) {
-        $command = [PHP_BINARY];
-        // The portable Windows test runtime has no php.ini; Linux CI inherits
-        // its configured extensions (OpenSSL may be compiled into PHP itself).
-        if (PHP_OS_FAMILY === 'Windows') array_push($command, '-d', 'extension_dir=' . ini_get('extension_dir'), '-d', 'extension=pdo_sqlite', '-d', 'extension=openssl');
-        array_push($command, __FILE__, '--worker', $dir, $credentialsPath);
-        $process = proc_open($command, [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
-        check(is_resource($process), 'worker launch'); fclose($pipes[0]); $workers[] = [$process, $pipes];
-    }
-    foreach ($workers as [$process, $pipes]) {
-        $out = stream_get_contents($pipes[1]); $err = stream_get_contents($pipes[2]); fclose($pipes[1]); fclose($pipes[2]);
-        check(proc_close($process) === 0, 'worker success ' . $err);
-        check((json_decode($out, true)['gift']['status'] ?? '') === 'claimed', 'worker result');
-    }
+    runClaimWorkers($dir, $credentials);
     check((int)upstreamDb($dir)->query('SELECT SUM(cents) FROM codes')->fetchColumn() === 1000, 'one upstream grant');
     check((int)db($dir)->query('SELECT COUNT(*) FROM welcome_grants')->fetchColumn() === 1, 'one local grant');
 });

@@ -6,9 +6,16 @@ import type { AuroraStore } from '../core/store/index.js';
 
 const endpoint = 'https://ai.haowucm.cn/member.php';
 let sessionToken = '';
+let sessionRevision = 0;
 let restored = false;
 let busy = false;
 let installationIdentity: { id: string; proof: string } | undefined;
+class MemberSessionExpired extends Error {
+  constructor() { super('登录已过期，请重新登录。'); }
+}
+class MemberSessionChanged extends Error {
+  constructor() { super('会员登录状态已变化，请重新读取当前账号信息。'); }
+}
 
 function installation() {
   if (installationIdentity) return installationIdentity;
@@ -41,24 +48,37 @@ function restoreSession() {
   try { if (protectedStorage()) sessionToken = safeStorage.decryptString(fs.readFileSync(sessionFile())); } catch { sessionToken = ''; }
 }
 function saveSession(token: string) {
+  sessionRevision++;
   sessionToken = token;
   if (token && protectedStorage()) fs.writeFileSync(sessionFile(), safeStorage.encryptString(token), { mode: 0o600 });
   else if (fs.existsSync(sessionFile())) fs.unlinkSync(sessionFile());
 }
 async function request(action: string, payload: any = {}) {
   restoreSession();
+  const sentToken = sessionToken, sentRevision = sessionRevision;
+  const authenticated = ['status', 'groups', 'claim', 'create-client-key'].includes(action);
+  const assertCurrentSession = () => {
+    if (authenticated && (sentToken !== sessionToken || sentRevision !== sessionRevision)) throw new MemberSessionChanged();
+  };
   const device = action === 'config' ? null : installation();
   const response = await fetch(`${endpoint}?a=${encodeURIComponent(action)}`, {
     method: action === 'config' || action === 'status' ? 'GET' : 'POST', redirect: 'error', signal: AbortSignal.timeout(['claim', 'create-client-key'].includes(action) ? 120000 : 35000),
-    headers: { 'content-type': 'application/json', ...(device ? { 'X-Aurora-Installation': device.id, 'X-Aurora-Installation-Proof': device.proof } : {}), ...(sessionToken ? { authorization: `Bearer ${sessionToken}` } : {}) },
+    headers: { 'content-type': 'application/json', ...(device ? { 'X-Aurora-Installation': device.id, 'X-Aurora-Installation-Proof': device.proof } : {}), ...(sentToken ? { authorization: `Bearer ${sentToken}` } : {}) },
     ...(['config', 'status'].includes(action) ? {} : { body: JSON.stringify(payload) }),
   });
+  assertCurrentSession();
+  // A proxy may return an HTML 401; expiration must not depend on JSON parsing.
+  if (response.status === 401 && authenticated) {
+    saveSession('');
+    throw new MemberSessionExpired();
+  }
   const body = await response.text();
+  assertCurrentSession();
   if (body.length > 1024 * 1024) throw new Error('会员服务响应异常');
   let data: any;
   try { data = JSON.parse(body); } catch { throw new Error(`会员服务暂不可用（HTTP ${response.status}）`); }
   if (!response.ok || data.ok === false || data.error) {
-    if (response.status === 401 && ['status', 'groups', 'claim', 'create-client-key'].includes(action)) saveSession('');
+    if (authenticated && ['SESSION_EXPIRED', 'AUTH_REJECTED'].includes(data.code)) { saveSession(''); throw new MemberSessionExpired(); }
     throw new Error(typeof data.error === 'string' ? data.error : data.message || `会员服务暂不可用（HTTP ${response.status}）`);
   }
   if (data.sessionToken) {
@@ -75,7 +95,12 @@ export async function memberAction(store: AuroraStore, action: string, payload: 
   if (action === 'member.status') {
     const config = await request('config');
     if (!sessionToken || config.enabled === false) return { ok: true, loggedIn: false, config };
-    try { return { ok: true, loggedIn: true, config, ...await request('status') }; }
+    const expectedToken = sessionToken, expectedRevision = sessionRevision;
+    try {
+      const result = await request('status');
+      if (expectedToken !== sessionToken || expectedRevision !== sessionRevision) throw new MemberSessionChanged();
+      return { ok: true, loggedIn: true, config, ...result };
+    }
     catch (error: any) { if (!sessionToken) return { ok: true, loggedIn: false, config, message: '登录已过期，请重新登录。' }; throw error; }
   }
   if (busy) throw new Error('会员操作正在处理，请稍候');
@@ -110,5 +135,10 @@ export async function memberAction(store: AuroraStore, action: string, payload: 
       return { ok: true, providerId: provider.id, message: '云桥供应商已添加。选择你的客户端即可继续配置。' };
     }
     throw new Error('未知会员操作');
+  } catch (error) {
+    // Electron's generic error boundary only retains a message. Return explicit
+    // public session state so the renderer cannot keep a stale logged-in view.
+    if (error instanceof MemberSessionExpired) return { ok: false, loggedIn: false, authExpired: true, code: 'SESSION_EXPIRED', message: error.message };
+    throw error;
   } finally { busy = false; }
 }

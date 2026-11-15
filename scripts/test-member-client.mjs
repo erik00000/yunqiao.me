@@ -25,7 +25,7 @@ function freshApi() { delete require.cache[bundle]; return require(bundle); }
 function fixture(label) {
   const directory = path.join(isolated, label); fs.mkdirSync(directory, { recursive: true });
   const encryptionKey = randomBytes(32);
-  const control = { secure: true, activeUser: 1, expired: '', disabled: false, offlineLogout: false, alterKey: null, requests: [] };
+  const control = { secure: true, activeUser: 1, expired: '', expiredHtml: false, offlineConfig: false, ambiguousClaim: false, disabled: false, offlineLogout: false, alterKey: null, requests: [] };
   const safeStorage = {
     isEncryptionAvailable: () => control.secure, getSelectedStorageBackend: () => 'gnome_libsecret',
     encryptString(value) { const iv = randomBytes(12); const cipher = createCipheriv('aes-256-gcm', encryptionKey, iv); return Buffer.concat([iv, cipher.update(value, 'utf8'), cipher.final(), cipher.getAuthTag()]); },
@@ -47,8 +47,8 @@ function fixture(label) {
     const action = parsed.searchParams.get('a'); const body = options.body ? JSON.parse(options.body) : null;
     control.requests.push({ action, body, headers: { ...options.headers }, method: options.method });
     const respond = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } });
-    if (control.expired === action) return respond({ ok: false, code: 'SESSION_EXPIRED', error: '登录已过期' }, 401);
-    if (action === 'config') return respond({ ok: true, enabled: !control.disabled, giftUsd: 10 });
+    if (control.expired === action) return control.expiredHtml ? new Response('<html>Unauthorized</html>', { status: 401 }) : respond({ ok: false, code: 'SESSION_EXPIRED', error: '登录已过期' }, 401);
+    if (action === 'config') { if (control.offlineConfig) throw new Error('configuration unavailable'); return respond({ ok: true, enabled: !control.disabled, giftUsd: 10 }); }
     assert.match(options.headers['X-Aurora-Installation'], /^[a-f\d-]{36}$/); assert.match(options.headers['X-Aurora-Installation-Proof'], /^[a-f\d]{64}$/);
     if (['login', 'login2fa', 'bind'].includes(action)) {
       if (body.password === 'two-factor') return respond({ ok: true, requires2fa: true, tempToken: 'challenge-token', emailMasked: 'u***@test.invalid' });
@@ -57,7 +57,7 @@ function fixture(label) {
     assert.equal(options.headers.authorization, 'Bearer ' + String(control.activeUser).repeat(64));
     if (action === 'status') return respond({ ok: true, member: { id: control.activeUser, balance: 10 }, gift: { status: 'claimed', amountUsd: 10 } });
     if (action === 'groups') return respond({ ok: true, groups });
-    if (action === 'claim') return respond({ ok: true, member: { id: control.activeUser, balance: 10 }, gift: { status: 'claimed', amountUsd: 10, code: 'consumed-receipt' } });
+    if (action === 'claim') { if (control.ambiguousClaim) throw new Error('response lost after request'); return respond({ ok: true, member: { id: control.activeUser, balance: 10 }, gift: { status: 'claimed', amountUsd: 10, code: 'consumed-receipt' } }); }
     if (action === 'logout') { if (control.offlineLogout) throw new Error('simulated network failure'); return respond({ ok: true }); }
     if (action === 'create-client-key') {
       const group = groups.find(g => g.id === body.groupId); assert(group);
@@ -137,9 +137,63 @@ try {
     const f = fixture('expired'); await login(f); f.control.expired = 'status';
     assert.equal((await f.api.memberAction(f.store, 'member.status', {})).loggedIn, false); assert(!fs.existsSync(path.join(f.directory, 'member-session.enc')));
     f.control.expired = ''; await login(f); f.control.expired = 'claim';
-    await assert.rejects(() => f.api.memberAction(f.store, 'member.claim', {}), /登录已过期/);
+    const expired = await f.api.memberAction(f.store, 'member.claim', {});
+    assert.equal(expired.ok, false); assert.equal(expired.loggedIn, false); assert.equal(expired.authExpired, true); assert.match(expired.message, /登录已过期/);
     assert.equal((await f.api.memberAction(f.store, 'member.status', {})).loggedIn, false);
     f.control.expired = ''; await login(f); assert.equal((await f.api.memberAction(f.store, 'member.status', {})).loggedIn, true);
+  });
+  await test('non-JSON authentication failure clears encrypted session and exposes logged-out state independently of config availability', async () => {
+    const f = fixture('expired-html'); await login(f); f.control.expired = 'claim'; f.control.expiredHtml = true;
+    const result = await f.api.memberAction(f.store, 'member.claim', {});
+    assert.equal(result.ok, false); assert.equal(result.loggedIn, false); assert.equal(result.authExpired, true);
+    assert(!fs.existsSync(path.join(f.directory, 'member-session.enc')));
+    f.control.offlineConfig = true;
+    await assert.rejects(() => f.api.memberAction(f.store, 'member.status', {}), /configuration unavailable/);
+    assert.equal(f.control.requests.filter(r => r.action === 'claim').length, 1);
+  });
+  await test('group authentication failure is explicit and an ambiguous claim never retries or reconciles automatically', async () => {
+    const f = fixture('ambiguous'); await login(f); f.control.expired = 'groups';
+    const expired = await f.api.memberAction(f.store, 'member.groups', {});
+    assert.equal(expired.authExpired, true); assert.equal(expired.loggedIn, false);
+    f.control.expired = ''; await login(f); f.control.ambiguousClaim = true;
+    const before = f.control.requests.length;
+    await assert.rejects(() => f.api.memberAction(f.store, 'member.claim', {}), /response lost/);
+    assert.deepEqual(f.control.requests.slice(before).map(r => r.action), ['claim']);
+    assert(fs.existsSync(path.join(f.directory, 'member-session.enc')));
+  });
+  await test('late status responses cannot clear a newer login or expose the prior account', async () => {
+    for (const responseKind of ['html-401', 'json-auth', 'success', 'same-token-success', 'body-auth']) {
+      const f = fixture('late-' + responseKind); await login(f);
+      const mockFetch = globalThis.fetch;
+      let release, entered;
+      const started = new Promise(resolve => { entered = resolve; });
+      let first = true;
+      globalThis.fetch = async (url, options) => {
+        if (new URL(url).searchParams.get('a') !== 'status' || !first) return mockFetch(url, options);
+        first = false;
+        assert.equal(options.headers.authorization, 'Bearer ' + '1'.repeat(64));
+        const waiting = new Promise(resolve => { release = resolve; });
+        const body = responseKind === 'body-auth'
+          ? { status: 200, ok: true, text: async () => { entered(); await waiting; return JSON.stringify({ ok: false, code: 'AUTH_REJECTED', error: 'old session' }); } }
+          : null;
+        if (body) return body;
+        entered(); await waiting;
+        if (responseKind === 'html-401') return new Response('<html>expired old session</html>', { status: 401 });
+        if (responseKind === 'json-auth') return new Response(JSON.stringify({ ok: false, code: 'AUTH_REJECTED', error: 'old session' }));
+        return new Response(JSON.stringify({ ok: true, member: { id: 1, balance: 111 }, gift: { status: 'claimed' } }));
+      };
+      const oldStatus = f.api.memberAction(f.store, 'member.status', {});
+      const rejected = assert.rejects(oldStatus, /登录状态已变化/);
+      await started;
+      f.control.activeUser = responseKind === 'same-token-success' ? 1 : 2;
+      await login(f);
+      const encryptedBefore = fs.readFileSync(path.join(f.directory, 'member-session.enc'));
+      release(); await rejected;
+      assert.deepEqual(fs.readFileSync(path.join(f.directory, 'member-session.enc')), encryptedBefore);
+      const latest = await f.api.memberAction(f.store, 'member.status', {});
+      assert.equal(latest.loggedIn, true); assert.equal(latest.member.id, f.control.activeUser);
+      assert.notEqual(latest.member.balance, 111);
+    }
   });
   await test('offline logout still clears local credentials and reports remote limitation', async () => {
     const f = fixture('logout'); await login(f); f.control.offlineLogout = true;

@@ -221,8 +221,20 @@ final class MemberService
         return $token;
     }
 
+    private function requestStage(string $method, string $path): string
+    {
+        if ($path === '/admin/redeem-codes/create-and-redeem') return '发放赠金';
+        if (str_starts_with($path, '/admin/redeem-codes?')) return '核对赠金凭据';
+        if ($path === '/keys' && $method === 'POST') return '创建客户端密钥';
+        if (str_starts_with($path, '/keys?')) return '核对客户端密钥';
+        if ($path === '/groups/available') return '读取会员分组';
+        if ($path === '/auth/me') return '验证会员身份';
+        return '会员登录';
+    }
+
     private function request(string $method, string $path, array $headers, ?array $body = null): array
     {
+        $stage = $this->requestStage($method, $path);
         if ($this->transport) {
             $response = ($this->transport)($method, $path, $headers, $body);
         } else {
@@ -243,20 +255,34 @@ final class MemberService
             $success = curl_exec($curl);
             $status = (int)curl_getinfo($curl, CURLINFO_RESPONSE_CODE);
             curl_close($curl);
-            if ($success === false) throw new MemberError('UPSTREAM_UNAVAILABLE', '会员服务连接中断，可稍后安全重试', 503);
+            if ($success === false) throw new MemberError('UPSTREAM_UNAVAILABLE', $stage . '时连接中断，可稍后安全重试', 503);
             $response = ['status' => $status, 'body' => json_decode($buffer, true)];
         }
         $status = (int)($response['status'] ?? 0);
         $payload = $response['body'] ?? null;
         if ($status < 200 || $status >= 300 || !is_array($payload) || ($payload['code'] ?? null) !== 0 || !is_array($payload['data'] ?? null)) {
-            if (in_array($status, [401, 403], true) && !str_starts_with($path, '/admin/')) {
+            // Only known reason constants affect classification; upstream text, URLs and metadata never leave the server.
+            $reason = is_array($payload) ? ($payload['reason'] ?? $payload['code'] ?? null) : null;
+            $admin = str_starts_with($path, '/admin/');
+            if ($admin && in_array($status, [401, 403], true)) throw new MemberError('UPSTREAM_ADMIN_AUTH_REJECTED', $stage . '失败：平台管理凭据无效或权限不足，请联系平台管理员', 503);
+            if ($admin && $status === 423 && $reason === 'ADMIN_COMPLIANCE_ACK_REQUIRED') throw new MemberError('UPSTREAM_ADMIN_ACTION_REQUIRED', '平台管理功能尚待管理员确认，赠金暂未处理，请联系平台管理员', 503);
+            if ($path === '/keys' && $method === 'POST' && $status >= 400 && $status < 500) {
+                if ($reason === 'GROUP_NOT_ALLOWED') throw new MemberError('GROUP_NOT_ALLOWED', '当前会员已无权使用此分组，请刷新分组后重新选择', 403);
+                if ($reason === 'API_KEY_COUNT_EXCEEDED') throw new MemberError('KEY_LIMIT_REACHED', '会员账户的 API Key 数量已达上限，请在会员网站删除不用的密钥后重试', 409);
+                if (in_array($reason, ['API_KEY_RATE_LIMITED', 'API_KEY_CREATE_RATE_LIMITED'], true)) throw new MemberError('KEY_CREATE_RATE_LIMITED', '会员站点暂时限制创建密钥，请稍后再试', 429);
+                if ($reason === 'API_KEY_EXISTS') throw new MemberError('KEY_REVIEW_REQUIRED', '客户端密钥已存在但未能核对，请刷新后重试或到会员网站核对', 409);
+            }
+            if (!$admin && ($status === 401 || ($status === 403 && str_starts_with($path, '/auth/')))) {
                 throw new MemberError('AUTH_REJECTED', '会员身份验证失败，请检查登录信息或重新登录', 401);
             }
             if ($status === 429) throw new MemberError('UPSTREAM_RATE_LIMITED', '会员站点请求频繁，请稍后再试', 429);
+            if ($status === 403) throw new MemberError('UPSTREAM_PERMISSION_DENIED', $stage . '被会员站点拒绝，请检查账户权限', 403);
+            if (in_array($status, [404, 405], true)) throw new MemberError('UPSTREAM_API_UNSUPPORTED', '会员站点暂不支持' . $stage . '接口，请联系平台管理员核对版本', 503);
             if ($path === '/auth/login' || $path === '/auth/login/2fa') {
                 throw new MemberError('LOGIN_REJECTED', '登录失败；如站点要求验证码，请在会员网站完成登录后绑定访问令牌', 400);
             }
-            throw new MemberError('UPSTREAM_UNAVAILABLE', '会员服务暂未确认结果，请稍后重试', 503);
+            if ($status >= 200 && $status < 300) throw new MemberError('UPSTREAM_RESPONSE_INVALID', $stage . '返回格式不兼容，未确认操作结果，请联系平台管理员', 503);
+            throw new MemberError('UPSTREAM_UNAVAILABLE', $stage . '未获会员站点确认' . ($status > 0 ? '（HTTP ' . $status . '）' : '') . '，请稍后重试', 503);
         }
         return $payload['data'];
     }
@@ -328,13 +354,28 @@ final class MemberService
             || !is_numeric($receipt['value'] ?? null) || (float)$receipt['value'] !== (float)self::GIFT_USD
             || ($receipt['used_by'] ?? null) !== (int)$grant['user_id'] || ($receipt['status'] ?? '') !== 'used'
             || !is_int($receipt['id'] ?? null) || $receipt['id'] <= 0) {
-            $this->execute("UPDATE welcome_grants SET status='review',last_error='RECEIPT_MISMATCH' WHERE user_id=? AND status='pending'", [$grant['user_id']]);
+            $this->execute("UPDATE welcome_grants SET status='review',last_error='RECEIPT_MISMATCH' WHERE user_id=? AND code=? AND status='pending'", [$grant['user_id'], $grant['code']]);
             throw new MemberError('GRANT_REVIEW_REQUIRED', '赠金凭据与账户不匹配，需要管理员核对', 409);
         }
     }
 
+    private function welcomeCode(int $userId, bool $legacy = false): string
+    {
+        $digest = strtoupper(hash_hmac('sha256', self::CAMPAIGN . ':' . $this->config['origin'] . ':' . $userId, $this->config['secret']));
+        // The upstream storage schema limits redeem codes to 32 characters.
+        return $legacy ? 'YQ-WELCOME-' . $digest : 'YQW-' . substr($digest, 0, 28);
+    }
+
+    private function currentGrant(int $userId): array
+    {
+        $grant = $this->execute('SELECT * FROM welcome_grants WHERE user_id=?', [$userId])->fetch(PDO::FETCH_ASSOC);
+        if (!$grant) throw new MemberError('GRANT_NOT_FOUND', '该账户没有客户端赠金申请', 404);
+        return $grant;
+    }
+
     private function fulfill(array $grant, bool $readOnly = false): void
     {
+        $grant = $this->currentGrant((int)$grant['user_id']);
         if ($grant['status'] === 'claimed') return;
         if ($grant['status'] === 'review' && !$readOnly) throw new MemberError('GRANT_REVIEW_REQUIRED', '赠金凭据需要管理员核对', 409);
         $headers = ['x-api-key: ' . $this->config['adminKey']];
@@ -345,18 +386,42 @@ final class MemberService
         foreach ($found['items'] as $item) {
             if (is_array($item) && ($item['code'] ?? '') === $grant['code']) { $receipt = $item; break; }
         }
+        if (strlen($grant['code']) > 32 && ($receipt === null || ($receipt['status'] ?? '') !== 'used')) {
+            $legacy = hash_equals($this->welcomeCode((int)$grant['user_id'], true), $grant['code']);
+            if (!$legacy || $receipt !== null) {
+                $this->execute("UPDATE welcome_grants SET status='review',last_error='LEGACY_CODE_REVIEW' WHERE user_id=? AND code=? AND status='pending'", [$grant['user_id'], $grant['code']]);
+                throw new MemberError('GRANT_REVIEW_REQUIRED', '原赠金凭据需要管理员核对，未创建新的赠金申请', 409);
+            }
+            // An incomplete or malformed search cannot establish that no old receipt exists.
+            if (!is_int($found['total'] ?? null) || $found['total'] !== 0 || count($found['items']) !== 0) {
+                throw new MemberError('GRANT_LOOKUP_INCOMPLETE', '无法完整确认原赠金凭据，未创建新的赠金申请', 503);
+            }
+            if ($readOnly) throw new MemberError('GRANT_PENDING', '上游尚无已核销凭据，额度未被确认到账', 409);
+            $current = $this->transaction(function () use ($grant): array {
+                $latest = $this->currentGrant((int)$grant['user_id']);
+                if ($latest['status'] === 'pending' && hash_equals($latest['code'], $grant['code'])) {
+                    $this->execute("UPDATE welcome_grants SET code=?,last_error=NULL WHERE user_id=? AND code=? AND status='pending'",
+                        [$this->welcomeCode((int)$grant['user_id']), $grant['user_id'], $grant['code']]);
+                }
+                return $this->currentGrant((int)$grant['user_id']);
+            });
+            $this->fulfill($current, $readOnly);
+            return;
+        }
         if ($receipt !== null && (($receipt['type'] ?? '') !== 'balance' || (float)($receipt['value'] ?? 0) !== (float)self::GIFT_USD)) {
             $this->validateReceipt($grant, $receipt);
         }
         if ($receipt === null || ($receipt['status'] ?? '') !== 'used') {
             if ($readOnly) throw new MemberError('GRANT_PENDING', '上游尚无已核销凭据，额度未被确认到账', 409);
+            $latest = $this->currentGrant((int)$grant['user_id']);
+            if ($latest['code'] !== $grant['code'] || $latest['status'] !== $grant['status']) { $this->fulfill($latest); return; }
             $result = $this->request('POST', '/admin/redeem-codes/create-and-redeem',
                 array_merge($headers, ['Idempotency-Key: ' . $grant['code']]),
                 ['code' => $grant['code'], 'type' => 'balance', 'value' => self::GIFT_USD, 'user_id' => (int)$grant['user_id'], 'notes' => self::CAMPAIGN]);
             $receipt = is_array($result['redeem_code'] ?? null) ? $result['redeem_code'] : [];
         }
         $this->validateReceipt($grant, $receipt);
-        $this->execute("UPDATE welcome_grants SET status='claimed',claimed_at=?,upstream_id=?,last_error=NULL WHERE user_id=? AND status IN ('pending','review')", [time(), $receipt['id'], $grant['user_id']]);
+        $this->execute("UPDATE welcome_grants SET status='claimed',claimed_at=?,upstream_id=?,last_error=NULL WHERE user_id=? AND code=? AND status IN ('pending','review')", [time(), $receipt['id'], $grant['user_id'], $grant['code']]);
     }
 
     /** Only call behind the existing web administrator session and CSRF protection. */
@@ -486,7 +551,7 @@ final class MemberService
                 throw new MemberError('INSTALLATION_ALREADY_CLAIMED', '此安装已领取过首次使用赠金', 409);
             }
             // Stable across every retry and process crash; committed before any external side effect.
-            $code = 'YQ-WELCOME-' . strtoupper(hash_hmac('sha256', self::CAMPAIGN . ':' . $this->config['origin'] . ':' . $userId, $this->config['secret']));
+            $code = $this->welcomeCode($userId);
             $this->execute('INSERT INTO welcome_grants(user_id,installation_hash,code,status,amount_cents,created_at) VALUES(?,?,?,\'pending\',1000,?)', [$userId, $installation, $code, time()]);
             return $this->execute('SELECT * FROM welcome_grants WHERE user_id=?', [$userId])->fetch(PDO::FETCH_ASSOC);
         });

@@ -1,0 +1,41 @@
+{
+  "validatedAt": "2026-11-15T06:23:08.420794+00:00",
+  "rootCause": "Welcome codes were 75 characters but the upstream redeem-code entity and database allow 32.",
+  "fixedBehavior": [
+    "New requests persist stable 32-character codes before upstream effects.",
+    "Legacy pending reservations migrate only after an exact complete empty old-code lookup.",
+    "Claimed and review reservations are not automatically replaced.",
+    "Claim failures refresh status without another automatic claim.",
+    "Stale session responses cannot clear or expose a newer account.",
+    "Logout clears the UI before subsequent network reads."
+  ],
+  "offlineValidation": {
+    "windowsPhp": 29,
+    "linuxPhp82": 29,
+    "desktopMembership": 15,
+    "membershipUi": 8,
+    "typecheck": "passed",
+    "concurrentWorkersPerCase": 8
+  },
+  "production": {
+    "deployedAt": "2026-11-15T06:17:33.229715+00:00",
+    "changedFiles": [
+      "member_service.php"
+    ],
+    "sourceSha256": "b09fede5e36d31eed82487a8376e01f492e6d9bff2eb60917aa39ce880faa881",
+    "sqliteOnlineBackupVerified": true,
+    "originalExistingPendingRequestRestored": true,
+    "receipt": {
+      "status": "claimed",
+      "amountUsd": 10,
+      "codeLength": 32,
+      "exactMatches": 1,
+      "recipientTypeAmountAndIdValidated": true
+    },
+    "accountAndInstallationConstraintsPreserved": true,
+    "readOnlyRecheckConfirmed": true,
+    "publicConfigHttp": 200,
+    "balanceValidation": "Authenticated member and administrator reads agree. Net balance difference is not used as credit proof because the account has concurrent usage; the exact consumed receipt is authoritative."
+  },
+  "scope": "One existing user-initiated welcome request was resumed. Offline tests issued no production credits. No new member keys or model inference requests were created."
+}

@@ -65,6 +65,8 @@ jobs:
         run: |
           python scripts/test-management-ui.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/test-membership-ui.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python scripts/test-client-catalog-ui.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python scripts/test-provider-sync-ui.py
