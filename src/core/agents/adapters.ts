@@ -6,6 +6,7 @@ import type { AgentId, Provider } from '../store/types.js';
 import { nowIso } from '../util.js';
 import { detectCodingDesktop } from '../injector.js';
 import { cliCandidates, desktopCandidates, type ClientPathContext } from '../clientPaths.js';
+import { CLAUDE_DESKTOP_PROFILE, claudeDesktopConfigFiles, claudeDesktopRestorePaths, resolveClaudeDesktopConfig } from '../claudeDesktopPaths.js';
 import { readOfficialCodexIdentity, codexCoexistBaseUrl, CODEX_COEXIST_BASE_PATH } from '../gateway/coexist.js';
 import { applyPlan, restorePlan, jsonObject, planned, plannedJson, readText, patchToml, patchEnv, redactConfig, digest, type PlannedFile } from './configFiles.js';
 
@@ -28,6 +29,8 @@ export interface AgentAdapter {
   id: AgentId; name: string; vendor: string; description: string; needsInstall: boolean; protocol: string; hotSwitch: boolean;
   support: 'automatic' | 'manual' | 'unsupported'; category: 'cli' | 'desktop' | 'service'; supportNote: string; docsUrl: string;
   configPaths(): string[];
+  restorePaths?(backupPath?: string): string[];
+  matchesConfiguration?(ctx: ConnectContext): boolean;
   preview(ctx: ConnectContext): ConnectPreview;
   connect(ctx: ConnectContext): ConnectResult;
   disconnect(backupPath?: string): ConnectResult;
@@ -38,7 +41,6 @@ export interface AgentAdapter {
 // Isolated client profile for portable deployments and integration tests.
 function home(...parts: string[]): string { return path.join(process.env.AURORA_CLIENT_HOME || os.homedir(), ...parts); }
 function envDir(name: string, fallback: string): string { return process.env.AURORA_CLIENT_HOME ? fallback : process.env[name] || fallback; }
-function localData(): string { return envDir('LOCALAPPDATA', home('AppData', 'Local')); }
 function pathContext(): ClientPathContext { return { platform: process.platform, home: home(), environment: process.env, isolated: !!process.env.AURORA_CLIENT_HOME }; }
 function cliPath(command: string): string | undefined {
   for (const candidate of cliCandidates(command, pathContext())) {
@@ -130,9 +132,14 @@ function makeAdapter(spec: AdapterSpec): AgentAdapter {
     },
     disconnect(backup) {
       if (spec.support !== 'automatic') return { ok: false, message: '此客户端没有由云桥写入的配置' };
-      try { restorePlan(this.id.startsWith('codex-') || this.id === 'chatgpt-desktop' ? 'codex-cli' : this.id, backup, this.configPaths()); detectReset(); return { ok: true, message: `已恢复首次接入前的 ${spec.name} 配置，请重新启动客户端。`, restartRequired: true }; }
+      try { restorePlan(this.id.startsWith('codex-') || this.id === 'chatgpt-desktop' ? 'codex-cli' : this.id, backup, this.restorePaths?.(backup) ?? this.configPaths()); detectReset(); return { ok: true, message: `已恢复首次接入前的 ${spec.name} 配置，请重新启动客户端。`, restartRequired: true }; }
       catch (error) { return { ok: false, message: String((error as Error).message) }; }
     },
+  };
+  if (spec.support === 'automatic') adapter.matchesConfiguration = ctx => {
+    if (adapter.support !== 'automatic') return false;
+    validate(ctx, adapter);
+    return spec.plan!(ctx).every(file => file.existed && file.before === file.after);
   };
   return adapter;
 }
@@ -206,10 +213,10 @@ Object.defineProperty(codexDesktop, 'support', { enumerable: true, get: () => de
 codexDesktop.detect = () => { const detected = desktopDetection(); return { installed: detected.installed, configured: fs.existsSync(codexConfig()), command: detected.executable, version: detected.version, configPath: codexConfig(), productName: detected.productName, supportsCodexConfig: detected.supportsCodexConfig, evidence: detected.evidence, detectionError: detected.detectionError }; };
 codexDesktop.preview = ctx => desktopDetection().supportsCodexConfig ? desktopPreview(ctx) : { ok: false, message: '尚未从安装资源确认该桌面版本支持 Codex 配置。请升级到含编程模块的 ChatGPT 桌面版，或在桌面增强中指定程序路径后重新检测。', files: [], warnings: [], requiresRestart: false };
 codexDesktop.connect = ctx => desktopDetection().supportsCodexConfig ? desktopConnect(ctx) : { ok: false, message: '当前桌面版本的编程配置能力尚未确认，未改写任何客户端配置。' };
-const DESKTOP_PROFILE = '753cb857-baa9-45ce-a04b-000000003425';
+const DESKTOP_PROFILE = CLAUDE_DESKTOP_PROFILE;
 function desktopConfigPaths(): string[] {
-  const root = process.platform === 'win32' ? localData() : process.platform === 'darwin' ? home('Library', 'Application Support') : envDir('XDG_CONFIG_HOME', home('.config'));
-  return [path.join(root, 'Claude', 'claude_desktop_config.json'), path.join(root, 'Claude-3p', 'claude_desktop_config.json'), path.join(root, 'Claude-3p', 'configLibrary', '_meta.json'), path.join(root, 'Claude-3p', 'configLibrary', `${DESKTOP_PROFILE}.json`)];
+  const selected = resolveClaudeDesktopConfig();
+  return selected.root ? claudeDesktopConfigFiles(selected.root) : [];
 }
 const claudeDesktop = makeAdapter({
   id: 'claude-desktop', name: 'Claude 桌面版', vendor: 'Anthropic', category: 'desktop', support: 'automatic', protocol: 'anthropic', description: '通过支持第三方配置的 Claude Desktop 版本接入模型网关。',
@@ -217,7 +224,9 @@ const claudeDesktop = makeAdapter({
   docsUrl: 'https://github.com/farion1231/cc-switch/blob/main/docs/user-manual/zh/2-providers/2.6-claude-desktop.md', desktop: 'Claude', paths: desktopConfigPaths,
   warnings: ['仅适用于支持 3P / Gateway 的 Claude Desktop 版本；旧版不会读取此配置。', '模型映射模式使用期间需保持云桥网关运行。客户端功能也取决于上游模型能力。'],
   plan(ctx) {
-    const [normal, thirdParty, metaFile, profileFile] = desktopConfigPaths(), ep = connectionParameters(ctx, 'anthropic');
+    const selected = resolveClaudeDesktopConfig();
+    if (!selected.root) throw new Error(selected.reason);
+    const [normal, thirdParty, metaFile, profileFile] = claudeDesktopConfigFiles(selected.root), ep = connectionParameters(ctx, 'anthropic');
     if (ctx.mode === 'direct' && !/^(?:anthropic\/)?claude-(?:sonnet|opus|haiku)-/.test(ctx.model)) throw new Error('Claude Desktop 直连需要可识别的 Claude 角色模型；其他模型请选择网关接入');
     const main = jsonObject(normal); main.deploymentMode = '3p';
     const third = jsonObject(thirdParty); third.deploymentMode = '3p';
@@ -230,6 +239,14 @@ const claudeDesktop = makeAdapter({
     return [plannedJson(normal, main), plannedJson(thirdParty, third), plannedJson(metaFile, meta), plannedJson(profileFile, profile)];
   },
 });
+claudeDesktop.restorePaths = backup => claudeDesktopRestorePaths(backup);
+claudeDesktop.detect = () => {
+  const selected = resolveClaudeDesktopConfig(), files = selected.root ? claudeDesktopConfigFiles(selected.root) : [];
+  const command = desktopPath('Claude');
+  return { installed: !!command, configured: files.some(file => fs.existsSync(file)), command, configPath: files[0],
+    evidence: [selected.reason, ...selected.candidates.filter(candidate => candidate.existing).map(candidate => candidate.root)],
+    ...(selected.status !== 'resolved' ? { detectionError: selected.reason } : {}) };
+};
 const geminiCli = makeAdapter({
   id: 'gemini-cli', name: 'Gemini CLI', vendor: 'Google', category: 'cli', support: 'automatic', protocol: 'gemini', description: 'Google 终端助手，通过 Gemini 原生 API 或网关使用模型。',
   supportNote: '写入官方支持的用户级 .gemini/.env 与 API Key 身份设置。', docsUrl: 'https://geminicli.com/docs/reference/configuration/', command: 'gemini', paths: () => [home('.gemini', 'settings.json'), home('.gemini', '.env')],

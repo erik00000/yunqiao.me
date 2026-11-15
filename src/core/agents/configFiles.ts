@@ -156,6 +156,25 @@ export function restorePlan(agentId: string, backup: string | undefined, allowed
   }
 }
 
+/** Read-only verification. No config content, credentials or paths escape this result. */
+export function inspectAppliedPlan(agentId: string, backup: string, allowed: string[]): { backupReadable: boolean; unchanged: boolean } {
+  if (!allowed.length) throw new Error('无法确定配置目录');
+  const manifest = loadManifest(backup, agentId, allowed);
+  let backupReadable = true, unchanged = true;
+  for (const entry of manifest.files) {
+    try {
+      if (entry.backup !== null) {
+        if (!fs.existsSync(entry.backup)) backupReadable = false;
+        else readText(entry.backup);
+      }
+    } catch { backupReadable = false; }
+    try {
+      if (!fs.existsSync(entry.path) || digest(readText(entry.path)) !== entry.installedHash) unchanged = false;
+    } catch { unchanged = false; }
+  }
+  return { backupReadable, unchanged };
+}
+
 type TomlValue = string | number | boolean | null;
 function toml(value: Exclude<TomlValue, null>): string { return typeof value === 'string' ? JSON.stringify(value) : String(value); }
 function tableIdentity(section: string): string {

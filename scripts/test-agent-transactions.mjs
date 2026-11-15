@@ -163,6 +163,27 @@ try {
     assert.equal(read(f.files[0]), external); assertSnapshot(remaining); assertStates(f, before); assert(result.message.includes(f.files[0]));
   });
 
+  if (process.platform === 'win32') for (const originalSource of ['standard', 'msix']) await check(`Claude Desktop ${originalSource} undo snapshots its original root after another installation appears`, async () => {
+    const f = fixture(`claude-root-change-${originalSource}`), base = path.join(f.client, 'AppData', 'Local');
+    const msix = path.join(base, 'Packages', 'Claude_pzs8sxrjxfjjc', 'LocalCache', 'Local');
+    if (originalSource === 'msix') fs.mkdirSync(msix, { recursive: true });
+    const adapter = api.getAdapter('claude-desktop'), files = adapter.configPaths();
+    write(files[0], '{"deploymentMode":"1p","originalInstallation":true}\n');
+    write(files[2], '{"appliedId":"original","entries":[{"id":"original","name":"Keep"}]}\n');
+    const originals = snapshot(files);
+    const connect = () => f.call('agent.connect', { agentId: 'claude-desktop', authMode: 'api' });
+    const disconnect = () => f.call('agent.disconnect', { agentId: 'claude-desktop' });
+    const first = await connect(); assert(first.ok, first.message);
+    const otherFile = path.join(originalSource === 'standard' ? msix : base, 'Claude-3p', 'configLibrary', 'other-installation.json');
+    write(otherFile, '{"fixture":"other-installation-must-stay-unchanged"}\n');
+    assert.deepEqual(adapter.configPaths(), [], 'Discovery must not pick a root when both installations have configuration');
+    assert.deepEqual(adapter.restorePaths(first.backup), files);
+    const connected = snapshot([...files, otherFile]), before = stateSnapshot(f);
+    await failState(f, disconnect); assertSnapshot(connected); assertStates(f, before);
+    assert.equal(f.store.listAgents()['claude-desktop'].backupPath, first.backup);
+    const restored = await disconnect(); assert(restored.ok, restored.message); assertSnapshot(originals); assert.equal(read(otherFile), connected.at(-1).content);
+  });
+
   await check('real agents.json rename failure keeps every existing shared state and rolls back a switch', async () => {
     const f = fixture('disk-connect'); const first = await f.call('agent.connect'); assert(first.ok, first.message);
     const files = snapshot([f.config, f.catalog]), before = stateSnapshot(f);

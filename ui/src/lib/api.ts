@@ -310,6 +310,9 @@ export interface UsageSummary {
 export interface SessionSummary {
   id: string;
   agent: string;
+  isSubagent?: boolean;
+  parentSessionId?: string;
+  subagentId?: string;
   title: string;
   project?: string;
   cwd?: string;

@@ -170,7 +170,7 @@ function cleanModelMetadata(value: any, depth = 0): any {
     .map(([key, item]) => [key, cleanModelMetadata(item, depth + 1)]));
   return value;
 }
-function bareCacheIsOfficial(store: AuroraStore): boolean {
+function bareCacheIsOfficial(store: AuroraStore, persist = true): boolean {
   try {
     const configPath = path.join(codexHome(), 'config.toml');
     if (!fs.existsSync(configPath)) return true;
@@ -181,7 +181,7 @@ function bareCacheIsOfficial(store: AuroraStore): boolean {
     const endpoint = profile?.openai_base_url ?? config.openai_base_url;
     const catalog = profile?.model_catalog_json ?? config.model_catalog_json;
     if (config.model_providers?.openai || profile?.model_providers?.openai) return false;
-    return (!provider || provider === 'openai') && (!endpoint || endpoint.replace(/\/$/, '') === codexCoexistBaseUrl(store.getSettings().gatewayPort))
+    return (!provider || provider === 'openai') && (!endpoint || endpoint.replace(/\/$/, '') === codexCoexistBaseUrl((persist ? store.getSettings() : store.settings.read()).gatewayPort))
       && (!catalog || (typeof catalog === 'string' && path.resolve(codexHome(), catalog) === path.join(store.dir, 'codex-model-catalog.json')));
   } catch { return false; }
 }
@@ -201,7 +201,7 @@ function normalizeOfficialModels(rawModels: any[], permitBare: boolean): Record<
       return [model];
     });
 }
-function officialNativeModels(store: AuroraStore): { models: Record<string, any>[]; source: CoexistCatalog['officialModelSource'] } {
+function officialNativeModels(store: AuroraStore, persist = true): { models: Record<string, any>[]; source: CoexistCatalog['officialModelSource'] } {
   let identity = '';
   try { const live = credential(); if (!live) return { models: [], source: 'none' };
     if (live.accountScope) identity = createHash('sha256').update(live.accountScope).digest('hex');
@@ -213,9 +213,9 @@ function officialNativeModels(store: AuroraStore): { models: Record<string, any>
   } catch { /* The managed snapshot is optional; it is never a credential backup. */ }
   try {
     const cache = boundedJson(path.join(codexHome(), 'models_cache.json'), 12 * 1024 * 1024);
-    const models = Array.isArray(cache.models) ? normalizeOfficialModels(cache.models, bareCacheIsOfficial(store)) : [];
+    const models = Array.isArray(cache.models) ? normalizeOfficialModels(cache.models, bareCacheIsOfficial(store, persist)) : [];
     if (models.length) {
-      if (identity && JSON.stringify(models) !== JSON.stringify(previous)) {
+      if (persist && identity && JSON.stringify(models) !== JSON.stringify(previous)) {
         try { store.writeExtra(snapshotFile, { schema: 1, identity, models }); } catch { /* A read-only catalog still works for this run. */ }
       }
       return { models, source: 'native-cache' };
@@ -223,9 +223,11 @@ function officialNativeModels(store: AuroraStore): { models: Record<string, any>
   } catch { /* Missing/rebuilt native caches can recover from the same-account metadata snapshot. */ }
   return { models: previous, source: previous.length ? 'saved-cache' : 'none' };
 }
-/** Native cache metadata is a local discovery source, not proof of remote model entitlement. */
-export function getCoexistCatalog(store: AuroraStore): CoexistCatalog {
-  const identity = readOfficialCodexIdentity(), discovered = officialNativeModels(store), native = discovered.models, models: CoexistModel[] = [], nativeModels: Record<string, any>[] = [];
+/** Native cache metadata is a local discovery source, not proof of remote model entitlement.
+ * persist=false also bypasses settings migrations, keeping diagnostic discovery strictly read-only.
+ */
+export function getCoexistCatalog(store: AuroraStore, persist = true): CoexistCatalog {
+  const identity = readOfficialCodexIdentity(), discovered = officialNativeModels(store, persist), native = discovered.models, models: CoexistModel[] = [], nativeModels: Record<string, any>[] = [];
   for (const model of native) {
     const id = `${CODEX_OFFICIAL_MODEL_PREFIX}${model.slug}`, displayName = `官方 · ${String(model.display_name || model.slug)}`;
     models.push({ id, upstreamModel: model.slug, providerId: 'official', providerName: 'ChatGPT 官方账号', displayName, official: true,

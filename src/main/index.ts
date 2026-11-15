@@ -3,7 +3,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { AuroraStore, getStore, setDataDir } from '../core/store/index.js';
+import { AuroraStore, DEFAULT_SETTINGS, getStore, setDataDir } from '../core/store/index.js';
 import { memberAction } from './member.js';
 import { describeClientLifecycle, restartClient } from './clientLifecycle.js';
 import { runtimeFor } from '../core/extensions/runtime.js';
@@ -27,8 +27,9 @@ let localClientWarnings: string[] = [];
 const recent: UsageRecord[] = [];
 const uiFile = path.join(__dirname, '..', 'ui', 'index.html');
 
-function gatewayUrl() { const s = store.getSettings(); const host = s.gatewayHost === '0.0.0.0' || s.gatewayHost === '::' ? '127.0.0.1' : s.gatewayHost; return `http://${host.includes(':') ? `[${host}]` : host}:${s.gatewayPort}`; }
-function status() { return { ...(gateway?.getStatus() || { running: false, host: '127.0.0.1', port: store.getSettings().gatewayPort, requests: 0, errors: 0 }), ...(gatewayError ? { lastError: gatewayError } : {}) }; }
+// Settings migration belongs to startup/save; diagnostic getters must not write it back.
+function gatewayUrl() { const s = { ...DEFAULT_SETTINGS(), ...store.settings.read() }; const host = s.gatewayHost === '0.0.0.0' || s.gatewayHost === '::' ? '127.0.0.1' : s.gatewayHost; return `http://${host.includes(':') ? `[${host}]` : host}:${s.gatewayPort}`; }
+function status() { return { ...(gateway?.getStatus() || { running: false, host: '127.0.0.1', port: store.settings.read().gatewayPort ?? DEFAULT_SETTINGS().gatewayPort, requests: 0, errors: 0 }), ...(gatewayError ? { lastError: gatewayError } : {}) }; }
 function refreshLocalClients(force = false) {
   localClientWarnings = [];
   try {

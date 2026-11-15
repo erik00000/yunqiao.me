@@ -1,8 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import PresetPicker from '../components/PresetPicker';
 import ProviderBalance from '../components/ProviderBalance';
+import ProviderCompactBalance from '../components/ProviderCompactBalance';
 import BalanceQueryEditor from '../components/BalanceQueryEditor';
 import { useProviderBalances } from '../hooks/useProviderBalances';
+import { persistProviderView, providerBalanceFacts, readProviderView, type BalanceFilter, type ProviderView } from '../lib/providerPresentation';
+import '../styles/providers.css';
 import { LocalIdentityCard, LocalScanDetails, localTime, useLocalClientScan } from '../components/LocalClients';
 import type { PageProps } from '../App';
 import { Btn, Empty, Field, Ico, Modal, Toggle, useToast } from '../components/ui';
@@ -36,6 +39,10 @@ export default function Providers({ state, reload, go }: PageProps) {
   const snapshot = state.localClients;
   const [editing, setEditing] = useState<Partial<Provider> | null>(null);
   const [query, setQuery] = useState('');
+  const [view, setView] = useState<ProviderView>(readProviderView);
+  const [protocol, setProtocol] = useState('all');
+  const [enabledFilter, setEnabledFilter] = useState('all');
+  const [balanceFilter, setBalanceFilter] = useState<BalanceFilter>('all');
   const [testing, setTesting] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<Record<string, any>>({});
   const [modelSyncErrors, setModelSyncErrors] = useState<Record<string, string>>({});
@@ -99,14 +106,16 @@ export default function Providers({ state, reload, go }: PageProps) {
 
   const list = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return state.providers;
-    return state.providers.filter(
-      (p) =>
-        p.name.toLowerCase().includes(q) ||
-        p.baseUrl.toLowerCase().includes(q) ||
-        p.models.some((m) => m.id.toLowerCase().includes(q)),
-    );
-  }, [state.providers, query]);
+    return state.providers.filter(p => {
+      if (q && !p.name.toLowerCase().includes(q) && !p.baseUrl.toLowerCase().includes(q) && !p.models.some(m => m.id.toLowerCase().includes(q))) return false;
+      if (protocol !== 'all' && p.format !== protocol) return false;
+      if (enabledFilter !== 'all' && p.enabled !== (enabledFilter === 'enabled')) return false;
+      return balanceFilter === 'all' || providerBalanceFacts(p, balances.views[p.id])[balanceFilter];
+    });
+  }, [state.providers, query, protocol, enabledFilter, balanceFilter, balances.views]);
+  const hasFilters = !!query.trim() || protocol !== 'all' || enabledFilter !== 'all' || balanceFilter !== 'all';
+  function clearFilters() { setQuery(''); setProtocol('all'); setEnabledFilter('all'); setBalanceFilter('all'); }
+  function changeView(next: ProviderView) { setView(next); persistProviderView(next); }
 
   const identities = (snapshot?.accounts || []).filter(account => account.authKind === 'oauth' && (!query.trim() || `${account.label} ${account.kind} ${account.email || ''}`.toLowerCase().includes(query.trim().toLowerCase())));
 
@@ -206,78 +215,104 @@ export default function Providers({ state, reload, go }: PageProps) {
 
       {scan.error && <div className="notice warning" role="alert">{scan.error}</div>}
       {identities.length > 0 && <section className="local-identities"><div className="section-heading"><h2>本机官方账号</h2><span>由对应客户端保管登录凭据</span></div><div className="grid cols-3">{identities.map(account => <LocalIdentityCard key={account.id} kind={account.kind} account={account} compact onManage={() => go('agents')} />)}</div></section>}
-      <div className="section-heading"><h2>API 供应商 <span className="chip">{list.length}</span></h2><span>最近扫描：{localTime(snapshot?.checkedAt)}</span></div>
+      <div className="section-heading"><h2>API 供应商 <span className="chip">{hasFilters ? `${list.length} / ${state.providers.length}` : list.length}</span></h2><span>最近扫描：{localTime(snapshot?.checkedAt)}</span></div>
+      <div className="provider-toolbar">
+        <div className="provider-filters" role="group" aria-label="筛选 API 供应商">
+          <select className="select" aria-label="供应商协议" value={protocol} onChange={e => setProtocol(e.target.value)}>
+            <option value="all">全部协议</option>
+            {Object.entries(PROTOCOL_TEXT).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+          <select className="select" aria-label="供应商启用状态" value={enabledFilter} onChange={e => setEnabledFilter(e.target.value)}>
+            <option value="all">全部启用状态</option><option value="enabled">已启用</option><option value="disabled">已停用</option>
+          </select>
+          <select className="select" aria-label="供应商余额状态" value={balanceFilter} onChange={e => setBalanceFilter(e.target.value as BalanceFilter)}>
+            <option value="all">全部余额状态</option><option value="failed">有查询失败</option><option value="unknown">有余额未知</option><option value="nonpositive">存在零或负余额</option><option value="paused">已暂停余额查询</option>
+          </select>
+          {hasFilters && <Btn size="sm" variant="ghost" onClick={clearFilters}>清除筛选</Btn>}
+        </div>
+        <div className="provider-view-switch" role="group" aria-label="供应商显示方式">
+          <button type="button" aria-pressed={view === 'grid'} onClick={() => changeView('grid')}>卡片</button>
+          <button type="button" aria-pressed={view === 'list'} onClick={() => changeView('list')}>紧凑列表</button>
+        </div>
+      </div>
+      {balanceFilter !== 'all' && <p className="provider-filter-hint">按各 Key 和额度项目的查询结果筛选；余额未知包含未查询、查询失败或接口未提供数值。零或负余额仅采用本次有效结果，不代表整家供应商不可用。</p>}
       {list.length === 0 ? (
         <div className="card">
           <Empty
             icon="🔌"
-            title={query ? '没有匹配的供应商' : '还没有 API 供应商'}
-            hint={query ? '试试供应商名称、模型 ID 或接口地址。' : '重新扫描已有客户端配置，或从右上角添加供应商。官方账号会独立保留在本地账号中。'}
+            title={hasFilters ? '没有匹配的供应商' : '还没有 API 供应商'}
+            hint={hasFilters ? '调整搜索或筛选条件，也可以清除筛选查看全部供应商。' : '重新扫描已有客户端配置，或从右上角添加供应商。官方账号会独立保留在本地账号中。'}
           />
         </div>
       ) : (
-        <div className="grid cols-3">
+        <div className={`provider-collection ${view === 'list' ? 'is-list' : 'grid cols-3'}`}>
           {list.map((p) => (
             <div
               key={p.id}
               className="card provider-card"
+              data-provider-id={p.id}
               style={{ ['--pc' as any]: `linear-gradient(90deg, ${p.color ?? '#6d8cff'}, transparent)` }}
             >
-              <div className="top">
-                <div className="avatar" style={{ color: p.color }}>
-                  {p.icon ?? '◆'}
-                </div>
-                <div style={{ minWidth: 0, flex: 1 }}>
-                  <div className="name">
-                    <span className="ellipsis">{p.name}</span>
-                    {p.official && <span className="chip">官方渠道</span>}
-                    {!p.enabled && <span className="chip">已停用</span>}
+              <div className="provider-overview">
+                <div className="top">
+                  <div className="avatar" style={{ color: p.color }}>
+                    {p.icon ?? '◆'}
                   </div>
-                  <div className="meta mono">{p.baseUrl.replace(/^https?:\/\//, '')}</div>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div className="name">
+                      <span className="ellipsis">{p.name}</span>
+                      {p.official && <span className="chip">官方渠道</span>}
+                      {!p.enabled && <span className="chip">已停用</span>}
+                    </div>
+                    <div className="meta mono">{p.baseUrl.replace(/^https?:\/\//, '')}</div>
+                  </div>
+                  <Toggle
+                    on={p.enabled}
+                    title={`启用供应商 ${p.name}`}
+                    disabled={!!mutating}
+                    onChange={(v) => mutate(p.id, async () => {
+                      const result = await call('provider.save', { id: p.id, enabled: v });
+                      if (result?.ok === false) throw new Error(result.message || '供应商状态保存失败');
+                      await reload();
+                    })}
+                  />
                 </div>
-                <Toggle
-                  on={p.enabled}
-                  title={`启用供应商 ${p.name}`}
-                  disabled={!!mutating}
-                  onChange={(v) => mutate(p.id, async () => {
-                    const result = await call('provider.save', { id: p.id, enabled: v });
-                    if (result?.ok === false) throw new Error(result.message || '供应商状态保存失败');
-                    await reload();
-                  })}
-                />
+
+                {!!snapshot?.sources.some(source => source.providerId === p.id) && <div className="provider-origin"><Ico name="download" size={13} /><span>自动发现</span>{snapshot.sources.filter(source => source.providerId === p.id).map(source => <span key={source.id} className="chip" title={`${source.label}\n${source.path}`}>{source.label}</span>)}</div>}
+                <div className="row wrap" style={{ gap: 6 }}>
+                  <span className="chip">{PROTOCOL_TEXT[p.format]}</span>
+                  <span className="chip">{p.models.length} 个模型</span>
+                  <span className="chip">{p.apiKeys.filter((k) => k.key || k.hasKey).length} 个 Key</span>
+                  {p.rateMultiplier && p.rateMultiplier !== 1 && <span className="chip">×{p.rateMultiplier}</span>}
+                </div>
               </div>
 
-              {!!snapshot?.sources.some(source => source.providerId === p.id) && <div className="provider-origin"><Ico name="download" size={13} /><span>自动发现</span>{snapshot.sources.filter(source => source.providerId === p.id).map(source => <span key={source.id} className="chip" title={`${source.label}\n${source.path}`}>{source.label}</span>)}</div>}
-              <div className="row wrap" style={{ gap: 6 }}>
-                <span className="chip">{PROTOCOL_TEXT[p.format]}</span>
-                <span className="chip">{p.models.length} 个模型</span>
-                <span className="chip">{p.apiKeys.filter((k) => k.key || k.hasKey).length} 个 Key</span>
-                {p.rateMultiplier && p.rateMultiplier !== 1 && <span className="chip">×{p.rateMultiplier}</span>}
-              </div>
+              {view === 'list' && <ProviderCompactBalance provider={p} view={balances.views[p.id]} busy={balances.busy[p.id]} />}
+              <ProviderCardDetails compact={view === 'list'} name={p.name}>
+                <div className="tag-list">
+                  {p.models.slice(0, 3).map((m) => (
+                    <span key={m.id} className="chip" title={m.id}>
+                      {m.id.length > 22 ? m.id.slice(0, 20) + '…' : m.id}
+                      <span style={{ opacity: 0.55 }}>{fmtCtx(m.contextWindow)}</span>
+                    </span>
+                  ))}
+                  {p.models.length > 3 && <span className="chip">+{p.models.length - 3}</span>}
+                </div>
 
-              <div className="tag-list">
-                {p.models.slice(0, 3).map((m) => (
-                  <span key={m.id} className="chip" title={m.id}>
-                    {m.id.length > 22 ? m.id.slice(0, 20) + '…' : m.id}
-                    <span style={{ opacity: 0.55 }}>{fmtCtx(m.contextWindow)}</span>
-                  </span>
-                ))}
-                {p.models.length > 3 && <span className="chip">+{p.models.length - 3}</span>}
-              </div>
-
-              <ProviderBalance provider={p} result={balances.views[p.id]?.result} error={balances.views[p.id]?.error} busy={balances.busy[p.id]} onRefresh={keyId => { void balances.refresh(p.id, keyId, true); }} />
+                <ProviderBalance provider={p} result={balances.views[p.id]?.result} error={balances.views[p.id]?.error} busy={balances.busy[p.id]} onRefresh={keyId => { void balances.refresh(p.id, keyId, true); }} />
+              </ProviderCardDetails>
 
               {testResult[p.id] && (
-                <div className="mono" style={{ fontSize: 10.5, color: testResult[p.id].ok ? 'var(--ok)' : 'var(--danger)' }}>
+                <div className="mono provider-card-feedback" style={{ fontSize: 10.5, color: testResult[p.id].ok ? 'var(--ok)' : 'var(--danger)' }}>
                   {testResult[p.id].message}
                 </div>
               )}
-              {modelSyncErrors[p.id] && <div className="notice warning" role="alert" style={{ display: 'block', overflowWrap: 'anywhere' }}>
+              {modelSyncErrors[p.id] && <div className="notice warning provider-card-feedback" role="alert" style={{ display: 'block', overflowWrap: 'anywhere' }}>
                 <p>{modelSyncErrors[p.id]}</p>
                 {window.aurora ? <button className="text-button" onClick={() => setEditing(p)}>手动添加模型</button> : <p>可在电脑桌面端编辑供应商，手动添加模型。</p>}
               </div>}
 
-              <div className="row" style={{ marginTop: 'auto' }}>
+              <div className="row provider-actions">
                 <Btn size="sm" disabled={testing === p.id} onClick={() => test(p)}>
                   <Ico name="bolt" size={12} />
                   {testing === p.id ? '测试中…' : '测试'}
@@ -298,7 +333,7 @@ export default function Providers({ state, reload, go }: PageProps) {
                 >
                   <Ico name="refresh" size={12} /> 同步模型
                 </Btn>
-                <div style={{ flex: 1 }} />
+                <div className="provider-action-spacer" style={{ flex: 1 }} />
                 <Btn size="sm" variant="ghost" disabled={!window.aurora || !!mutating} onClick={() => setEditing(p)}>
                   编辑
                 </Btn>
@@ -413,6 +448,11 @@ export default function Providers({ state, reload, go }: PageProps) {
       )}
     </>
   );
+}
+
+function ProviderCardDetails({ compact, name, children }: { compact: boolean; name: string; children: React.ReactNode }) {
+  const content = <div className="provider-card-details">{children}</div>;
+  return compact ? <details className="provider-list-details"><summary aria-label={`查看 ${name} 的模型与各 Key 余额`}>模型与各 Key 余额</summary>{content}</details> : content;
 }
 
 function ProviderEditor({

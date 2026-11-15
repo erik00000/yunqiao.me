@@ -127,6 +127,9 @@ export function Modal({
   }, []);
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
+      // A portal can open a second dialog above this one. Only the visible top
+      // dialog handles Escape/Tab, otherwise both workflows close together.
+      if (Array.from(document.querySelectorAll('[role="dialog"][aria-modal="true"]')).at(-1) !== dialogRef.current) return;
       if (e.key === 'Escape') onClose();
       if (e.key === 'Tab') {
         const items = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [tabindex="0"]') || []).filter(x => x.getClientRects().length);

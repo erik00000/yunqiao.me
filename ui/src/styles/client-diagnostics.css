@@ -1,0 +1,8 @@
+.client-tools { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: flex-start; }
+.client-tools > .client-restart { flex: 1 1 auto; }
+.client-diagnostics { padding-top: 8px; }
+.client-diagnostic-checks { margin: 16px 0 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+.client-diagnostic-checks li { padding: 14px 16px; border: 1px solid var(--stroke); border-radius: 12px; }
+.client-diagnostic-checks li > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.client-diagnostic-checks p { margin: 8px 0 0; color: var(--muted); font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.client-diagnostic-checks li[data-status="error"] { border-color: #cb706955; }

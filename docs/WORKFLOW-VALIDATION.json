@@ -1,0 +1,25 @@
+{
+  "date": "2026-11-15",
+  "scope": ["client diagnostics", "Claude Desktop configuration roots", "provider list and filters", "parent and subagent sessions"],
+  "windows": {
+    "platform": "win32 x64",
+    "coreSuites": 34,
+    "corePassed": true,
+    "diagnosticChecks": 12,
+    "configurationRootChecks": 14,
+    "transactionChecks": 15,
+    "sessionRelationChecks": 8,
+    "newBrowserChecks": 21,
+    "newBrowserPassed": true,
+    "existingBrowserRegressions": ["client lifecycle", "provider balance", "provider model sync", "history repair"],
+    "nativeShellChecks": 4,
+    "nativeShellPassed": true,
+    "productionBuildPassed": true
+  },
+  "macos": { "status": "pending native CI" },
+  "limitations": [
+    "Diagnostics validate local configuration only; no upstream model request was sent.",
+    "UI service responses are mocked; test histories and client configurations use isolated directories.",
+    "No real client was restarted and no public release was published."
+  ]
+}

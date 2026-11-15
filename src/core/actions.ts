@@ -27,6 +27,7 @@ import {
 } from './cloud.js';
 import { GITHUB_RELEASE_PAGE } from './releaseSources.js';
 import { providerBalance } from './providerBalance.js';
+import { diagnoseClient } from './clientDiagnostics.js';
 
 /**
  * 与 Electron 无关的动作层：桌面端的 IPC 和网关的 /api/rpc 共用同一份实现，
@@ -511,6 +512,8 @@ export async function runAction(deps: ActionDeps, action: string, payload: any):
     case 'agent.detect':
       detectReset();
       return detectAll();
+    case 'agent.diagnose':
+      return diagnoseClient(deps, payload);
     case 'agent.preview':
     case 'agent.parameters':
     case 'agent.connect': {
@@ -579,7 +582,7 @@ export async function runAction(deps: ActionDeps, action: string, payload: any):
       if (!current?.backupPath) return adapter.disconnect();
       let before: ClientFileSnapshot[], expected: Map<string, ClientFileExpected>;
       try {
-        before = snapshotClientFiles(adapter.configPaths());
+        before = snapshotClientFiles(adapter.restorePaths?.(current.backupPath) ?? adapter.configPaths());
         expected = clientManifestExpected(current.backupPath, before, true);
       } catch { return { ok: false, message: '无法安全读取当前配置或原始备份，未断开连接。请检查客户端配置与备份目录权限。' }; }
       const result = adapter.disconnect(current?.backupPath);

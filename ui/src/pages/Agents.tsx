@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import PresetPicker from '../components/PresetPicker';
 import ClientRestart from '../components/ClientRestart';
+import ClientDiagnostics from '../components/ClientDiagnostics';
 import type { PageProps } from '../App';
 import { Btn, Empty, Field, Ico, Modal, copyText, useToast } from '../components/ui';
 import { AgentCatalogItem, CloudCatalog, Preset, Provider, PROTOCOL_TEXT, call, fmtCtx } from '../lib/api';
@@ -55,7 +56,7 @@ export default function Agents({ state, reload, go }: PageProps) {
         <p className="client-description">{a.description}</p>
         <div className="tag-list"><span className={`chip ${a.support === 'automatic' ? 'accent' : ''}`}>{a.support === 'automatic' ? '自动配置' : a.support === 'unsupported' ? '官方账号登录' : '手动接入'}</span>{st?.connected && <span className="chip ok ellipsis" title={st.model}>{st.model}</span>}{a.protocol && a.support !== 'unsupported' && <span className="chip">{PROTOCOL_TEXT[a.protocol] || a.protocol}</span>}</div>
         <div className="client-card-actions"><button className="text-button" onClick={() => a.docsUrl ? call('app.openExternal', { url: a.docsUrl }) : setSelected(a)}>接入说明 <span>↗</span></button><div className="grow" />{st?.connected && <Btn variant="ghost" size="sm" onClick={() => setRestoring(a)}>恢复</Btn>}<Btn variant={a.support === 'unsupported' ? 'default' : 'primary'} size="sm" onClick={() => setSelected(a)}>{a.support === 'unsupported' ? '查看说明' : st?.connected ? '更换配置' : '开始配置'} <span>→</span></Btn></div>
-        <ClientRestart agent={a} />
+        <div className="client-tools"><ClientRestart agent={a} /><ClientDiagnostics agent={a} /></div>
       </article>;
     })}</div>
     {!clients.length && <Empty icon="⌕" title="没有匹配的客户端" hint="调整筛选条件，或搜索 Claude、Codex、WorkBuddy。" />}
@@ -164,6 +165,6 @@ function ConnectWizard({ agent, state, reload, onClose }: { agent: AgentCatalogI
       </>}
     </>}
     </fieldset>
-    {result && <div className="client-restart-success"><ClientRestart agent={agent} onActiveChange={setClientActionActive} /></div>}
+    {result && <div className="client-restart-success client-tools"><ClientRestart agent={agent} onActiveChange={setClientActionActive} /><ClientDiagnostics agent={agent} /></div>}
   </Modal>;
 }

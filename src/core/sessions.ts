@@ -120,7 +120,35 @@ function extractLine(o: any): { role: 'user' | 'assistant' | 'tool' | ''; text: 
   return { role: norm, text, model, cwd, toolName };
 }
 
-function summarize(file: string, agent: string): SessionSummary | null {
+const sessionIdentifier = (value: unknown): string | undefined => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,200}$/.test(value) ? value : undefined;
+
+type SessionRelation = Pick<SessionSummary, 'isSubagent' | 'parentSessionId' | 'subagentId'>;
+
+function codexRelation(metadata: any): SessionRelation {
+  const source = metadata.source;
+  const subagent = source && typeof source === 'object' && !Array.isArray(source) ? source.subagent : undefined;
+  const spawn = subagent && typeof subagent === 'object' && !Array.isArray(subagent) ? subagent.thread_spawn : undefined;
+  const serializedSpawn = typeof source === 'string' ? /^subagent_thread_spawn_([0-9a-f-]{36})_d\d+$/i.exec(source) : null;
+  const parent = sessionIdentifier(metadata.parent_thread_id) || sessionIdentifier(spawn?.parent_thread_id) || sessionIdentifier(subagent?.parent_thread_id) || sessionIdentifier(serializedSpawn?.[1]);
+  const parentSessionId = parent !== metadata.id ? parent : undefined;
+  // Match native discriminators only: names, prompts and fork ancestry are not evidence of a subagent.
+  const isSubagent = !!parentSessionId || metadata.thread_source === 'subagent' ||
+    typeof subagent === 'string' || !!subagent && typeof subagent === 'object' && !Array.isArray(subagent) ||
+    ['subagent', 'subagent_review', 'subagent_compact', 'subagent_memory_consolidation'].includes(source) || !!serializedSpawn;
+  return isSubagent ? { isSubagent: true, ...(parentSessionId ? { parentSessionId } : {}) } : {};
+}
+
+function claudePathRelation(file: string, root: string): SessionRelation {
+  const relative = path.relative(root, file).split(path.sep);
+  // Native layout: <project>/<session UUID>/subagents/[workflows/...]/agent-<id>.jsonl.
+  // A file merely named agent-*.jsonl outside this layout remains an ordinary session.
+  if (relative.length < 4 || relative[2] !== 'subagents' ||
+      !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(relative[1])) return {};
+  const match = /^agent-([A-Za-z0-9][A-Za-z0-9_-]{0,200})\.jsonl$/.exec(relative.at(-1) || '');
+  return match ? { isSubagent: true, parentSessionId: relative[1], subagentId: match[1] } : {};
+}
+
+function summarize(file: string, agent: string, root: string): SessionSummary | null {
   let stat: fs.Stats;
   try {
     stat = fs.statSync(file);
@@ -134,6 +162,8 @@ function summarize(file: string, agent: string): SessionSummary | null {
   let cwd = '';
   let id = path.basename(file).replace(/\.jsonl?$/, '');
   let truncated = false;
+  let relation: SessionRelation = agent === 'Claude Code' ? claudePathRelation(file, root) : {};
+  let firstRecord = true;
   try {
     // 只读文件头：Codex 的长会话可能有几百 MB，整个读进来会把主进程打死
     const isJson = file.endsWith('.json');
@@ -149,11 +179,19 @@ function summarize(file: string, agent: string): SessionSummary | null {
       } catch {
         continue;
       }
+      if (!o || typeof o !== 'object' || Array.isArray(o)) continue;
       if (o.type === 'session_meta' && typeof o.payload?.id === 'string') {
         id = o.payload.id;
         if (typeof o.payload.model_provider === 'string') modelProvider = o.payload.model_provider;
+        if (agent === 'Codex') relation = codexRelation(o.payload);
       }
       if (typeof o.sessionId === 'string') id = o.sessionId;
+      // Claude marks a sidechain on the transcript's first record. Later sidechain entries
+      // inside a main transcript must not hide that main conversation.
+      if (agent === 'Claude Code' && firstRecord && o.isSidechain === true) {
+        relation = { isSubagent: true, parentSessionId: sessionIdentifier(o.sessionId), subagentId: sessionIdentifier(o.agentId), ...relation };
+      }
+      firstRecord = false;
       const ex = extractLine(o);
       cwd = cwd || ex.cwd || '';
       model = model || ex.model || '';
@@ -174,6 +212,7 @@ function summarize(file: string, agent: string): SessionSummary | null {
   return {
     id,
     agent,
+    ...relation,
     title,
     project: cwd ? sessionProjectName(cwd) : undefined,
     cwd: cwd || undefined,
@@ -196,7 +235,7 @@ export function scanSessions(): SessionSummary[] {
   try { regions = nativeSessionRegions(); } catch { /* Log-only histories still remain readable when the native index is unavailable. */ }
   for (const root of sessionRoots()) {
     for (const f of walk(root.dir, n => n.endsWith('.jsonl') || (root.agent === 'Gemini CLI' && /^session.*\.json$/.test(n)))) {
-      const s = summarize(f, root.agent);
+      const s = summarize(f, root.agent, root.dir);
       if (s) {
         if (root.agent === 'Codex') {
           const region = regions.get(s.id);
@@ -242,6 +281,7 @@ export function readSession(file: string, limit = 400): SessionMessage[] {
     } catch {
       continue;
     }
+    if (!o || typeof o !== 'object' || Array.isArray(o)) continue;
     const ex = extractLine(o);
     const ts = o.timestamp ?? o.ts ?? o.created_at ?? o?.payload?.timestamp;
     if (!ex.role || !ex.text.trim()) continue;
@@ -252,6 +292,7 @@ export function readSession(file: string, limit = 400): SessionMessage[] {
 }
 
 export function resumeCommand(s: SessionSummary): string {
+  if (s?.isSubagent) return '';
   if (!s || typeof s.id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,200}$/.test(s.id)) return '';
   if (s.agent === 'Claude Code') return `claude --resume ${s.id}`;
   if (s.agent === 'Codex') return `codex resume ${s.id}`;

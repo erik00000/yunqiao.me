@@ -6,6 +6,7 @@ import { parse as parseToml } from 'smol-toml';
 import type { AuroraStore, Provider } from './store/index.js';
 import type { ProtocolName } from './types.js';
 import { atomicWrite, readText } from './agents/configFiles.js';
+import { CLAUDE_DESKTOP_PROFILE, resolveClaudeDesktopConfig } from './claudeDesktopPaths.js';
 
 export type LocalSourceStatus = 'imported' | 'updated' | 'unchanged' | 'linked' | 'modified' | 'ignored' | 'missing-key' | 'unsupported' | 'missing-file';
 export interface LocalClientSource {
@@ -34,7 +35,7 @@ interface RecordEntry {
   providerId?: string; managedHash?: string; candidateHash?: string; owned?: boolean; suppressed?: boolean;
 }
 interface Ledger { version: 1; sources: Record<string, RecordEntry>; snapshot: LocalClientsSnapshot }
-interface Context { home: string; environment: Record<string, string | undefined>; platform: NodeJS.Platform; gatewayUrls: string[]; gatewayToken: string }
+interface Context { home: string; environment: Record<string, string | undefined>; platform: NodeJS.Platform; isolated: boolean; gatewayUrls: string[]; gatewayToken: string }
 const LEDGER = 'local-client-imports.json';
 const lastSuccessfulScan = new WeakMap<AuroraStore, number>();
 const emptySnapshot = (): LocalClientsSnapshot => ({ ok: true, checkedAt: '', sources: [], accounts: [], added: 0, updated: 0, warnings: [] });
@@ -88,7 +89,7 @@ function context(store: AuroraStore, options: LocalClientOptions): Context {
   const settings = store.getSettings();
   const gatewayUrls = [options.gatewayUrl, `http://127.0.0.1:${settings.gatewayPort}`, `http://localhost:${settings.gatewayPort}`, `http://[::1]:${settings.gatewayPort}`,
     `http://${settings.gatewayHost}:${settings.gatewayPort}`].filter((url): url is string => !!url);
-  return { home, environment, platform: options.platform ?? process.platform, gatewayUrls, gatewayToken: settings.gatewayToken };
+  return { home, environment, platform: options.platform ?? process.platform, isolated, gatewayUrls, gatewayToken: settings.gatewayToken };
 }
 function source(clientId: string, label: string, file: string, slot = ''): LocalClientSource {
   return { id: 'local_' + hash(`${clientId}\n${path.resolve(file)}\n${slot}`).slice(0, 28), clientId, label, path: path.resolve(file), status: 'unchanged' };
@@ -225,10 +226,10 @@ function discover(ctx: Context): { candidates: Candidate[]; sources: LocalClient
     if (object(record?.oauthAccount)) account('claude', 'Claude 官方账号', accountFile, 'anthropic', undefined, record.oauthAccount);
   }
 
-  const desktopRoot = ctx.platform === 'win32' ? ctx.environment.LOCALAPPDATA || path.join(ctx.home, 'AppData', 'Local')
-    : ctx.platform === 'darwin' ? path.join(ctx.home, 'Library', 'Application Support') : ctx.environment.XDG_CONFIG_HOME || path.join(ctx.home, '.config');
-  const profileDir = path.join(desktopRoot, 'Claude-3p', 'configLibrary');
-  if (fs.existsSync(profileDir)) {
+  const desktop = resolveClaudeDesktopConfig(ctx);
+  if (!desktop.root) warnings.push(desktop.reason);
+  const profileDir = desktop.root && path.join(desktop.root, 'Claude-3p', 'configLibrary');
+  if (profileDir && fs.existsSync(profileDir)) {
     try {
       const entries = fs.readdirSync(profileDir).filter(n => /^[A-Za-z0-9_-]{1,120}\.json$/.test(n) && n !== '_meta.json');
       if (entries.length > 50) warnings.push('Claude 桌面配置超过50个，已限制本次扫描范围。');
@@ -236,7 +237,7 @@ function discover(ctx: Context): { candidates: Candidate[]; sources: LocalClient
         const file = path.join(profileDir, entry), profile = json(file, 'Claude 桌面 profile');
         if (!profile) continue;
         const s = source('claude-desktop', `Claude 桌面 · ${textValue(profile.name) || entry.replace(/\.json$/, '')}`, file);
-        if (entry === '753cb857-baa9-45ce-a04b-000000003425.json') { note(s, 'ignored', '云桥管理的桌面 profile 不重复导入。'); continue; }
+        if (entry === `${CLAUDE_DESKTOP_PROFILE}.json`) { note(s, 'ignored', '云桥管理的桌面 profile 不重复导入。'); continue; }
         if (profile.inferenceProvider !== 'gateway' || !['bearer', 'api-key', 'x-api-key'].includes(profile.inferenceGatewayAuthScheme)) {
           note(s, 'unsupported', '此 profile 的认证协议不明确，需手动配置。'); continue;
         }
