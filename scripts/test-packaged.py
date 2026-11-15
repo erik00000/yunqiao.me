@@ -1,4 +1,4 @@
-"""Read-only acceptance of the actual unpacked Windows release, using isolated profiles.
+"""Read-only acceptance of an unpacked Windows/macOS application, using isolated profiles.
 
 Run after packaging: python scripts/test-packaged.py
 Requires Python Playwright. Refuses an old/missing app.asar before launching an EXE.
@@ -13,6 +13,7 @@ import re
 import socket
 import struct
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -131,7 +132,7 @@ def main():
     assert executable.is_file(), f'Build the release first: {executable}'
     launcher = args.launcher.resolve() if args.launcher else executable
     assert launcher.is_file(), f'Portable wrapper is missing: {launcher}'
-    resources = executable.parent / 'resources'
+    resources = executable.parent.parent / 'Resources' if sys.platform == 'darwin' else executable.parent / 'resources'
     asar = resources / 'app.asar'
     assert asar.is_file(), 'Packaged app.asar is missing'
     package = json.loads(read_asar(asar, 'package.json'))
@@ -208,7 +209,10 @@ def main():
                 checks.append(f'Portable wrapper extracts the verified application and exactly {len(manifest)} distributed resources')
             else:
                 assert runtime_asar == asar.resolve(), packaged
-            checks.append('Actual packaged EXE renders app.asar with an isolated data directory')
+            expect(page.locator('.app')).to_have_attribute('data-platform', 'darwin' if sys.platform == 'darwin' else 'win32')
+            expect(page.locator('.win-controls')).to_have_count(0 if sys.platform == 'darwin' else 1)
+            expect(page.locator('.quick-search kbd')).to_have_text('⌘ K' if sys.platform == 'darwin' else 'Ctrl K')
+            checks.append('Actual native packaged application renders app.asar with platform-specific controls and isolated data')
 
             deadline = time.monotonic() + 15
             while not page.evaluate("async () => (await window.aurora.invoke('gateway.status')).running === true"):
@@ -261,7 +265,7 @@ def main():
             regions = page.evaluate("async () => await window.aurora.invoke('codex.repair.providers')")
             assert regions['ok'] and any(item['id'] == 'openai' for item in regions['targets'])
             dialog.get_by_role('button', name='关闭', exact=True).click()
-            checks.append('The actual EXE exposes history region selection and native provider discovery through IPC')
+            checks.append('Native packaged IPC exposes history region selection and provider discovery')
 
             page.locator('nav').get_by_role('button', name='插件中心', exact=True).click()
             page.get_by_role('heading', name='ChatGPT 桌面版插件', exact=True).wait_for(timeout=15000)
@@ -297,7 +301,7 @@ def main():
             assert all(file.read_bytes() == before for file, before in original.items()), 'A read-only check changed a client config'
             checks.append('No page exceptions or changes to isolated client configuration')
             report = {
-                'version': args.version, 'passed': True, 'count': len(checks), 'checks': checks,
+                'version': args.version, 'platform': sys.platform, 'passed': True, 'count': len(checks), 'checks': checks,
                 'executable': str(executable.relative_to(ROOT)) if executable.is_relative_to(ROOT) else str(executable),
                 'exeSha256': sha256(executable), 'asarSha256': sha256(asar),
                 **({'portable': str(launcher.relative_to(ROOT)), 'portableSha256': sha256(launcher)} if args.launcher and launcher.is_relative_to(ROOT) else {}),

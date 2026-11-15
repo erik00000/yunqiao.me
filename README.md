@@ -2,7 +2,7 @@
 
 以客户端为起点的 AI 工作空间：**选客户端 → 连接供应商 → 选择模型 → 预览并应用**。
 
-Windows 桌面端使用 Electron + React + TypeScript；iOS 为 Capacitor 伴侣端，连接电脑或服务器上的网关。0.6.0 正在本地功能验证，公开下载为 0.5.0 预览版。
+Windows / macOS 桌面端使用 Electron + React + TypeScript；iOS 为 Capacitor 伴侣端，连接电脑或服务器上的网关。0.6.0 正在本地功能验证，公开下载为 0.5.0 预览版。
 
 最新本地调试入口及验证范围见 [Windows 本地功能验收](docs/LOCAL-VALIDATION-0.6.0.md)。 本轮修复及后续优先级见 [工程审查记录](docs/ENGINEERING-AUDIT-2026-11-15.md)。
 
@@ -50,6 +50,8 @@ npm run build
 npm run package:win
 ```
 
+平台适配范围与原生验证见 [Windows / macOS 兼容性](docs/DESKTOP-PLATFORMS.md)。macOS 在 Mac 上执行 `npm run package:mac`，分别生成 Intel x64 和 Apple Silicon arm64 的 DMG；GitHub Actions 可选择 `macos` 构建。当前未配置 Apple Developer ID 签名与公证。
+
 Windows 产物位于 `release/`：`YunQiaoAI-0.6.0-win-x64-setup.exe` 与 `YunQiaoAI-0.6.0-win-x64-portable.exe`。未配置代码签名证书。
 
 无界面网关：
@@ -77,7 +79,7 @@ npx cap open ios
 
 原生编译必须使用 **macOS + Xcode**。仓库工作流在 macOS 上构建模拟器 `.app`，不会把源码或模拟器 ZIP 伪称可安装到 iPhone 的 IPA。真机分发还需要 Apple 开发者签名和描述文件。当前 Windows 工作区能生成 iOS 工程、构建 Web 资源，不能独立完成苹果原生编译。
 
-历史 0.5.0 已通过 [GitHub macOS 原生构建](https://github.com/jxb412/aurora/actions/runs/43617930882)，实际产出包含有效 Mach-O 的 iOS 16+ 模拟器应用及 iPhoneOS 未签名设备应用。设备 ZIP 需要签名后才能安装，不是已签名 IPA。Actions 手动运行可选 `ios`、`windows` 或 `all`。
+历史 0.5.0 已通过 [GitHub macOS 原生构建](https://github.com/jxb412/aurora/actions/runs/43617930882)，实际产出包含有效 Mach-O 的 iOS 16+ 模拟器应用及 iPhoneOS 未签名设备应用。设备 ZIP 需要签名后才能安装，不是已签名 IPA。Actions 手动运行可选 `ios`、`windows`、`macos` 或 `all`。
 
 ## 验证
 

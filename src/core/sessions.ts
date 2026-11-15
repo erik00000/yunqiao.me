@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { SessionSummary } from './store/types.js';
 import { nativeSessionRegions } from './historyRepairIO.js';
+import { sessionProjectName } from './clientPaths.js';
 
 /**
  * 历史会话聚合：把各客户端的本地会话日志读成统一结构。
@@ -174,7 +175,7 @@ function summarize(file: string, agent: string): SessionSummary | null {
     id,
     agent,
     title,
-    project: cwd ? path.basename(cwd) : undefined,
+    project: cwd ? sessionProjectName(cwd) : undefined,
     cwd: cwd || undefined,
     path: file,
     messageCount,

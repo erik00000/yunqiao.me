@@ -1,92 +1,11 @@
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import { execFileSync, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
+import { detectCodingDesktop, type CodingDesktopDetection } from './desktopDetection.js';
+import { runningCodingClientsSync } from './clientProcesses.js';
+export { detectCodingDesktop, inspectCodingDesktop, resolveMacApplication } from './desktopDetection.js';
+export type { CodingDesktopDetection, DesktopDetectionOptions, MacApplication } from './desktopDetection.js';
 
-export interface CodingDesktopDetection {
-  installed: boolean; executable?: string; exePath?: string; productName?: string;
-  supportsCodexConfig: boolean; version?: string; evidence: string[];
-}
-const detectionCache = new Map<string, { at: number; value: CodingDesktopDetection }>();
-function regular(file: string): boolean { try { return fs.statSync(file).isFile(); } catch { return false; } }
-function ps(source: string): string {
-  return execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', source],
-    { encoding: 'utf8', timeout: 8000, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-}
-function candidates(): string[] {
-  const isolatedHome = process.env.AURORA_CLIENT_HOME;
-  if (isolatedHome) return ['ChatGPT Beta', 'ChatGPT', 'Codex'].flatMap(name =>
-    [path.join(isolatedHome, 'AppData', 'Local', 'Programs', name, `${name}.exe`), path.join(isolatedHome, 'AppData', 'Local', name, `${name}.exe`)]);
-  if (process.platform === 'darwin') return ['ChatGPT Beta', 'ChatGPT', 'Codex'].flatMap(n =>
-    [path.join('/Applications', `${n}.app`, 'Contents', 'MacOS', n), path.join(os.homedir(), 'Applications', `${n}.app`, 'Contents', 'MacOS', n)]);
-  if (process.platform !== 'win32') return [];
-  const result: string[] = [];
-  for (const name of ['ChatGPT Beta', 'ChatGPT', 'Codex']) {
-    for (const root of [process.env.LOCALAPPDATA, process.env.PROGRAMFILES].filter(Boolean) as string[]) {
-      for (const rel of [path.join('Programs', name), path.join('OpenAI', name), path.join('OpenAI', name, 'app'), name]) {
-        for (const exe of [name, name.replace(' Beta', ''), 'Codex']) result.push(path.join(root, rel, `${exe}.exe`));
-      }
-    }
-  }
-  try {
-    const raw = ps("$a=@(); Get-AppxPackage *OpenAI* -ErrorAction SilentlyContinue | ForEach-Object { $r=$_.InstallLocation; foreach($p in @('app\\ChatGPT.exe','ChatGPT.exe','app\\Codex.exe','Codex.exe')){ $f=Join-Path $r $p; if(Test-Path -LiteralPath $f){$a+=$f} } }; $w=New-Object -ComObject WScript.Shell; Get-ChildItem -Path ($env:APPDATA+'\\Microsoft\\Windows\\Start Menu'),($env:ProgramData+'\\Microsoft\\Windows\\Start Menu') -Filter '*.lnk' -Recurse -ErrorAction SilentlyContinue | Where-Object {$_.Name -match '^(ChatGPT|Codex)'} | ForEach-Object {$a+=$w.CreateShortcut($_.FullName).TargetPath}; $a | Select-Object -Unique | ConvertTo-Json -Compress");
-    const parsed = raw ? JSON.parse(raw) : [];
-    result.push(...(Array.isArray(parsed) ? parsed : [parsed]).filter(x => typeof x === 'string'));
-  } catch { /* Standard paths remain usable when the store query is unavailable. */ }
-  return [...new Set(result)];
-}
-export function inspectCodingDesktop(exe: string): CodingDesktopDetection {
-  if (!path.isAbsolute(exe) || !regular(exe)) return { installed: false, supportsCodexConfig: false, evidence: [] };
-  if (process.platform === 'win32' && !/\.exe$/i.test(exe)) throw new Error('请选择桌面客户端的 .exe 程序');
-  const evidence: string[] = [];
-  let version: string | undefined;
-  let productName = path.basename(exe, path.extname(exe));
-  if (process.platform === 'win32' && !process.env.AURORA_CLIENT_HOME) {
-    try {
-      const meta = JSON.parse(ps(`$v=(Get-Item -LiteralPath '${exe.replace(/'/g, "''")}').VersionInfo; @{version=$v.FileVersion;name=$v.ProductName}|ConvertTo-Json -Compress`));
-      version = meta.version || undefined; productName = meta.name || productName;
-    } catch { /* Binary metadata is optional. */ }
-  }
-  if (/^codex(?:\.exe)?$/i.test(path.basename(exe)) || /^codex$/i.test(productName)) evidence.push('Codex 产品程序');
-  const roots = [path.join(path.dirname(exe), 'resources'), path.resolve(path.dirname(exe), '../Resources')];
-  for (const root of roots) {
-    for (const bin of ['codex.exe', 'codex', 'app-server.exe', 'codex-app-server.exe', 'codex-app-server']) {
-      if (regular(path.join(root, bin))) evidence.push(`resources/${bin}`);
-    }
-    const asar = path.join(root, 'app.asar');
-    if (regular(asar)) {
-      let fd: number | undefined;
-      try {
-        fd = fs.openSync(asar, 'r');
-        const header = Buffer.alloc(16); fs.readSync(fd, header, 0, 16, 0);
-        const size = header.readUInt32LE(12);
-        if (size > 0 && size < 32 * 1024 * 1024) {
-          const data = Buffer.alloc(size); fs.readSync(fd, data, 0, size, 16);
-          const text = data.toString('utf8');
-          if (/codex(?:-app-server|-desktop|\.exe)|app-server-client|codex-client/i.test(text)) evidence.push('应用资源包含 Codex 客户端模块');
-        }
-      } catch { /* Unknown resource formats do not imply support. */ }
-      finally { if (fd !== undefined) fs.closeSync(fd); }
-    }
-  }
-  return { installed: true, executable: exe, exePath: exe, productName, version, supportsCodexConfig: evidence.length > 0, evidence };
-}
-export function detectCodingDesktop(exePath?: string): CodingDesktopDetection {
-  const key = exePath || 'auto'; const cached = detectionCache.get(key);
-  if (cached && Date.now() - cached.at < 15_000) return cached.value;
-  const detected = exePath ? [inspectCodingDesktop(path.resolve(exePath))] : candidates().filter(regular).map(inspectCodingDesktop);
-  const value = detected.find(x => x.supportsCodexConfig) || detected.find(x => x.installed) || { installed: false, supportsCodexConfig: false, evidence: [] };
-  detectionCache.set(key, { at: Date.now(), value }); return value;
-}
 export function isCodexRunning(exePath?: string): boolean {
-  const names = exePath ? [path.basename(exePath)] : ['ChatGPT.exe', 'ChatGPT Beta.exe', 'Codex.exe'];
-  try {
-    if (process.platform === 'win32') {
-      const rows = execFileSync('tasklist', ['/FO', 'CSV', '/NH'], { encoding: 'utf8', timeout: 4000, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
-      return rows.split(/\r?\n/).some(row => names.some(n => row.toLowerCase().startsWith(`"${n.toLowerCase()}"`)));
-    }
-    return names.some(n => { try { return !!execFileSync('pgrep', ['-x', n.replace(/\.exe$/i, '')], { encoding: 'utf8', timeout: 2000 }).trim(); } catch { return false; } });
-  } catch { return false; }
+  return runningCodingClientsSync(exePath ? [exePath] : []).length > 0;
 }
 export function validateDebugPort(value: unknown): number {
   const port = Number(value); if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('调试端口必须是 1024–65535 的整数'); return port;
@@ -197,6 +116,18 @@ export class DesktopCdp {
   }
   close(): void { this.connected = false; this.ws.close(); }
 }
+export function desktopDebugLaunch(detected: CodingDesktopDetection, port: number, platform: NodeJS.Platform = process.platform): { command: string; args: string[] } {
+  validateDebugPort(port);
+  if (!detected.installed || !detected.executable) throw new Error('未找到桌面程序，请先指定程序路径');
+  const args = [`--remote-debugging-port=${port}`, '--remote-debugging-address=127.0.0.1'];
+  if (platform === 'darwin') {
+    if (!detected.bundlePath) throw new Error('macOS 桌面增强需要完整的 .app 应用包');
+    if (!detected.supportsCodexConfig) throw new Error('此 macOS 客户端尚未确认支持编程桌面增强；原生聊天版不提供所需的 Electron 调试接口');
+    return { command: '/usr/bin/open', args: ['-n', '-a', detected.bundlePath, '--args', ...args] };
+  }
+  if (platform !== 'win32') throw new Error('桌面增强自动启动目前支持 Windows 和 macOS');
+  return { command: detected.executable, args };
+}
 export async function openDesktopConnection(options: { port: number; exePath?: string; launch?: boolean }): Promise<{ cdp: DesktopCdp; launched: boolean }> {
   const port = validateDebugPort(options.port); let launched = false;
   if (!await debugPortOpen(port)) {
@@ -204,7 +135,8 @@ export async function openDesktopConnection(options: { port: number; exePath?: s
     const d = detectCodingDesktop(options.exePath);
     if (!d.executable) throw new Error('未找到桌面程序，请先指定程序路径');
     if (isCodexRunning(d.executable)) throw new Error('客户端正在运行且未开启调试端口，请完全退出后重试');
-    const child = spawn(d.executable, [`--remote-debugging-port=${port}`, '--remote-debugging-address=127.0.0.1'], { detached: true, stdio: 'ignore', windowsHide: false });
+    const launch = desktopDebugLaunch(d, port);
+    const child = spawn(launch.command, launch.args, { detached: true, stdio: 'ignore', windowsHide: false, shell: false });
     await new Promise<void>((resolve, reject) => { child.once('spawn', () => resolve()); child.once('error', reject); }); child.unref(); launched = true;
     for (let i = 0; i < 40; i++) { if (await debugPortOpen(port)) break; await new Promise(r => setTimeout(r, 500)); }
   }

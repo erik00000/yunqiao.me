@@ -1,0 +1,87 @@
+name: Desktop platform validation
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      package-installer:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-platform-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    name: macOS ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install playwright
+      - run: python -m playwright install chromium
+      - name: Verify actual native runner architecture
+        run: node -e "if (process.platform !== 'darwin' || process.arch !== '${{ matrix.arch }}') process.exit(1)"
+      - name: Core features and configuration regressions
+        run: pnpm test
+      - run: node scripts/test-desktop-macos.mjs
+      - run: node scripts/test-client-lifecycle-macos-native.mjs
+      - run: pnpm build
+      - run: node scripts/test-desktop-shell.mjs
+      - name: Client, plugin, history, balance and membership UI
+        run: |
+          python scripts/test-client-restart-ui.py
+          python scripts/test-plugin-ui.py
+          python scripts/test-history-ui.py
+          python scripts/test-provider-balance-ui.py
+          python scripts/test-membership-ui.py
+      - name: Package native application for acceptance (no release)
+        run: npx electron-builder --mac --${{ matrix.arch }} --dir --publish never
+      - name: Validate packaged native application and resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_ROOT=$(find release -maxdepth 2 -name '*.app' -type d -print -quit)
+          test -n "$APP_ROOT"
+          EXECUTABLE=$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$APP_ROOT/Contents/Info.plist")
+          python scripts/test-packaged.py --exe "$APP_ROOT/Contents/MacOS/$EXECUTABLE"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-validation-mac-${{ matrix.arch }}
+          path: docs/PACKAGED-VALIDATION-0.6.0.json
+          if-no-files-found: ignore
+      - name: Build DMG when requested by the build workflow
+        if: inputs.package-installer == true
+        run: npx electron-builder --mac --${{ matrix.arch }} --publish never
+      - uses: actions/upload-artifact@v4
+        if: inputs.package-installer == true
+        with:
+          name: yunqiao-macos-${{ matrix.arch }}
+          path: release/*.dmg
+          if-no-files-found: error

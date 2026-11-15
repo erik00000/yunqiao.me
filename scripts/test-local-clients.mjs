@@ -127,6 +127,38 @@ try {
     fs.unlinkSync(path.join(f.home, '.codex', 'config.toml')); assert(scan(f).sources.some(s => s.status === 'missing-file')); assert.deepEqual(f.store.listProviders(), before);
     write(path.join(f.store.dir, 'local-client-imports.json'), '{invalid'); assert.throws(() => scan(f), /来源记录损坏/); assert.deepEqual(f.store.listProviders(), before); assert.equal(api.getLocalClientsSnapshot(f.store).ok, false);
   });
+  for (const platform of ['win32', 'darwin']) test(`${platform} scans native Claude Desktop and Copilot roots without foreign-platform fallback`, () => {
+    const f = fixture(`native-roots-${platform}`), windows = platform === 'win32';
+    const windowsDesktop = path.join(f.home, 'AppData', 'Local'), macDesktop = path.join(f.home, 'Library', 'Application Support');
+    const profile = root => path.join(root, 'Claude-3p', 'configLibrary', 'provider.json');
+    const profileValue = label => ({ inferenceProvider: 'gateway', inferenceGatewayAuthScheme: 'bearer', inferenceGatewayBaseUrl: `https://${label}.test`, inferenceGatewayApiKey: `sk-${label}-fixture-key` });
+    write(profile(windows ? macDesktop : windowsDesktop), profileValue('foreign'));
+    const windowsCopilot = path.join(f.home, 'AppData', 'Roaming', 'github-copilot', 'hosts.json');
+    const unixCopilot = path.join(f.home, '.config', 'github-copilot', 'hosts.json');
+    write(windows ? unixCopilot : windowsCopilot, { 'github.com': { oauth_token: 'foreign-fixture-oauth' } });
+    const empty = scan(f, { platform }); assert.equal(empty.added, 0); assert.equal(empty.accounts.length, 0);
+    write(profile(windows ? windowsDesktop : macDesktop), profileValue('native'));
+    write(windows ? windowsCopilot : unixCopilot, { 'github.com': { oauth_token: 'native-fixture-oauth' } });
+    const result = scan(f, { platform }); assert.equal(result.added, 1); assert.equal(result.accounts.length, 1);
+    assert.equal(f.store.listProviders()[0].baseUrl, 'https://native.test'); assert.equal(result.accounts[0].source, windows ? windowsCopilot : unixCopilot);
+  });
+  for (const platform of ['win32', 'darwin']) test(`${platform} honors explicitly provided CODEX_HOME and CLAUDE_CONFIG_DIR`, () => {
+    const f = fixture(`override-roots-${platform}`), codexRoot = path.join(f.home, 'custom-codex'), claudeRoot = path.join(f.home, 'custom-claude');
+    write(path.join(codexRoot, 'config.toml'), relayConfig('sk-explicit-codex-profile'));
+    write(path.join(claudeRoot, 'settings.json'), { env: { ANTHROPIC_BASE_URL: 'https://claude.test', ANTHROPIC_API_KEY: 'sk-explicit-claude-profile' } });
+    codex(f, relayConfig('sk-unused-default-profile'));
+    const result = scan(f, { platform, environment: { CODEX_HOME: codexRoot, CLAUDE_CONFIG_DIR: claudeRoot } });
+    assert.equal(result.added, 2); assert(!f.store.listProviders().some(p => p.apiKeys.some(k => k.key === 'sk-unused-default-profile')));
+    assert(result.sources.every(s => s.path.startsWith(codexRoot) || s.path.startsWith(claudeRoot)));
+  });
+  test('macOS XDG override applies to Copilot and OpenCode without scanning stale default credentials', () => {
+    const f = fixture('xdg-macos'), xdg = path.join(f.home, 'custom-xdg');
+    write(path.join(f.home, '.config', 'github-copilot', 'hosts.json'), { 'github.com': { oauth_token: 'stale-default-oauth' } });
+    assert.equal(scan(f, { platform: 'darwin', environment: { XDG_CONFIG_HOME: xdg } }).accounts.length, 0);
+    const hosts = path.join(xdg, 'github-copilot', 'hosts.json'); write(hosts, { 'github.com': { oauth_token: 'xdg-fixture-oauth' } });
+    write(path.join(xdg, 'opencode', 'opencode.json'), { provider: { custom: { npm: '@ai-sdk/openai-compatible', options: { baseURL: 'https://xdg.test/v1', apiKey: 'sk-xdg-open-code-key' } } } });
+    const result = scan(f, { platform: 'darwin', environment: { XDG_CONFIG_HOME: xdg } }); assert.equal(result.accounts[0].source, hosts); assert.equal(result.added, 1);
+  });
   test('isolated home ignores real CODEX_HOME and auth environment defaults', () => {
     const f = fixture('isolation'); const external = path.join(temporaryRoot, 'outside-config'); write(path.join(external, 'auth.json'), { OPENAI_API_KEY: 'sk-outside-must-not-import' });
     const previous = process.env.CODEX_HOME; process.env.CODEX_HOME = external;

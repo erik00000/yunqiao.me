@@ -93,7 +93,7 @@ export default function Membership({ reload, go }: PageProps) {
   return <>
     <div className="page-head"><div><div className="eyebrow">YUNQIAO.ME</div><h1>云桥会员</h1><p>绑定平台会员，在客户端领取新客额度，快速开始第一次对话。</p></div><Btn onClick={() => call('app.openExternal', { url: 'https://api.yunqiao.me' })}>打开平台网站 ↗</Btn></div>
     <div className="member-hero"><div className="member-gift-icon"><Ico name="bolt" size={30} /></div><div className="grow"><span className="eyebrow">WELCOME GIFT</span><h2>第一份灵感，我们请客。</h2><p>首次使用云桥客户端的会员，完成绑定后可领取平台额度。</p></div><div className="member-gift-value"><strong>$10</strong><span>新客平台额度</span></div></div>
-    {!desktop ? <div className="notice">请在 Windows 桌面客户端登录并绑定本机，领取额度。</div> : <>
+    {!desktop ? <div className="notice">请在 Windows 或 macOS 桌面客户端登录并绑定本机，领取额度。</div> : <>
       {error && <div className="notice warning" role="alert">{error}<div className="grow" /><Btn size="sm" disabled={loading || !!busy} onClick={() => { void load(); }}>重试</Btn></div>}
       {status?.config?.enabled === false && <div className="notice">{status.config.message || '新客活动尚未开放，开放后可在此领取。'}</div>}
       <div className="grid cols-2">

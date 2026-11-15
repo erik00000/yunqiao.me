@@ -292,7 +292,7 @@ export function compareReleaseVersions(a: string, b: string): number {
 function updateTarget(target: UpdateTarget): Required<UpdateTarget> {
   const platform = target.platform || ({ win32: 'win', darwin: 'mac', linux: 'linux' } as const)[process.platform as 'win32' | 'darwin' | 'linux'];
   const arch = target.arch || (platform === 'ios' ? 'arm64' : process.arch);
-  if (!['win', 'mac', 'linux', 'ios'].includes(platform) || !['x64', 'arm64', 'ia32'].includes(arch) || (platform === 'ios' && arch !== 'arm64')) throw new Error('当前平台或处理器架构暂不支持客户端更新');
+  if (!['win', 'mac', 'linux', 'ios'].includes(platform) || !['x64', 'arm64', 'ia32'].includes(arch) || (platform === 'ios' && arch !== 'arm64') || (platform === 'mac' && arch === 'ia32')) throw new Error('当前平台或处理器架构暂不支持客户端更新');
   return { platform, arch } as Required<UpdateTarget>;
 }
 
@@ -319,7 +319,7 @@ function clientAssetRank(name: string, version: string, target: Required<UpdateT
   }
   if (target.platform === 'mac') {
     const m = new RegExp(`^${prefix}mac-(${target.arch}|universal)\\.(dmg|pkg)$`, 'i').exec(name);
-    return m ? (m[1] === 'universal' ? 2 : 0) + (m[2].toLowerCase() === 'pkg' ? 1 : 0) : -1;
+    return m ? (m[1].toLowerCase() === 'universal' ? 2 : 0) + (m[2].toLowerCase() === 'pkg' ? 1 : 0) : -1;
   }
   if (target.platform === 'linux') return new RegExp(`^${prefix}linux-${target.arch}\\.AppImage$`, 'i').test(name) ? 0 : -1;
   return -1;

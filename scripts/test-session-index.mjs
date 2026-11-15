@@ -7,7 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { build } from 'esbuild';
 
 const root = path.resolve(import.meta.dirname, '..');
-const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'aurora-native-index-'));
+const temporary = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'aurora-native-index-')));
 const write = (file, data) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, data); };
 const meta = { type: 'session_meta', ordinal: 0, payload: { id: 'thread' } };
 const event = (type, ordinal, fields = {}) => ({ type: 'event_msg', ordinal, timestamp: '2026-11-15T01:00:00Z', payload: { type, thread_id: 'thread', ...fields } });
@@ -147,6 +147,6 @@ try {
   console.log(`Native session index checks passed: ${cases}`);
 } finally {
   // All fixtures are generated beneath this explicitly resolved temporary directory.
-  const resolved=path.resolve(temporary); if (path.dirname(resolved)!==path.resolve(os.tmpdir()) || !path.basename(resolved).startsWith('aurora-native-index-')) throw new Error('Unexpected test cleanup directory');
+  const resolved=path.resolve(temporary); if (path.dirname(resolved)!==fs.realpathSync(os.tmpdir()) || !path.basename(resolved).startsWith('aurora-native-index-')) throw new Error('Unexpected test cleanup directory');
   fs.rmSync(resolved,{recursive:true,force:true});
 }

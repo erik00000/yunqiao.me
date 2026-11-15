@@ -5,6 +5,7 @@ import { parse as parseToml } from 'smol-toml';
 import type { AgentId, Provider } from '../store/types.js';
 import { nowIso } from '../util.js';
 import { detectCodingDesktop } from '../injector.js';
+import { cliCandidates, desktopCandidates, type ClientPathContext } from '../clientPaths.js';
 import { readOfficialCodexIdentity, codexCoexistBaseUrl, CODEX_COEXIST_BASE_PATH } from '../gateway/coexist.js';
 import { applyPlan, restorePlan, jsonObject, planned, plannedJson, readText, patchToml, patchEnv, redactConfig, digest, type PlannedFile } from './configFiles.js';
 
@@ -38,24 +39,22 @@ export interface AgentAdapter {
 function home(...parts: string[]): string { return path.join(process.env.AURORA_CLIENT_HOME || os.homedir(), ...parts); }
 function envDir(name: string, fallback: string): string { return process.env.AURORA_CLIENT_HOME ? fallback : process.env[name] || fallback; }
 function localData(): string { return envDir('LOCALAPPDATA', home('AppData', 'Local')); }
+function pathContext(): ClientPathContext { return { platform: process.platform, home: home(), environment: process.env, isolated: !!process.env.AURORA_CLIENT_HOME }; }
 function cliPath(command: string): string | undefined {
-  const extensions = process.platform === 'win32' ? ['', '.exe', '.cmd', '.bat'] : [''];
-  for (const folder of (process.env.PATH || '').split(path.delimiter)) {
-    if (!folder) continue;
-    for (const ext of extensions) {
-      const candidate = path.join(folder, command + ext);
-      try { if (fs.statSync(candidate).isFile()) return candidate; } catch { /* continue */ }
-    }
+  for (const candidate of cliCandidates(command, pathContext())) {
+    try {
+      if (!fs.statSync(candidate).isFile()) continue;
+      if (process.platform !== 'win32') fs.accessSync(candidate, fs.constants.X_OK);
+      return candidate;
+    } catch { /* continue */ }
   }
   return undefined;
 }
-function desktopPath(name: string): string | undefined {
-  const candidates = process.platform === 'win32' ? [
-    path.join(localData(), 'Programs', name, `${name}.exe`), path.join(localData(), name, `${name}.exe`),
-    path.join(localData(), 'OpenAI', name, `${name}.exe`), path.join(localData(), 'Microsoft', 'WindowsApps', `${name}.exe`),
-    path.join(envDir('APPDATA', home('AppData', 'Roaming')), 'Microsoft', 'Windows', 'Start Menu', 'Programs', `${name}.lnk`),
-  ] : process.platform === 'darwin' ? [`/Applications/${name}.app`, home('Applications', `${name}.app`)] : [home('.local', 'bin', name.toLowerCase())];
-  return candidates.find(p => fs.existsSync(p));
+function desktopPath(names: string | readonly string[]): string | undefined {
+  return desktopCandidates(typeof names === 'string' ? [names] : names, pathContext()).find(candidate => {
+    try { return process.platform === 'darwin' ? fs.statSync(candidate).isDirectory() : fs.statSync(candidate).isFile(); }
+    catch { return false; }
+  });
 }
 function codexConfig(): string { return path.join(envDir('CODEX_HOME', home('.codex')), 'config.toml'); }
 function claudeCodeConfig(): string { return path.join(envDir('CLAUDE_CONFIG_DIR', home('.claude')), 'settings.json'); }
@@ -98,7 +97,7 @@ function validate(ctx: ConnectContext, adapter: AgentAdapter): void {
 function planRevision(files: PlannedFile[]): string { return digest(JSON.stringify(files.map(f => [f.path, f.existed, digest(f.before), digest(f.after)]))); }
 
 type AdapterSpec = Pick<AgentAdapter, 'id' | 'name' | 'vendor' | 'description' | 'protocol' | 'support' | 'category' | 'supportNote' | 'docsUrl'> & {
-  paths?: () => string[]; command?: string; desktop?: string; hint?: string; plan?: (ctx: ConnectContext) => PlannedFile[]; warnings?: string[];
+  paths?: () => string[]; command?: string; desktop?: string | readonly string[]; hint?: string; plan?: (ctx: ConnectContext) => PlannedFile[]; warnings?: string[];
 };
 function makeAdapter(spec: AdapterSpec): AgentAdapter {
   const adapter: AgentAdapter = {
@@ -242,7 +241,7 @@ const geminiCli = makeAdapter({
   },
 });
 const manualSpecs: AdapterSpec[] = [
-  { id: 'workbuddy', name: 'WorkBuddy / CodeBuddy', vendor: '腾讯', category: 'desktop', protocol: 'openai-chat', support: 'manual', desktop: 'WorkBuddy', description: '腾讯 AI 工作助手，提供适配供应商的连接参数。', supportNote: '不同版本的自定义模型入口和协议支持有差异。请在客户端支持的自定义模型页面填写参数，云桥不写入未经验证的配置字段。', docsUrl: 'https://www.codebuddy.ai/' },
+  { id: 'workbuddy', name: 'WorkBuddy / CodeBuddy', vendor: '腾讯', category: 'desktop', protocol: 'openai-chat', support: 'manual', desktop: ['WorkBuddy', 'CodeBuddy'], description: '腾讯 AI 工作助手，提供适配供应商的连接参数。', supportNote: '不同版本的自定义模型入口和协议支持有差异。请在客户端支持的自定义模型页面填写参数，云桥不写入未经验证的配置字段。', docsUrl: 'https://www.codebuddy.ai/' },
   { id: 'deepseek', name: 'DeepSeek API / 兼容客户端', vendor: '深度求索', category: 'service', protocol: 'openai-chat', support: 'manual', description: '为支持 OpenAI 兼容接口的客户端生成 DeepSeek 等模型的连接参数。', supportNote: 'DeepSeek 是模型服务。可把参数填入支持自定义接口的应用；不会替换 DeepSeek 官方网页或 App 的模型。', docsUrl: 'https://api-docs.deepseek.com/' },
   { id: 'qwen-code', name: 'Qwen Code', vendor: '阿里云', category: 'cli', protocol: 'openai-chat', support: 'manual', command: 'qwen', description: '通义千问终端编程助手，提供 OpenAI 兼容接入参数。', supportNote: '按当前版本官方文档设置 OPENAI_BASE_URL、OPENAI_API_KEY 和模型；设置完请在客户端选择对应身份方式。', docsUrl: 'https://qwenlm.github.io/qwen-code-docs/' },
   { id: 'kimi-code', name: 'Kimi Code', vendor: '月之暗面', category: 'cli', protocol: 'openai-chat', support: 'manual', command: 'kimi', description: 'Kimi 编程助手，可按官方模型配置接入。', supportNote: '使用 Kimi Code 当前版本的 /setup 或模型配置入口；请核实它接受的供应商协议。', docsUrl: 'https://moonshotai.github.io/kimi-cli/' },
@@ -260,11 +259,11 @@ export function detectAll(_fast = false): Record<string, AgentDetection> {
   detectCache = { at: Date.now(), data }; return data;
 }
 export function detectReset(): void { detectCache = null; }
-export function exportEnvScript(ctx: ConnectContext, protocol: string): string {
+export function exportEnvScript(ctx: ConnectContext, protocol: string, platform: NodeJS.Platform = process.platform): string {
   const ep = connectionParameters(ctx, protocol);
   const quote = (value: string) => `'${value.replace(/'/g, `'"'"'`)}'`;
-  const prefix = process.platform === 'win32' ? '$env:' : 'export ';
-  const literal = process.platform === 'win32' ? (value: string) => `'${value.replace(/'/g, "''")}'` : quote;
+  const prefix = platform === 'win32' ? '$env:' : 'export ';
+  const literal = platform === 'win32' ? (value: string) => `'${value.replace(/'/g, "''")}'` : quote;
   const values: Record<string, string> = protocol === 'anthropic' ? { ANTHROPIC_BASE_URL: ep.baseUrl, ANTHROPIC_AUTH_TOKEN: ep.apiKey, ANTHROPIC_MODEL: ep.model } : protocol === 'gemini' ? { GOOGLE_GEMINI_BASE_URL: ep.baseUrl, GEMINI_API_KEY: ep.apiKey, GEMINI_MODEL: ep.model } : { OPENAI_BASE_URL: ep.baseUrl, OPENAI_API_KEY: ep.apiKey, OPENAI_MODEL: ep.model };
   return [`# 云桥 AI · 当前终端环境变量 (${nowIso()})`, ...Object.entries(values).map(([key, value]) => `${prefix}${key}=${literal(value)}`)].join('\n');
 }

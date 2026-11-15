@@ -1,6 +1,6 @@
 # 客户端启动与重启
 
-Windows 桌面版的客户端卡片和配置成功页新增快捷入口：
+Windows / macOS 桌面版的客户端卡片和配置成功页新增快捷入口：
 
 - 桌面应用使用“重新启动客户端”。确认后请求正常退出，确认原进程已结束，再打开程序；尚未运行时直接启动。
 - Claude Code、Codex CLI 等命令行工具使用“新终端打开”。新窗口从用户主目录运行已检测到的客户端命令，原终端和正在进行的会话保留。
@@ -10,6 +10,6 @@ Windows 桌面版的客户端卡片和配置成功页新增快捷入口：
 
 只操作本机检测出的程序，核对可执行路径、当前系统账户、桌面会话和进程创建时间。不会按相同进程名批量结束程序，不重放原进程命令行，不改写客户端配置。客户端安装发生变化或无法确认进程身份时停止操作。同一个客户端的并发操作共用一次执行。
 
-Microsoft Store 安装使用注册的应用标识启动。包含额外命令参数的旧式快捷方式或无法验证的启动转发程序，需要从原客户端或开始菜单手动处理。macOS/Linux 当前显示手动重启提示；自动进程控制目前只支持 Windows。
+Microsoft Store 安装使用注册的应用标识启动。包含额外命令参数的旧式快捷方式或无法验证的启动转发程序，需要从原客户端或开始菜单手动处理。macOS 使用 Info.plist 声明的应用身份，通过 AppKit 请求正常退出，再使用 LaunchServices 打开同一应用包；不按显示名称猜主程序。命令行使用系统 Terminal，首次使用可能需要在系统自动化权限中允许。Linux 当前显示手动重启提示。
 
 入口为桌面 IPC 的 `agent.lifecycle` 和 `agent.restart`，仅接受 `agentId`。HTTP 网关拒绝这两个动作，不接受远程传入路径、PID、脚本或启动参数。实现和验收分别在 `src/main/clientLifecycle.ts`、`scripts/test-client-lifecycle.mjs`、`scripts/test-client-lifecycle-native.mjs` 和 `scripts/test-client-restart-ui.py`。

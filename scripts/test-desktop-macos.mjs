@@ -1,0 +1,66 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
+import { build } from 'esbuild';
+
+if (process.platform !== 'darwin') {
+  console.log('SKIP native desktop bundle checks: macOS only');
+  process.exit(0);
+}
+const workspace = path.resolve(import.meta.dirname, '..');
+const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'aurora-mac-desktop-')));
+const previousHome = process.env.AURORA_CLIENT_HOME;
+const write = (file, text, mode) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, text, { mode }); };
+let passed = 0;
+try {
+  process.env.AURORA_CLIENT_HOME = root;
+  const bundle = path.join(root, 'api.cjs');
+  await build({ stdin: { contents: `export * from './src/core/desktopDetection.ts'; export * from './src/core/clientProcesses.ts'; export { desktopDebugLaunch } from './src/core/injector.ts'; export { runExtensionAction } from './src/core/extensions/index.ts'; export { AuroraStore } from './src/core/store/index.ts';`, resolveDir: workspace, loader: 'ts' }, outfile: bundle, bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent' });
+  const api = createRequire(import.meta.url)(bundle);
+  const app = path.join(root, 'Applications', 'ChatGPT Beta.app');
+  const plist = path.join(app, 'Contents', 'Info.plist');
+  const executable = path.join(app, 'Contents', 'MacOS', 'Fixture Desktop');
+  write(plist, '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>CFBundleExecutable</key><string>Fixture Desktop</string><key>CFBundleIdentifier</key><string>io.aurora.mac.fixture</string><key>CFBundleName</key><string>Fixture Desktop</string><key>CFBundleShortVersionString</key><string>2.3.4</string></dict></plist>');
+  write(executable, '#!/bin/sh\nexit 0\n', 0o700);
+  write(path.join(app, 'Contents', 'Resources', 'codex'), 'fixture resource');
+  let detected = api.inspectCodingDesktop(app);
+  assert.equal(detected.executable, executable); assert.equal(detected.version, '2.3.4'); assert.equal(detected.supportsCodexConfig, true);
+  console.log('PASS native plutil resolves XML app metadata and its actual main executable'); passed++;
+  execFileSync('/usr/bin/plutil', ['-convert', 'binary1', '--', plist]);
+  detected = api.inspectCodingDesktop(app);
+  assert.equal(detected.bundleId, 'io.aurora.mac.fixture'); assert.equal(api.detectCodingDesktop().executable, executable);
+  console.log('PASS native binary Info.plist and isolated Applications discovery'); passed++;
+  const aliasRoot = path.join(root, 'directory alias');
+  fs.symlinkSync(path.dirname(app), aliasRoot, 'dir');
+  assert.equal(api.resolveMacApplication(path.join(aliasRoot, path.basename(app))).bundlePath, app);
+  if (root.startsWith('/private/var/')) assert.equal(api.resolveMacApplication(app.replace(/^\/private/, '')).bundlePath, app);
+  console.log('PASS native application path aliases resolve to the canonical bundle'); passed++;
+  const store = new api.AuroraStore(path.join(root, 'store'));
+  const configured = await api.runExtensionAction({ store }, 'extension.configure', { exePath: app });
+  assert.equal(configured.connection.exePath, app); assert.equal(configured.ok, true);
+  assert.equal(api.desktopDebugLaunch(detected, 9222).command, '/usr/bin/open');
+  console.log('PASS extension settings accept .app and prepare LaunchServices debug arguments'); passed++;
+  const custom = path.join(root, 'Applications', 'My Coding Workspace.app');
+  fs.cpSync(app, custom, { recursive: true });
+  const customDetected = api.inspectCodingDesktop(custom);
+  assert.equal(customDetected.executable, path.join(custom, 'Contents', 'MacOS', 'Fixture Desktop'));
+  assert.equal(customDetected.supportsCodexConfig, true);
+  const customConfigured = await api.runExtensionAction({ store }, 'extension.configure', { exePath: customDetected.executable });
+  assert.equal(customConfigured.connection.exePath, custom);
+  console.log('PASS custom bundle names and declared executable paths are accepted'); passed++;
+  fs.chmodSync(executable, 0o600);
+  assert.throws(() => api.resolveMacApplication(app), /执行权限/);
+  fs.chmodSync(executable, 0o700);
+  console.log('PASS native bundle validation rejects a non-executable main program'); passed++;
+  const processes = await api.runningCodingClients();
+  assert(Array.isArray(processes)); assert(processes.every(name => typeof name === 'string'));
+  console.log('PASS native ps comm query executes without reading process arguments'); passed++;
+  console.log(`${passed} native macOS desktop checks passed; no desktop application was launched`);
+} finally {
+  if (previousHome === undefined) delete process.env.AURORA_CLIENT_HOME; else process.env.AURORA_CLIENT_HOME = previousHome;
+  assert.equal(path.dirname(root), fs.realpathSync(os.tmpdir())); assert(path.basename(root).startsWith('aurora-mac-desktop-'));
+  fs.rmSync(root, { recursive: true, force: true });
+}

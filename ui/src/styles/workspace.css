@@ -11,6 +11,7 @@ button:disabled { cursor: not-allowed; }
 .muted { color: var(--muted); }
 .grow { flex: 1; min-width: 0; }
 .titlebar { background: var(--panel-solid); border-bottom: 1px solid var(--stroke); padding: 0 12px 0 22px; backdrop-filter: none; gap: 12px; }
+.app[data-platform="darwin"] .titlebar { padding-left: 90px; }
 .titlebar .brand { width: 202px; flex: none; font-size: 16px; gap: 9px; }
 .brand-symbol, .welcome-logo { background: var(--accent); color: #fff; display: inline-grid; place-items: center; border-radius: 9px; width: 29px; height: 29px; }
 .brand-en { font-size: 9px; font-weight: 600; color: var(--muted); letter-spacing: 1.7px; margin-left: 1px; }

@@ -281,11 +281,12 @@ function discover(ctx: Context): { candidates: Candidate[]; sources: LocalClient
     if (!format) { note(s, 'unsupported', '仅自动读取明确声明的 OpenAI 兼容或 Anthropic provider。'); continue; }
     add(s, s.label, format, value.options?.baseURL, value.options?.apiKey, object(value.models) ? Object.keys(value.models) : []);
   }
-  for (const file of [path.join(ctx.environment.APPDATA || path.join(ctx.home, 'AppData', 'Roaming'), 'github-copilot', 'hosts.json'), path.join(ctx.home, '.config', 'github-copilot', 'hosts.json')]) {
-    const copilot = json(file, 'GitHub Copilot 登录记录');
-    const found = copilot && Object.values(copilot).find(v => object(v) && typeof v.oauth_token === 'string');
-    if (found) { account('copilot', 'GitHub Copilot 官方账号', file, 'openai-chat', found.oauth_token); break; }
-  }
+  const copilotRoot = ctx.platform === 'win32' ? ctx.environment.APPDATA || path.join(ctx.home, 'AppData', 'Roaming')
+    : ctx.environment.XDG_CONFIG_HOME || path.join(ctx.home, '.config');
+  const copilotFile = path.join(copilotRoot, 'github-copilot', 'hosts.json');
+  const copilot = json(copilotFile, 'GitHub Copilot 登录记录');
+  const copilotAccount = copilot && Object.values(copilot).find(v => object(v) && typeof v.oauth_token === 'string');
+  if (copilotAccount) account('copilot', 'GitHub Copilot 官方账号', copilotFile, 'openai-chat', copilotAccount.oauth_token);
   return { candidates, sources, accounts, warnings };
 }
 

@@ -108,7 +108,20 @@ function iconPixel(x, y, size) {
 const outDir = path.resolve(process.argv[2] ?? 'build');
 fs.mkdirSync(outDir, { recursive: true });
 fs.writeFileSync(path.join(outDir, 'icon.png'), buildPNG(SIZE, iconPixel));
-const uiDir = path.resolve(path.dirname(outDir), 'ui');
+const uiDir = path.resolve(path.dirname(outDir), 'ui', 'public');
 fs.mkdirSync(uiDir, { recursive: true });
 fs.writeFileSync(path.join(uiDir, 'tray.png'), buildPNG(32, iconPixel));
-console.log('icon.png + tray.png 已生成');
+// Transparent monochrome route glyph; macOS colors template images for the menu bar.
+function templatePixel(x, y, size) {
+  const px = (x + .5) / size * 24, py = (y + .5) / size * 24;
+  const segments = [[5, 6, 12, 6], [12, 6, 12, 18], [12, 18, 19, 18]];
+  const distances = segments.map(([x1, y1, x2, y2]) => {
+    const t = Math.max(0, Math.min(1, ((px - x1) * (x2 - x1) + (py - y1) * (y2 - y1)) / ((x2 - x1) ** 2 + (y2 - y1) ** 2)));
+    return Math.hypot(px - x1 - t * (x2 - x1), py - y1 - t * (y2 - y1)) - 1.15;
+  });
+  distances.push(Math.hypot(px - 5, py - 6) - 2.6, Math.hypot(px - 19, py - 18) - 2.6);
+  return [0, 0, 0, Math.round(Math.max(0, Math.min(1, .5 - Math.min(...distances) * size / 24)) * 255)];
+}
+fs.writeFileSync(path.join(uiDir, 'trayTemplate.png'), buildPNG(18, templatePixel));
+fs.writeFileSync(path.join(uiDir, 'trayTemplate@2x.png'), buildPNG(36, templatePixel));
+console.log('应用图标与 Windows / macOS 托盘图标已生成');

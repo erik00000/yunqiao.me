@@ -5,6 +5,8 @@ import { createHash, randomBytes } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { atomicWrite } from './agents/configFiles.js';
+import { runningCodingClients } from './clientProcesses.js';
+import { getAdapter } from './agents/adapters.js';
 
 export const runFile = promisify(execFile);
 export interface HistoryContext { home: string; sqliteHome: string; blockingProcesses?: () => Promise<string[]> }
@@ -32,14 +34,8 @@ export async function assertClientsStopped(ctx: HistoryContext): Promise<void> {
   if (processes.length) throw new Error(`请先完全退出 ChatGPT 桌面版 / Codex 及 CLI，再执行修复或恢复。检测到：${processes.join('、')}`);
 }
 export async function runningClients(): Promise<string[]> {
-  try {
-    if (process.platform === 'win32') {
-      const { stdout } = await runFile('tasklist', ['/FO', 'CSV', '/NH'], { windowsHide: true, timeout: 5000, maxBuffer: 4 * 1024 * 1024 });
-      return [...new Set(stdout.split(/\r?\n/).map(line => /^"([^"]+)"/.exec(line)?.[1] || '').filter(name => /^(?:codex|chatgpt(?: beta)?)\.exe$/i.test(name)))];
-    }
-    const { stdout } = await runFile('ps', ['-eo', 'comm='], { timeout: 5000, maxBuffer: 4 * 1024 * 1024 });
-    return [...new Set(stdout.split(/\r?\n/).map(name => path.basename(name.trim())).filter(name => /^(?:codex|chatgpt(?: beta)?)$/i.test(name)))];
-  } catch { throw new Error('无法确认客户端是否已退出，本次未写入历史数据'); }
+  const configured = getAdapter('chatgpt-desktop')?.detect().command;
+  return runningCodingClients(configured ? [configured] : []);
 }
 
 /** Shared across provider repair and native index repair; stale owners are recovered only after PID verification. */

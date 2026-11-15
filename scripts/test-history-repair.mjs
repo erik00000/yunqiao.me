@@ -7,7 +7,9 @@ import { createRequire } from 'node:module';
 import { build } from 'esbuild';
 
 const workspace = path.resolve(import.meta.dirname, '..');
-const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aurora-history-repair-test-'));
+// macOS /var can alias /private/var. Keep fixture paths and filesystem hooks
+// consistent with the real paths returned by the history validation helpers.
+const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'aurora-history-repair-test-')));
 const originalClientHome = process.env.AURORA_CLIENT_HOME;
 let count = 0;
 function check(label, fn) { fn(); count++; console.log(`PASS ${label}`); }
@@ -201,5 +203,7 @@ try {
 } finally {
   if (originalClientHome === undefined) delete process.env.AURORA_CLIENT_HOME; else process.env.AURORA_CLIENT_HOME = originalClientHome;
   const resolved = path.resolve(root);
-  if (resolved.startsWith(path.join(os.tmpdir(), 'aurora-history-repair-test-'))) fs.rmSync(resolved, { recursive: true, force: true });
+  assert.equal(path.dirname(resolved), fs.realpathSync(os.tmpdir()));
+  assert(path.basename(resolved).startsWith('aurora-history-repair-test-'));
+  fs.rmSync(resolved, { recursive: true, force: true });
 }

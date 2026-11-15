@@ -159,7 +159,7 @@ export default function DesktopExtensions() {
       <Btn disabled={!!busy} variant="primary" onClick={async () => { if (await action('extension.configure', { exePath: path.trim(), port: Number(port) })) setSettingsOpen(false); }}>保存连接设置</Btn>
     </>}>
       {error && <div className="notice warning" role="alert">{error}</div>}
-      <Field label="客户端可执行文件" hint="留空自动识别 ChatGPT、ChatGPT Beta 或原 Codex 安装路径。"><input className="input mono" aria-label="桌面客户端路径" value={path} onChange={e => setPath(e.target.value)} placeholder="自动检测" /></Field>
+      <Field label="客户端程序路径" hint="留空自动识别。Windows 可填 .exe，macOS 可填完整 .app 应用包。"><input className="input mono" aria-label="桌面客户端路径" value={path} onChange={e => setPath(e.target.value)} placeholder="自动检测" /></Field>
       <Field label="本机调试端口"><input className="input" aria-label="桌面调试端口" type="number" min={1024} max={65535} value={port} onChange={e => setPort(Number(e.target.value))} /></Field>
       <div className="notice">如果客户端正在以普通方式运行，请先保存工作并完全退出，再点击「启动并连接」。连接成功不代表所有版本都兼容每一项增强，具体状态会显示在插件卡片上。</div>
     </Modal>}

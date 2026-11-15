@@ -3,11 +3,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFile, spawn } from 'node:child_process';
 import { getAdapter, type AgentDetection } from '../core/agents/adapters.js';
+import { createMacClientLifecycle, MacLifecycleError } from './clientLifecycleMac.js';
 
 export type ClientKind = 'desktop' | 'cli' | 'service';
 export interface ClientLifecycleInfo { ok: true; agentId: string; kind: ClientKind; installed: boolean; supported: boolean; message: string }
 export interface ClientLifecycleResult { ok: boolean; agentId: string; kind: ClientKind; operation: 'restarted' | 'started' | 'opened-terminal' | 'unsupported' | 'failed'; message: string }
-export interface ClientTarget { agentId: string; kind: ClientKind; executable: string; identity: string; aumid?: string }
+export interface ClientTarget { agentId: string; kind: ClientKind; executable: string; identity: string; aumid?: string; bundlePath?: string; bundleId?: string }
 export interface ClientProcess { pid: number; executable: string; started: string; ownerSid: string; sessionId: number; hasWindow: boolean; protected?: boolean }
 export interface ClientLifecycleRuntime {
   platform: NodeJS.Platform;
@@ -169,12 +170,14 @@ if ($process.MainWindowHandle -ne 0 -and $process.CloseMainWindow()) { @{ result
 else { @{ result = 'blocked' } | ConvertTo-Json -Compress }
 `;
 
+const macLifecycle = createMacClientLifecycle();
 export const nativeClientLifecycleRuntime: ClientLifecycleRuntime = {
   platform: process.platform,
   home: () => os.homedir(),
   detect: agentId => getAdapter(agentId)?.detect() || { installed: false, configured: false },
   async resolveTarget(agentId, detected) {
     const definition = clients[agentId];
+    if (process.platform === 'darwin') return macLifecycle.resolveTarget(agentId, definition, detected);
     let executable = detected.command, aumid: string | undefined;
     if (executable && (typeof executable !== 'string' || !path.win32.isAbsolute(executable) || /[\x00-\x1f]/.test(executable))) throw new LifecycleError('未找到可验证的客户端程序路径');
     const detectedFilename = executable ? path.basename(executable).toLowerCase() : '';
@@ -203,8 +206,9 @@ export const nativeClientLifecycleRuntime: ClientLifecycleRuntime = {
     if (normalized(real) === normalized(canonical(process.execPath))) throw new LifecycleError('此路径是云桥自身程序，不能作为外部客户端重新启动');
     return { agentId, kind: definition.kind, executable: real, identity: fileIdentity(real), ...(aumid ? { aumid } : {}) };
   },
-  validateTarget(target) { try { return normalized(target.executable) !== normalized(canonical(process.execPath)) && fileIdentity(target.executable) === target.identity; } catch { return false; } },
+  validateTarget(target) { if (process.platform === 'darwin') return macLifecycle.validateTarget(target); try { return normalized(target.executable) !== normalized(canonical(process.execPath)) && fileIdentity(target.executable) === target.identity; } catch { return false; } },
   async listProcesses(target) {
+    if (process.platform === 'darwin') return macLifecycle.listProcesses(target);
     const found = await script(listProcessesScript, { executable: target.executable });
     if (!Array.isArray(found.processes) || typeof found.uncertain !== 'boolean') throw new LifecycleError('无法确认客户端进程身份，请手动退出后重试');
     let uncertain = found.uncertain;
@@ -214,12 +218,14 @@ export const nativeClientLifecycleRuntime: ClientLifecycleRuntime = {
     });
     return { processes, uncertain };
   },
-  async closeProcess(_target, process) { const result = await script(closeProcessScript, { process }); if (!['requested', 'gone', 'blocked', 'changed'].includes(result.result)) throw new LifecycleError('客户端退出请求未被系统确认'); return result.result; },
+  async closeProcess(target, clientProcess) { if (process.platform === 'darwin') return macLifecycle.closeProcess(target, clientProcess); const result = await script(closeProcessScript, { process: clientProcess }); if (!['requested', 'gone', 'blocked', 'changed'].includes(result.result)) throw new LifecycleError('客户端退出请求未被系统确认'); return result.result; },
   async startDesktop(target) {
+    if (process.platform === 'darwin') return macLifecycle.startDesktop(target);
     if (target.aumid) await detached(path.win32.join(process.env.SystemRoot || 'C:\\Windows', 'explorer.exe'), ['shell:AppsFolder\\' + target.aumid]);
     else await detached(target.executable, [], path.dirname(target.executable));
   },
   async openTerminal(target, workingDirectory) {
+    if (process.platform === 'darwin') return macLifecycle.openTerminal(target, workingDirectory);
     const source = input({ executable: target.executable, workingDirectory }) + "Set-Location -LiteralPath $inputData.workingDirectory\n& $inputData.executable\n";
     await detached(powershell(), ['-NoLogo', '-NoProfile', '-NoExit', '-EncodedCommand', encoded(source)], workingDirectory);
   },
@@ -233,19 +239,19 @@ export function createClientLifecycle(runtime: ClientLifecycleRuntime) {
   async function describeClientLifecycle(payload: unknown): Promise<ClientLifecycleInfo> {
     const agentId = selected(payload), definition = clients[agentId], base = { ok: true as const, agentId, kind: definition.kind };
     if (definition.kind === 'service') return { ...base, installed: false, supported: false, message: '这是模型 API 服务，无需重新启动本机程序' };
-    if (runtime.platform !== 'win32') return { ...base, installed: runtime.detect(agentId).installed, supported: false, message: '此系统暂不支持自动重启，请保存工作后手动退出并打开客户端' };
+    if (!['win32', 'darwin'].includes(runtime.platform)) return { ...base, installed: runtime.detect(agentId).installed, supported: false, message: '此系统暂不支持自动重启，请保存工作后手动退出并打开客户端' };
     const detected = runtime.detect(agentId);
     try {
       const target = await runtime.resolveTarget(agentId, detected);
       return { ...base, installed: !!target, supported: !!target, message: !target ? `未检测到 ${definition.name}，请先完成安装并重新检测` : definition.kind === 'cli' ? '在新的终端窗口打开客户端；原终端会话保留，请自行结束旧会话后加载新配置' : '请求客户端正常退出后重新打开；尚未运行时直接启动，未保存内容请先在客户端处理' };
-    } catch (error) { return { ...base, installed: detected.installed, supported: false, message: error instanceof LifecycleError ? error.message : '无法确认客户端安装位置，请重新检测或手动打开' }; }
+    } catch (error) { return { ...base, installed: detected.installed, supported: false, message: error instanceof LifecycleError || error instanceof MacLifecycleError ? error.message : '无法确认客户端安装位置，请重新检测或手动打开' }; }
   }
   async function restartClient(payload: unknown): Promise<ClientLifecycleResult> {
     const agentId = selected(payload), definition = clients[agentId], existing = flights.get(agentId);
     if (existing) return existing;
     const run = (async (): Promise<ClientLifecycleResult> => {
       const result = (ok: boolean, operation: ClientLifecycleResult['operation'], message: string): ClientLifecycleResult => ({ ok, agentId, kind: definition.kind, operation, message });
-      if (runtime.platform !== 'win32' || definition.kind === 'service') return result(false, 'unsupported', definition.kind === 'service' ? '模型 API 服务无需重启本机程序' : '此系统暂不支持自动重启，请手动退出并打开客户端');
+      if (!['win32', 'darwin'].includes(runtime.platform) || definition.kind === 'service') return result(false, 'unsupported', definition.kind === 'service' ? '模型 API 服务无需重启本机程序' : '此系统暂不支持自动重启，请手动退出并打开客户端');
       try {
         const target = await runtime.resolveTarget(agentId, runtime.detect(agentId));
         if (!target) return result(false, 'failed', `未检测到 ${definition.name}，请先完成安装并重新检测`);
@@ -258,7 +264,7 @@ export function createClientLifecycle(runtime: ClientLifecycleRuntime) {
         if (initial.uncertain) return result(false, 'failed', '无法完整确认客户端进程身份，请手动退出客户端后重试');
         if (initial.processes.some(process => process.protected || process.pid === globalThis.process.pid || process.pid === globalThis.process.ppid)) return result(false, 'failed', '目标包含云桥自身或启动云桥的进程，已停止操作，请在客户端中手动处理');
         if (initial.processes.length) {
-          const windows = initial.processes.filter(process => process.hasWindow);
+          const windows = runtime.platform === 'darwin' ? initial.processes : initial.processes.filter(process => process.hasWindow);
           if (!windows.length) return result(false, 'failed', '客户端仍在托盘或后台运行，请先从客户端菜单完全退出，再重新启动');
           for (const process of windows) {
             const outcome = await runtime.closeProcess(target, process);
@@ -284,10 +290,10 @@ export function createClientLifecycle(runtime: ClientLifecycleRuntime) {
           const started = await runtime.listProcesses(target);
           if (started.uncertain) return result(false, 'failed', '已发出启动请求，但无法确认客户端进程，请检查客户端窗口');
           if (started.processes.length) return result(true, initial.processes.length ? 'restarted' : 'started', initial.processes.length ? '客户端已正常退出并重新启动' : '客户端已启动');
-          if (runtime.now() >= deadline) return result(false, 'failed', '已发出启动请求，但未检测到客户端运行，请从开始菜单手动打开并检查安装');
+          if (runtime.now() >= deadline) return result(false, 'failed', `已发出启动请求，但未检测到客户端运行，请从${runtime.platform === 'darwin' ? 'Finder' : '开始菜单'}手动打开并检查安装`);
           await runtime.delay(300);
         }
-      } catch (error) { return result(false, 'failed', error instanceof LifecycleError ? error.message : '客户端操作未完成，请检查安装或手动退出后重新打开'); }
+      } catch (error) { return result(false, 'failed', error instanceof LifecycleError || error instanceof MacLifecycleError ? error.message : '客户端操作未完成，请检查安装或手动退出后重新打开'); }
     })();
     flights.set(agentId, run);
     try { return await run; } finally { if (flights.get(agentId) === run) flights.delete(agentId); }

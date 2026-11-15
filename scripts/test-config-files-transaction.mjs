@@ -138,6 +138,28 @@ try {
     assert.throws(() => api.restorePlan('fixture-client', externalManifest, f.paths), /备份路径不属于/);
     f.paths.forEach((file, i) => assert.equal(read(file), f.installed[i])); assertOriginals(f);
   });
+  check('A linked backup directory cannot redirect original credentials outside the client folder', () => {
+    const f = fixture(1), outside = path.join(scratch, 'external-backup-target'); fs.mkdirSync(outside);
+    fs.symlinkSync(outside, path.join(f.root, '.aurora-backups'), process.platform === 'win32' ? 'junction' : 'dir');
+    assert.throws(() => api.applyPlan('fixture-client', f.plan()), /备份目录/);
+    assert.equal(read(f.paths[0]), f.original[0]); assert.deepEqual(fs.readdirSync(outside), []);
+  });
+  check('A nested backup-directory link cannot supply an external original during restore or switching', () => {
+    const f = installedFixture(1), outside = path.join(scratch, 'external-original-target'); fs.mkdirSync(outside);
+    const linked = path.join(f.root, '.aurora-backups', 'redirected'); fs.symlinkSync(outside, linked, process.platform === 'win32' ? 'junction' : 'dir');
+    write(path.join(outside, 'external.original'), 'must-not-restore-external-original');
+    const manifest = JSON.parse(read(f.backup)); manifest.files[0].backup = path.join(linked, 'external.original'); write(f.backup, JSON.stringify(manifest));
+    assert.throws(() => api.restorePlan('fixture-client', f.backup, f.paths), /备份.*目录/);
+    assert.throws(() => api.applyPlan('fixture-client', f.paths.map(file => api.planned(file, 'next-selection')), f.backup), /备份.*目录/);
+    assert.equal(read(f.paths[0]), f.installed[0]);
+  });
+  if (process.platform !== 'win32') check('Native Unix reapplies private permissions to an existing backup directory', () => {
+    const f = fixture(1), root = path.join(f.root, '.aurora-backups'); fs.mkdirSync(root, { mode: 0o755 }); fs.chmodSync(root, 0o755);
+    const manifest = api.applyPlan('fixture-client', f.plan());
+    assert.equal(fs.statSync(root).mode & 0o777, 0o700);
+    assert.equal(fs.statSync(manifest).mode & 0o777, 0o600);
+    const original = JSON.parse(read(manifest)).files[0].backup; assert.equal(fs.statSync(original).mode & 0o777, 0o600);
+  });
   check('Malformed backup JSON never exposes parser source content during apply or restore', () => {
     const f = installedFixture(), originalManifest = JSON.parse(read(f.backup));
     const secret = 'sk-fixture', malformed = `${secret}-private-invalid-json`;

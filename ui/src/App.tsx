@@ -60,7 +60,7 @@ function Shell() {
     reload();
     const off = window.aurora?.onGateway(() => reload());
     const timer = setInterval(reload, 15000);
-    const onKey = (e: KeyboardEvent) => { if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); setSearchOpen(v => !v); } };
+    const onKey = (e: KeyboardEvent) => { if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.isComposing && e.key.toLowerCase() === 'k') { e.preventDefault(); setSearchOpen(v => !v); } };
     window.addEventListener('keydown', onKey);
     return () => { off?.(); clearInterval(timer); window.removeEventListener('keydown', onKey); };
   }, [reload]);
@@ -89,14 +89,14 @@ function Shell() {
   </div>;
   const Page = PAGES[page];
   const active = ALL_NAV.find(i => i.id === page)!;
-  return <div className="app">
+  return <div className="app" data-platform={window.aurora ? state.platform : 'web'}>
     <header className="titlebar">
       <div className="brand"><span className="brand-symbol"><Ico name="route" size={18} /></span><span>云桥 AI</span><span className="brand-en">yunqiao.me</span></div>
       <div className="titlebar-crumb">个人工作空间 <span>/</span> {active.label}</div>
       <div className="spacer" />
-      <button className="quick-search" onClick={() => { setSearchOpen(true); setQuery(''); }}><Ico name="search" size={14} /><span>搜索功能</span><kbd>Ctrl K</kbd></button>
+      <button className="quick-search" onClick={() => { setSearchOpen(true); setQuery(''); }}><Ico name="search" size={14} /><span>搜索功能</span><kbd>{(state.platform === 'darwin' || (!window.aurora && /Mac|iPhone|iPad/.test(navigator.platform))) ? '⌘ K' : 'Ctrl K'}</kbd></button>
       <button className="icon-button" title="切换浅色 / 深色" onClick={async () => { try { const theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; if (window.aurora) { await call('settings.save', { theme }); await reload(); } else document.documentElement.dataset.theme = theme; } catch (e: any) { toast.push(e.message, 'bad'); } }}><Ico name="cube" size={16} /></button>
-      <WindowControls />
+      <WindowControls platform={state.platform} />
     </header>
     <div className="body">
       <aside className="sidebar">

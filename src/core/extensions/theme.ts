@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { resourceRoot } from './market.js';
-export function dreamThemeSource(config:Record<string,any>):string{
-  const platform=process.platform==='win32'?'windows':'macos';const choice=String(config.theme||'dream');
+export function dreamThemeSource(config:Record<string,any>,targetPlatform:NodeJS.Platform=process.platform):string{
+  const platform=targetPlatform==='win32'?'windows':'macos';const choice=String(config.theme||'dream');
   const roots:Record<string,string>={dream:`upstream/dream-skin/${platform}`,tiger:`upstream/cidala-tiger/${platform}`,snow:'upstream/snow-skin',glass:'upstream/glass-vision'};
   const inject=path.join(resourceRoot(),'assets','inject'),root=path.join(inject,roots[choice]||roots.dream);
   const css=fs.readFileSync(path.join(root,choice==='glass'?'glass-vision.css':'dream-skin.css'),'utf8')+'\n'+fs.readFileSync(path.join(inject,'dream-skin-native-shell-compat.css'),'utf8');

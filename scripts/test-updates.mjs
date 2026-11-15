@@ -41,6 +41,22 @@ try {
     assert.equal(m.githubUpdate(data, '0.6.0', { platform: 'mac', arch: 'arm64' }).assetName, mac);
     assert.equal(m.githubUpdate(data, '0.6.0', { platform: 'linux', arch: 'x64' }).assetName, linux);
   });
+  await test('Intel and Apple Silicon prefer matching DMG and accept universal without cross-architecture downloads', () => {
+    const intel = `YunQiaoAI-${version}-mac-x64.dmg`, apple = `YunQiaoAI-${version}-mac-arm64.dmg`, universal = `YunQiaoAI-${version}-mac-universal.dmg`;
+    for (const [arch, expected, other] of [['x64', intel, apple], ['arm64', apple, intel]]) {
+      const target = { platform: 'mac', arch };
+      assert.equal(m.githubUpdate(release({ assets: [asset(universal), asset(other), asset(expected)] }), '0.6.0', target).assetName, expected);
+      assert.equal(m.githubUpdate(release({ assets: [asset(other), asset(universal)] }), '0.6.0', target).assetName, universal);
+      assert.throws(() => m.githubUpdate(release({ assets: [asset(other)] }), '0.6.0', target), /当前平台/);
+    }
+  });
+  await test('macOS website fallback preserves the requested architecture and checks its filename', async () => {
+    for (const arch of ['arm64', 'x64']) {
+      const mac = website({ platform: 'mac', arch, url: `https://ai.haowucm.cn/releases/YunQiaoAI-${version}-mac-${arch}.dmg` });
+      assert.equal((await expectFallback(new Error('fixture offline'), mac, { platform: 'mac', arch })).url, mac.url);
+      assert.throws(() => m.websiteUpdate({ ...mac, url: mac.url.replace(`mac-${arch}`, `mac-${arch === 'arm64' ? 'x64' : 'arm64'}`) }, '0.6.0', { platform: 'mac', arch }), /平台/);
+    }
+  });
   await test('network errors, missing stable release and rate limits automatically use the website', async () => { for (const error of [new Error('timeout'), new Error('HTTP 404'), new Error('HTTP 403'), new Error('HTTP 429')]) assert.equal((await expectFallback(error)).hasUpdate, true); });
   await test('malformed JSON and invalid response shapes use the website', async () => { for (const value of [new Error('invalid JSON'), '<html>not JSON</html>', null, [], { message: 'API rate limit exceeded' }]) await expectFallback(value); });
   await test('drafts, prereleases and prerelease tags cannot become stable updates', async () => {
@@ -113,7 +129,7 @@ try {
   await test('invalid version, architecture and source fail before any network access', async () => {
     let requests = 0; const request = async () => { requests++; return release(); };
     await assert.rejects(() => m.checkUpdate('not-a-version', win, request));
-    for (const target of [{ platform: 'android', arch: 'arm64' }, { platform: 'ios', arch: 'x64' }, { platform: 'win', arch: 'mips' }, { ...win, source: 'evil' }, { ...win, minimumVersion: '0.8.0-beta' }]) await assert.rejects(() => m.checkUpdate('0.6.0', target, request));
+    for (const target of [{ platform: 'android', arch: 'arm64' }, { platform: 'ios', arch: 'x64' }, { platform: 'mac', arch: 'ia32' }, { platform: 'win', arch: 'mips' }, { ...win, source: 'evil' }, { ...win, minimumVersion: '0.8.0-beta' }]) await assert.rejects(() => m.checkUpdate('0.6.0', target, request));
     assert.equal(requests, 0);
   });
   console.log(`Updates: ${passed} tests passed`);

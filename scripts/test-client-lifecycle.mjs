@@ -45,7 +45,7 @@ try {
   await check('Services and unsupported platforms never invoke native lifecycle operations', async () => {
     const f = fixture(); const service = await f.describeClientLifecycle({ agentId: 'deepseek' });
     assert.equal(service.kind, 'service'); assert.equal(service.supported, false); assert.equal((await f.restartClient({ agentId: 'deepseek' })).operation, 'unsupported'); assert.equal(f.state.detected, 0);
-    for (const platform of ['darwin', 'linux']) {
+    for (const platform of ['linux']) {
       const other = fixture({ platform }); assert.equal((await other.describeClientLifecycle({ agentId: 'claude-desktop' })).supported, false); assert.equal((await other.restartClient({ agentId: 'claude-desktop' })).operation, 'unsupported'); assert.equal(other.state.resolved, 0);
     }
   });
@@ -70,6 +70,13 @@ try {
   await check('Tray-only clients remain running and are never duplicated or force-stopped', async () => {
     const f = fixture(); f.state.processes = [processEntry({ hasWindow: false })];
     const result = await f.restartClient({ agentId: 'claude-desktop' }); assert.equal(result.ok, false); assert.match(result.message, /托盘或后台/); assert.equal(f.state.closes.length, 0); assert.equal(f.state.starts.length, 0); assert.equal(f.state.processes.length, 1);
+  });
+  await check('macOS apps without Windows handles still receive a normal application quit request', async () => {
+    const f = fixture({ platform: 'darwin' }); f.state.processes = [processEntry({ hasWindow: false })];
+    assert.equal((await f.describeClientLifecycle({ agentId: 'claude-desktop' })).supported, true);
+    const result = await f.restartClient({ agentId: 'claude-desktop' }); assert.equal(result.ok, true); assert.equal(result.operation, 'restarted'); assert.equal(f.state.closes.length, 1); assert.equal(f.state.starts.length, 1);
+    const blocked = fixture({ platform: 'darwin', closeProcess: async () => 'blocked' }); blocked.state.processes = [processEntry({ hasWindow: false })];
+    assert.equal((await blocked.restartClient({ agentId: 'claude-desktop' })).ok, false); assert.equal(blocked.state.starts.length, 0);
   });
   await check('Incomplete identity checks never assume the app has stopped', async () => {
     const f = fixture(); f.state.uncertain = true;

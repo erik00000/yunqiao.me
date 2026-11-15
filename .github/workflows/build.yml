@@ -10,7 +10,7 @@ on:
         description: Build target
         type: choice
         default: all
-        options: [all, windows, ios]
+        options: [all, windows, macos, ios]
 
 permissions:
   contents: read
@@ -39,7 +39,7 @@ jobs:
       - run: php scripts/test-catalog-publish.php
 
   windows:
-    if: github.event_name != 'workflow_dispatch' || inputs.target != 'ios'
+    if: github.event_name != 'workflow_dispatch' || inputs.target == 'all' || inputs.target == 'windows'
     name: Windows
     runs-on: windows-latest
     steps:
@@ -61,6 +61,7 @@ jobs:
       - run: node scripts/test-extensions.mjs --renderer
       - run: node scripts/make-icon.mjs build
       - run: pnpm build
+      - run: node scripts/test-desktop-shell.mjs
       - name: Verify management workflows and failure recovery
         run: |
           python scripts/test-management-ui.py
@@ -98,8 +99,14 @@ jobs:
             release/*.exe
             release/*.exe.blockmap
 
+  macos:
+    if: github.event_name != 'workflow_dispatch' || inputs.target == 'all' || inputs.target == 'macos'
+    uses: ./.github/workflows/desktop-platform-validation.yml
+    with:
+      package-installer: true
+
   ios:
-    if: github.event_name != 'workflow_dispatch' || inputs.target != 'windows'
+    if: github.event_name != 'workflow_dispatch' || inputs.target == 'all' || inputs.target == 'ios'
     name: iOS companion · simulator + unsigned device
     runs-on: macos-15
     timeout-minutes: 35

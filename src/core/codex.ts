@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { parse as parseToml } from 'smol-toml';
 import { applyPlan, patchToml, planned, readText } from './agents/configFiles.js';
+import { runningCodingClientsSync } from './clientProcesses.js';
 
 /**
  * Codex 增强：会话诊断/修复 + 插件·技能·提示词管理。
@@ -160,7 +161,9 @@ export function repairSessions(targetProvider?: string): RepairResult {
   const target = targetProvider || readTomlValue('model_provider');
   if (!fs.existsSync(dbPath)) return { ok: false, message: '没有找到 state_5.sqlite' };
   if (!target) return { ok: false, message: 'config.toml 里没有 model_provider，先接入一个供应商再修复' };
-  if (isRunning()) {
+  let running: boolean;
+  try { running = isRunning(); } catch { return { ok: false, message: '无法确认客户端是否已退出，本次未写入历史数据' }; }
+  if (running) {
     return {
       ok: false,
       message: 'Codex 正在运行，数据库被占用。请先完全退出 Codex（桌面版要托盘退出）再点修复。',
@@ -202,25 +205,7 @@ export function repairSessions(targetProvider?: string): RepairResult {
 }
 
 function isRunning(): boolean {
-  try {
-    const { execFileSync } = require('node:child_process') as typeof import('node:child_process');
-    if (process.platform === 'win32') {
-      const out = execFileSync('tasklist', ['/FI', 'IMAGENAME eq Codex.exe'], {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'ignore'],
-        timeout: 4000,
-      });
-      return /Codex\.exe/i.test(out);
-    }
-    const out = execFileSync('pgrep', ['-fl', 'codex'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      timeout: 4000,
-    });
-    return /\bcodex\b/i.test(out);
-  } catch {
-    return false;
-  }
+  return runningCodingClientsSync().length > 0;
 }
 
 /* ------------------------------ 插件 / 技能 / 提示词 ------------------------------ */

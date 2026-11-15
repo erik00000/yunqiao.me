@@ -43,9 +43,18 @@ function isWithin(root: string, file: string): boolean {
   const rel = path.relative(path.resolve(root), path.resolve(file));
   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
 }
+function checkBackupDirectory(root: string): void {
+  const stat = fs.lstatSync(root);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error(`备份目录不能是链接或普通文件：${root}`);
+}
+function checkBackupFile(root: string, file: string): void {
+  if (!isWithin(root, file)) throw new Error('备份路径不属于此客户端目录');
+  checkBackupDirectory(root);
+  if (fs.existsSync(file) && !isWithin(fs.realpathSync(root), fs.realpathSync(file))) throw new Error('备份文件实际位置不属于此客户端目录');
+}
 function loadManifest(file: string, agentId: string, allowed: string[]): BackupManifest {
   const root = backupRoot(allowed);
-  if (!isWithin(root, file)) throw new Error('备份路径不属于此客户端');
+  checkBackupFile(root, file);
   let manifest: BackupManifest;
   try { manifest = JSON.parse(readText(file)); } catch { throw new Error(`无法读取有效的配置备份，请检查备份文件：${file}`); }
   if (!manifest || manifest.format !== 'aurora-client-backup-v1' || manifest.agentId !== agentId || !Array.isArray(manifest.files) || !manifest.files.length)
@@ -53,6 +62,7 @@ function loadManifest(file: string, agentId: string, allowed: string[]): BackupM
   for (const e of manifest.files) {
     if (!e || typeof e.path !== 'string' || !/^[a-f0-9]{64}$/.test(e.installedHash) || (e.backup !== null && typeof e.backup !== 'string') || !allowed.some(p => path.resolve(p) === path.resolve(e.path)) || (e.backup !== null && !isWithin(root, e.backup)))
       throw new Error('备份包含不属于此客户端的文件');
+    if (e.backup !== null) checkBackupFile(root, e.backup);
   }
   if (new Set(manifest.files.map(e => path.resolve(e.path))).size !== manifest.files.length) throw new Error('备份存在重复路径');
   return manifest;
@@ -65,6 +75,10 @@ export function applyPlan(agentId: string, files: PlannedFile[], previousBackup?
   const previous = previousBackup ? loadManifest(previousBackup, agentId, allowed) : undefined;
   const root = backupRoot(allowed);
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  checkBackupDirectory(root);
+  // mkdir's mode is ignored for existing directories. Credentials must also
+  // stay private when a directory was created by an older build or a user.
+  if (process.platform !== 'win32') fs.chmodSync(root, 0o700);
   const stamp = `${Date.now()}-${randomBytes(4).toString('hex')}`;
   const manifest: BackupManifest = { format: 'aurora-client-backup-v1', agentId, files: [] };
   // Detect edits since preview/build, before creating backups or changing the configuration.

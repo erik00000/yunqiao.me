@@ -68,11 +68,11 @@ async function ensureGateway(): Promise<void> {
 function allowedExternal(raw: string) { const u = new URL(raw); if (!['https:', 'http:', 'ms-windows-store:'].includes(u.protocol) || u.username || u.password) throw new Error('不支持的外部链接'); return u.href; }
 function trustedFrame(raw?: string) {
   if (!raw) return false;
-  try { const u = new URL(raw); return DEV ? u.origin === new URL(UI_URL).origin : u.protocol === 'file:' && path.resolve(fileURLToPath(u)).toLowerCase() === path.resolve(uiFile).toLowerCase(); } catch { return false; }
+  try { const u = new URL(raw); const normalize = (file: string) => process.platform === 'win32' ? path.resolve(file).toLowerCase() : path.resolve(file); return DEV ? u.origin === new URL(UI_URL).origin : u.protocol === 'file:' && normalize(fileURLToPath(u)) === normalize(uiFile); } catch { return false; }
 }
 function createWindow() {
-  win = new BrowserWindow({ width: 1380, height: 930, minWidth: 900, minHeight: 640, backgroundColor: '#f7f8fc', show: false, frame: false,
-    title: '云桥 AI · yunqiao.me', titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden', trafficLightPosition: { x: 16, y: 18 },
+  win = new BrowserWindow({ width: 1380, height: 930, minWidth: 900, minHeight: 640, backgroundColor: '#f7f8fc', show: false, frame: process.platform === 'darwin',
+    title: '云桥 AI · yunqiao.me', titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden', ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 16, y: 20 } } : {}),
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, offscreen: process.env.AURORA_UI_TEST === '1' && !app.isPackaged, backgroundThrottling: false },
   });
   if (DEV) void win.loadURL(UI_URL);
@@ -84,14 +84,26 @@ function createWindow() {
     if (process.env.AURORA_UI_TEST !== '1' || app.isPackaged) win?.show();
     if (!app.isPackaged && process.env.AURORA_SHOT) setTimeout(async () => { try { fs.writeFileSync(process.env.AURORA_SHOT!, (await win!.webContents.capturePage()).toPNG()); } catch {} app.quit(); }, Number(process.env.AURORA_SHOT_DELAY || 3500));
   });
-  win.on('close', event => { if (store.getSettings().closeToTray && !quitting) { event.preventDefault(); win?.hide(); } else if (!quitting) app.quit(); });
+  win.on('close', event => { if (store.getSettings().closeToTray && !quitting) { event.preventDefault(); win?.hide(); } else if (!quitting && process.platform !== 'darwin') app.quit(); });
   win.on('closed', () => { win = null; });
   win.on('focus', () => refreshLocalClients());
 }
 function showWindow() { if (!win) createWindow(); else { if (win.isMinimized()) win.restore(); win.show(); win.focus(); } }
 function createTray() {
-  const icon = nativeImage.createFromPath(path.join(__dirname, '..', 'ui', 'tray.png'));
-  tray = new Tray(icon.resize({ width: 20, height: 20 })); tray.setToolTip('云桥 AI · yunqiao.me'); tray.on('double-click', showWindow); refreshTray();
+  const mac = process.platform === 'darwin';
+  const iconRoot = DEV ? path.join(app.getAppPath(), 'ui', 'public') : path.join(__dirname, '..', 'ui');
+  const icon = nativeImage.createFromPath(path.join(iconRoot, mac ? 'trayTemplate.png' : 'tray.png')).resize({ width: mac ? 18 : 20, height: mac ? 18 : 20 });
+  if (mac) icon.setTemplateImage(true);
+  tray = new Tray(icon); tray.setToolTip('云桥 AI · yunqiao.me'); tray.on('double-click', showWindow); refreshTray();
+}
+function createApplicationMenu() {
+  if (process.platform !== 'darwin') { Menu.setApplicationMenu(null); return; }
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+    { label: '云桥 AI', submenu: [{ role: 'about', label: '关于云桥 AI' }, { type: 'separator' }, { role: 'services', label: '服务' }, { type: 'separator' }, { role: 'hide', label: '隐藏云桥 AI' }, { role: 'hideOthers', label: '隐藏其他应用' }, { role: 'unhide', label: '显示全部' }, { type: 'separator' }, { role: 'quit', label: '退出云桥 AI' }] },
+    { label: '编辑', submenu: [{ role: 'undo', label: '撤销' }, { role: 'redo', label: '重做' }, { type: 'separator' }, { role: 'cut', label: '剪切' }, { role: 'copy', label: '复制' }, { role: 'paste', label: '粘贴' }, { role: 'selectAll', label: '全选' }] },
+    { label: '显示', submenu: [{ role: 'resetZoom', label: '实际大小' }, { role: 'zoomIn', label: '放大' }, { role: 'zoomOut', label: '缩小' }, { type: 'separator' }, { role: 'togglefullscreen', label: '切换全屏' }] },
+    { role: 'windowMenu', label: '窗口', submenu: [{ role: 'minimize', label: '最小化' }, { role: 'zoom', label: '缩放' }, { role: 'close', label: '关闭窗口' }, { type: 'separator' }, { label: '打开云桥 AI', click: showWindow }, { role: 'front', label: '全部前置' }] },
+  ]));
 }
 function refreshTray() {
   tray?.setContextMenu(Menu.buildFromTemplate([
@@ -189,7 +201,7 @@ else {
     });
     ipcMain.handle('aurora:recent', event => event.sender === win?.webContents && trustedFrame(event.senderFrame?.url) ? recent.slice(0, 100) : []);
     refreshLocalClients(true);
-    createWindow(); createTray(); if (store.getSettings().autoStartGateway) await ensureGateway().catch(() => {}); applyLoginItem(store.getSettings().launchAtLogin);
+    createApplicationMenu(); createWindow(); createTray(); if (store.getSettings().autoStartGateway) await ensureGateway().catch(() => {}); applyLoginItem(store.getSettings().launchAtLogin);
     clientScanTimer = setInterval(() => refreshLocalClients(), 30_000);
     clientScanTimer.unref();
     app.on('activate', showWindow);

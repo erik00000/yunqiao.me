@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { AuroraStore } from '../store/index.js';
-import { desktopInfo, validateDebugPort } from '../injector.js';
+import { desktopInfo, inspectCodingDesktop, validateDebugPort } from '../injector.js';
 import { BUILTINS, BUNDLED, effectiveEntry, loadState, saveState, manifest, validateConfig, validatePackageConfig } from './catalog.js';
 import { installedPlugins, installNative, loadIndex, nativeKey, packagePresent, refreshMarkets, removeNative, resourceRoot, toggleNative, type MarketSource } from './market.js';
 import { runtimeFor } from './runtime.js';
@@ -38,7 +38,7 @@ export async function runExtensionAction(deps:{store:AuroraStore},action:string,
     const state=loadState(store),runtime=runtimeFor(store);
     if(action==='extension.configure'){
       if(payload.port!==undefined)state.connection.port=validateDebugPort(payload.port);
-      if(payload.exePath!==undefined){if(typeof payload.exePath!=='string')throw new Error('程序路径无效');const exe=payload.exePath.trim();if(exe&&(!path.isAbsolute(exe)||!fs.existsSync(exe)||!fs.statSync(exe).isFile()))throw new Error('指定的桌面程序不存在');state.connection.exePath=exe||undefined;state.connection.lastVersion=undefined;}
+      if(payload.exePath!==undefined){if(typeof payload.exePath!=='string')throw new Error('程序路径无效');const exe=payload.exePath.trim();const detected=exe?inspectCodingDesktop(exe):undefined;if(exe&&!detected?.installed)throw new Error('指定的桌面程序不存在；macOS 请选择完整 .app 应用包');state.connection.exePath=detected?.exePath||undefined;state.connection.lastVersion=undefined;}
       await runtime.disconnect();saveState(store,state);return{ok:true,connection:state.connection};
     }
     if(action==='extension.connect')return runtime.connect(payload);

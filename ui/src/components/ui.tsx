@@ -42,8 +42,8 @@ export function Ico({ name, size = 16 }: { name: string; size?: number }) {
 
 /* ---------------- 标题栏 ---------------- */
 
-export function WindowControls() {
-  if (!window.aurora) return null;
+export function WindowControls({ platform }: { platform: string }) {
+  if (!window.aurora || platform === 'darwin') return null;
   return (
     <div className="win-controls">
       <button title="最小化" onClick={() => call('window.minimize')}>
