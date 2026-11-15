@@ -4,7 +4,7 @@
 
 Windows 桌面端使用 Electron + React + TypeScript；iOS 为 Capacitor 伴侣端，连接电脑或服务器上的网关。0.6.0 正在本地功能验证，公开下载为 0.5.0 预览版。
 
-最新本地调试入口及验证范围见 [Windows 本地功能验收](docs/LOCAL-VALIDATION-0.6.0.md)。
+最新本地调试入口及验证范围见 [Windows 本地功能验收](docs/LOCAL-VALIDATION-0.6.0.md)。 本轮修复及后续优先级见 [工程审查记录](docs/ENGINEERING-AUDIT-2026-11-15.md)。
 
 公开仓库：[jxb412/aurora](https://github.com/jxb412/aurora) · [下载预览版 0.5.0](https://github.com/jxb412/aurora/releases/tag/v0.5.0) · [构建记录](https://github.com/jxb412/aurora/actions) · [用户讨论](https://github.com/jxb412/aurora/discussions)
 

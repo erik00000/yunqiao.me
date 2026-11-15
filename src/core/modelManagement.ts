@@ -32,7 +32,7 @@ export function manageModels(store: AuroraStore, payload: any, apply = false) {
       return selected.has(key(providerId, reference));
     };
     for (const a of Object.values(agents)) {
-      if (!a.connected || !a.providerId) continue;
+      if ((!a.connected && !a.pendingReapply) || !a.providerId) continue;
       const references = [a.model || providers.find(p => p.id === a.providerId)?.models[0]?.id, ...Object.values(a.modelMap || {})];
       for (const model of references) if (model && referencesSelection(a.providerId, model)) conflicts.push(`客户端 ${a.id} 正在使用 ${model}，请先更换配置或角色映射`);
     }

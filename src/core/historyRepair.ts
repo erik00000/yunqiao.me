@@ -289,9 +289,18 @@ async function stageSource(source: SourceFile, original: string, staged: string,
   finally { await handle.close(); }
   if (await fileHash(staged) !== source.afterHash) throw new Error('暂存的修复内容与预览不一致');
 }
-async function replaceFile(source: string, target: string, mode: number, mtimeMs: number): Promise<void> {
+async function replaceFile(ctx: HistoryContext, source: string, target: string, mode: number, mtimeMs: number, expectedHash: string, replacementHash: string): Promise<void> {
   const temporary = `${target}.aurora-repair-${randomBytes(6).toString('hex')}.tmp`;
-  try { await fs.promises.copyFile(source, temporary, fs.constants.COPYFILE_EXCL); fs.chmodSync(temporary, mode); await fs.promises.rename(temporary, target); fs.utimesSync(target, new Date(), new Date(mtimeMs)); }
+  try {
+    checkedFile(ctx.home, source); checkedFile(ctx.home, target);
+    await fs.promises.copyFile(source, temporary, fs.constants.COPYFILE_EXCL);
+    if (await fileHash(temporary) !== replacementHash) throw new Error('待写入会话副本校验失败，原文件保持不变');
+    // Copying and hashing can yield for a large rollout. Recheck the destination afterwards,
+    // including restore, so another client's append is never treated as our own prior write.
+    checkedFile(ctx.home, target);
+    if (await fileHash(target) !== expectedHash) throw new Error('会话文件正在被其他程序修改，已保留现有内容');
+    fs.chmodSync(temporary, mode); await fs.promises.rename(temporary, target); fs.utimesSync(target, new Date(), new Date(mtimeMs));
+  }
   finally { if (fs.existsSync(temporary)) fs.unlinkSync(temporary); }
 }
 function openJournalDbs(journal: Journal): Map<string, SqlDb> {
@@ -333,8 +342,14 @@ async function restoreJournal(ctx: HistoryContext, journal: Journal, revision?: 
     const current = await restoreInspection(ctx, journal);
     if (!current.ok || current.revision !== inspection.revision) throw new Error('取得写锁后检测到历史变化，未执行恢复');
     journal.status = 'restoring'; saveJournal(file, journal);
-    for (const source of journal.files) if (await fileHash(source.path) !== source.beforeHash) await replaceFile(source.original, source.path, source.mode, source.mtimeMs);
+    for (const source of journal.files) {
+      const hash = await fileHash(source.path);
+      if (hash === source.beforeHash) continue;
+      if (hash !== source.afterHash) throw new Error('会话文件在恢复期间被其他程序修改，已保留现有内容');
+      await replaceFile(ctx, source.original, source.path, source.mode, source.mtimeMs, source.afterHash, source.beforeHash);
+    }
     for (const row of journal.rows) writeRow(dbs.get(row.dbPath)!, row, row.before);
+    for (const source of journal.files) if (await fileHash(source.path) !== source.beforeHash) throw new Error('提交恢复前检测到会话文件被外部修改');
     for (const db of dbs.values()) db.prepare('COMMIT').run();
     journal.status = 'restored'; journal.restoredAt = new Date().toISOString(); saveJournal(file, journal);
     return { ok: true, backupId: journal.id, updated: journal.sessions, message: `已恢复 ${journal.sessions} 个会话在本批修复前的元数据与索引。备份继续保留。` };
@@ -394,7 +409,7 @@ export function createHistoryRepairService(ctx: HistoryContext = historyContext(
         for (const source of plan.files) if (await fileHash(source.path) !== source.hash) throw new Error('备份过程中会话原文件发生变化');
         for (const row of plan.rows) if (valueHash(currentRow(dbs.get(row.dbPath)!, row)) !== valueHash(row.before)) throw new Error('备份过程中会话索引发生变化');
         journal.status = 'applying'; saveJournal(journalFile(ctx, id), journal);
-        for (const source of journal.files) { if (await fileHash(source.path) !== source.beforeHash) throw new Error('会话文件正在被其他程序修改'); await replaceFile(source.staged, source.path, source.mode, source.mtimeMs); }
+        for (const source of journal.files) { if (await fileHash(source.path) !== source.beforeHash) throw new Error('会话文件正在被其他程序修改'); await replaceFile(ctx, source.staged, source.path, source.mode, source.mtimeMs, source.beforeHash, source.afterHash); }
         for (const row of journal.rows) writeRow(dbs.get(row.dbPath)!, row, row.after);
         for (const source of journal.files) if (await fileHash(source.path) !== source.afterHash) throw new Error('提交前检测到会话文件被外部修改');
         for (const db of dbs.values()) db.prepare('COMMIT').run();

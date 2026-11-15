@@ -8,6 +8,7 @@ header('X-Content-Type-Options: nosniff');
 if (!is_logged_in()) { header('Location: index.php'); exit; }
 $message = '';
 $errorMessage = '';
+$overview = ['enabled' => false, 'totals' => ['claimed' => 0, 'pending' => 0, 'review' => 0, 'amountUsd' => 0], 'grants' => []];
 try {
     $service = new MemberService(MemberService::environment());
     if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
@@ -21,7 +22,8 @@ try {
     $overview = $service->adminOverview();
 } catch (MemberError $error) {
     $errorMessage = $error->getMessage();
-    $overview = $service->adminOverview();
+    try { $overview = $service->adminOverview(); }
+    catch (Throwable $unavailable) { /* Keep the safe unavailable view when the ledger itself failed. */ }
 } catch (Throwable $error) {
     $errorMessage = '会员存储或配置不可用，请检查 PHP 扩展、配置文件权限与服务器日志。';
     $overview = ['enabled' => false, 'totals' => ['claimed' => 0, 'pending' => 0, 'review' => 0, 'amountUsd' => 0], 'grants' => []];

@@ -24,6 +24,8 @@ export class Router {
   private counters = new Map<string, number>();
   private failCounts = new Map<string, number>();
   private usageCounts = new Map<string, number>();
+  private volatileCooldowns = new Map<string, { key: string; until: number }>();
+  persistenceWarning?: string;
 
   constructor(private store: AuroraStore) {}
 
@@ -36,6 +38,9 @@ export class Router {
     } catch { return []; }
     const usable = p.apiKeys.filter((k) => {
       if (!k.enabled) return false;
+      const slot = JSON.stringify([p.id, k.id]), cooldown = this.volatileCooldowns.get(slot);
+      if (cooldown && cooldown.key === k.key && cooldown.until > now) return false;
+      if (cooldown) this.volatileCooldowns.delete(slot);
       if (k.cooldownUntil && new Date(k.cooldownUntil).getTime() > now) return false;
       return !!k.key.trim() || allowsEmpty;
     });
@@ -144,7 +149,7 @@ export class Router {
   }
 
   private expandGroup(group: { members: any[]; mode: RouteMode; id: string }, providers: Provider[]): Candidate[] {
-    const base: Candidate[] = [];
+    const members: Array<{ candidates: Candidate[]; weight: number }> = [];
     for (const member of group.members) {
       const p = providers.find((x) => x.id === member.providerId);
       if (!p) continue;
@@ -153,8 +158,9 @@ export class Router {
       const pm = p.models.find((mm) => mm.id === model) ?? ({ id: model, capabilities: { tools: true } } as ProviderModel);
       const candidates = this.candidatesFor(p, pm, model);
       const weight = group.mode === 'weight' ? Math.min(1000, Math.max(1, Math.floor(Number(member.weight) || 1))) : 1;
-      for (let i = 0; i < weight; i++) base.push(...candidates);
+      if (candidates.length) members.push({ candidates, weight });
     }
+    const base = members.flatMap(member => member.candidates);
     if (!base.length) return base;
 
     const unique = (items: Candidate[]) => {
@@ -171,8 +177,11 @@ export class Router {
       case 'rotate': {
         const n = this.counters.get(`grp:${group.id}`) ?? 0;
         this.counters.set(`grp:${group.id}`, n + 1);
-        const off = n % base.length;
-        return unique([...base.slice(off), ...base.slice(0, off)]);
+        // Group weights choose a member; API key count must not increase its traffic share.
+        let slot = n % members.reduce((sum, member) => sum + member.weight, 0);
+        let off = 0;
+        while (off < members.length - 1 && slot >= members[off].weight) slot -= members[off++].weight;
+        return unique([...members.slice(off), ...members.slice(0, off)].flatMap(member => member.candidates));
       }
       case 'usage':
       case 'pace':
@@ -205,8 +214,11 @@ export class Router {
     }
   }
 
-  markKeyFailure(providerId: string, keyId: string, reason: string, cooldownMs = COOLDOWN_MS): void {
-    this.store.providers.update((list) =>
+  markKeyFailure(providerId: string, keyId: string, reason: string, cooldownMs = COOLDOWN_MS, expectedKey?: string): void {
+    const key = this.store.getProvider(providerId)?.apiKeys.find(item => item.id === keyId);
+    if (!key || (expectedKey !== undefined && key.key !== expectedKey)) return;
+    if (key) this.volatileCooldowns.set(JSON.stringify([providerId, keyId]), { key: key.key, until: Date.now() + cooldownMs });
+    this.persistKeyStatus(() => this.store.providers.update((list) =>
       list.map((p) => {
         if (p.id !== providerId) return p;
         return {
@@ -218,13 +230,16 @@ export class Router {
           ),
         };
       }),
-    );
+    ));
     const cur = this.failCounts.get(providerId) ?? 0;
     this.failCounts.set(providerId, cur + 1);
   }
 
-  markKeySuccess(providerId: string, keyId: string): void {
-    this.store.providers.update((list) =>
+  markKeySuccess(providerId: string, keyId: string, expectedKey?: string): void {
+    const key = this.store.getProvider(providerId)?.apiKeys.find(item => item.id === keyId);
+    if (!key || (expectedKey !== undefined && key.key !== expectedKey)) return;
+    this.volatileCooldowns.delete(JSON.stringify([providerId, keyId]));
+    this.persistKeyStatus(() => this.store.providers.update((list) =>
       list.map((p) =>
         p.id !== providerId
           ? p
@@ -237,9 +252,22 @@ export class Router {
               ),
             },
       ),
-    );
+    ));
     this.failCounts.set(providerId, 0);
     this.usageCounts.set(providerId, (this.usageCounts.get(providerId) ?? 0) + 1);
+  }
+
+  private persistKeyStatus(write: () => unknown): void {
+    try { write(); this.persistenceWarning = undefined; }
+    catch { this.persistenceWarning = '密钥运行状态暂时无法保存，请检查数据目录的空间和权限；请求继续处理，冷却状态暂存于内存。'; }
+  }
+
+  /** Missing price metadata means unknown cost, including native subscriptions. */
+  costKnown(provider: Provider, model: ProviderModel, usage?: { cacheRead?: number; cacheWrite?: number }): boolean {
+    const override = this.store.overrides.read()[`${provider.id}/${model.id}`] ?? {};
+    return [override.priceIn ?? model.inputPrice, override.priceOut ?? model.outputPrice,
+      ...((usage?.cacheRead ?? 0) > 0 ? [model.cacheReadPrice] : []), ...((usage?.cacheWrite ?? 0) > 0 ? [model.cacheWritePrice] : [])]
+      .every(value => typeof value === 'number' && Number.isFinite(value) && value >= 0);
   }
 
   /** 计算费用（美元） */
@@ -266,6 +294,8 @@ export class Router {
       })),
     );
     this.failCounts.clear();
+    this.volatileCooldowns.clear();
+    this.persistenceWarning = undefined;
   }
 }
 

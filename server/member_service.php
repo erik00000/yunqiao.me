@@ -79,39 +79,71 @@ final class MemberService
         if ($this->db) return $this->db;
         umask(0077);
         $dir = (string)($this->config['dataDir'] ?? '');
-        if ($dir === '' || (!is_dir($dir) && !@mkdir($dir, 0700, true))) {
+        if ($dir === '' || (!is_dir($dir) && !@mkdir($dir, 0700, true) && !is_dir($dir))) {
             throw new MemberError('STORAGE_UNAVAILABLE', '会员存储暂不可用', 503);
         }
-        // A missing/corrupt existing database is never silently replaced with an empty ledger.
-        $path = $dir . '/members.sqlite';
-        $marker = $dir . '/members.initialized';
-        if (is_file($marker) && !is_file($path)) throw new MemberError('STORAGE_UNAVAILABLE', '会员账本缺失，请联系管理员恢复备份', 503);
-        if (is_link($path)) throw new MemberError('STORAGE_UNAVAILABLE', '会员存储暂不可用', 503);
-        $db = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
-        $db->exec('PRAGMA busy_timeout=10000');
-        $db->exec('PRAGMA journal_mode=WAL');
-        $db->exec('PRAGMA synchronous=FULL');
-        $db->exec('PRAGMA foreign_keys=ON');
-        $db->exec('CREATE TABLE IF NOT EXISTS member_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS installations (id_hash TEXT PRIMARY KEY, proof_hash TEXT NOT NULL, created_at INTEGER NOT NULL);
-            CREATE TABLE IF NOT EXISTS member_sessions (token_hash TEXT PRIMARY KEY, installation_hash TEXT NOT NULL REFERENCES installations(id_hash), user_id INTEGER NOT NULL, profile TEXT NOT NULL, upstream_token TEXT NOT NULL, expires_at INTEGER NOT NULL);
-            CREATE INDEX IF NOT EXISTS member_sessions_expiry ON member_sessions(expires_at);
-            CREATE TABLE IF NOT EXISTS welcome_grants (user_id INTEGER PRIMARY KEY, installation_hash TEXT NOT NULL UNIQUE REFERENCES installations(id_hash), code TEXT NOT NULL UNIQUE, status TEXT NOT NULL CHECK(status IN (\'pending\',\'claimed\',\'review\')), amount_cents INTEGER NOT NULL CHECK(amount_cents=1000), created_at INTEGER NOT NULL, claimed_at INTEGER, upstream_id INTEGER, last_error TEXT);
-            CREATE TABLE IF NOT EXISTS member_rate_limits (key TEXT PRIMARY KEY, window_start INTEGER NOT NULL, attempts INTEGER NOT NULL);');
-        @chmod($path, 0600);
-        $this->db = $db;
-        $this->transaction(function () use ($db): void {
-            $origin = $db->query("SELECT value FROM member_meta WHERE key='upstream_origin'")->fetchColumn();
-            if ($origin === false) {
-                $this->execute("INSERT INTO member_meta(key,value) VALUES('upstream_origin',?)", [$this->config['origin']]);
-            } elseif (!hash_equals((string)$origin, $this->config['origin'])) {
-                throw new MemberError('UPSTREAM_CHANGED', '会员站点变更需要管理员迁移账本', 503);
-            }
-        });
-        if (!is_file($marker) && @file_put_contents($marker, "aurora-members-v1\n", LOCK_EX) === false) {
-            throw new MemberError('STORAGE_UNAVAILABLE', '无法确认会员账本状态', 503);
+        // Serialize first initialization before testing existence. A concurrent process must not
+        // mistake the first process's newly created empty SQLite file for a damaged ledger.
+        $lock = @fopen($dir . '/members-init.lock', 'c');
+        if (!$lock || !flock($lock, LOCK_EX)) {
+            if ($lock) fclose($lock);
+            throw new MemberError('STORAGE_UNAVAILABLE', '会员存储暂不可用', 503);
         }
-        return $db;
+        try {
+            $path = $dir . '/members.sqlite';
+            $marker = $dir . '/members.initialized';
+            clearstatcache(true, $path);
+            clearstatcache(true, $marker);
+            if (is_file($marker) && !is_file($path)) throw new MemberError('STORAGE_UNAVAILABLE', '会员账本缺失，请联系管理员恢复备份', 503);
+            if (is_link($path) || is_link($marker) || (file_exists($path) && (!is_file($path) || filesize($path) === 0))) {
+                throw new MemberError('STORAGE_UNAVAILABLE', '会员账本异常，请联系管理员恢复备份', 503);
+            }
+            $existing = is_file($path);
+            $db = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+            $db->exec('PRAGMA busy_timeout=10000');
+            if ($existing) {
+                // Never repair missing monetary tables with CREATE IF NOT EXISTS: doing so would
+                // erase the evidence that an account or installation already received its gift.
+                $schema = [
+                    'member_meta' => ['key', 'value'],
+                    'installations' => ['id_hash', 'proof_hash', 'created_at'],
+                    'member_sessions' => ['token_hash', 'installation_hash', 'user_id', 'profile', 'upstream_token', 'expires_at'],
+                    'welcome_grants' => ['user_id', 'installation_hash', 'code', 'status', 'amount_cents', 'created_at', 'claimed_at', 'upstream_id', 'last_error'],
+                    'member_rate_limits' => ['key', 'window_start', 'attempts'],
+                ];
+                foreach ($schema as $table => $columns) {
+                    $actual = array_column($db->query('PRAGMA table_info(' . $table . ')')->fetchAll(PDO::FETCH_ASSOC), 'name');
+                    if (array_diff($columns, $actual)) throw new MemberError('STORAGE_UNAVAILABLE', '会员账本结构不完整，请联系管理员恢复备份', 503);
+                }
+                $origin = $db->query("SELECT value FROM member_meta WHERE key='upstream_origin'")->fetchColumn();
+                if ($origin === false) throw new MemberError('STORAGE_UNAVAILABLE', '会员账本来源记录缺失，请联系管理员恢复备份', 503);
+                if (!hash_equals((string)$origin, $this->config['origin'])) throw new MemberError('UPSTREAM_CHANGED', '会员站点变更需要管理员迁移账本', 503);
+            }
+            $db->exec('PRAGMA journal_mode=WAL');
+            $db->exec('PRAGMA synchronous=FULL');
+            $db->exec('PRAGMA foreign_keys=ON');
+            if (!$existing) {
+                $db->exec('BEGIN IMMEDIATE');
+                try {
+                    $db->exec('CREATE TABLE IF NOT EXISTS member_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                    CREATE TABLE IF NOT EXISTS installations (id_hash TEXT PRIMARY KEY, proof_hash TEXT NOT NULL, created_at INTEGER NOT NULL);
+                    CREATE TABLE IF NOT EXISTS member_sessions (token_hash TEXT PRIMARY KEY, installation_hash TEXT NOT NULL REFERENCES installations(id_hash), user_id INTEGER NOT NULL, profile TEXT NOT NULL, upstream_token TEXT NOT NULL, expires_at INTEGER NOT NULL);
+                    CREATE INDEX IF NOT EXISTS member_sessions_expiry ON member_sessions(expires_at);
+                    CREATE TABLE IF NOT EXISTS welcome_grants (user_id INTEGER PRIMARY KEY, installation_hash TEXT NOT NULL UNIQUE REFERENCES installations(id_hash), code TEXT NOT NULL UNIQUE, status TEXT NOT NULL CHECK(status IN (\'pending\',\'claimed\',\'review\')), amount_cents INTEGER NOT NULL CHECK(amount_cents=1000), created_at INTEGER NOT NULL, claimed_at INTEGER, upstream_id INTEGER, last_error TEXT);
+                    CREATE TABLE IF NOT EXISTS member_rate_limits (key TEXT PRIMARY KEY, window_start INTEGER NOT NULL, attempts INTEGER NOT NULL);');
+                    $statement = $db->prepare("INSERT INTO member_meta(key,value) VALUES('upstream_origin',?)");
+                    $statement->execute([$this->config['origin']]);
+                    $db->exec('COMMIT');
+                } catch (Throwable $error) { $db->exec('ROLLBACK'); throw $error; }
+            }
+            @chmod($path, 0600);
+            $markerContents = "aurora-members-v1\n";
+            if (!is_file($marker) && @file_put_contents($marker, $markerContents, LOCK_EX) !== strlen($markerContents)) {
+                throw new MemberError('STORAGE_UNAVAILABLE', '无法确认会员账本状态', 503);
+            }
+            // Cache only a fully verified and durably initialized connection.
+            return $this->db = $db;
+        } finally { flock($lock, LOCK_UN); fclose($lock); }
     }
 
     private function execute(string $sql, array $parameters = []): PDOStatement

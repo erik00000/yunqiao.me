@@ -67,10 +67,15 @@ function store_write(string $name, array $data): bool
     return true;
 }
 
-function config(): array
+/** Internal: caller holds the stable configuration lock for initialization/read/modify/write. */
+function config_read_locked(): array
 {
+    $exists = file_exists(data_path('config.json')) || is_link(data_path('config.json'));
     $cfg = store_read_strict('config.json', []);
-    if (!isset($cfg['passwordHash'])) {
+    if ($exists && (!is_string($cfg['passwordHash'] ?? null) || $cfg['passwordHash'] === '')) {
+        throw new RuntimeException('后台密码配置缺失或损坏，请恢复备份，不能重新初始化');
+    }
+    if (!$exists) {
         // Existing installs keep their password. Fresh installs have no shared default credential.
         $initialPassword = getenv('AURORA_ADMIN_PASSWORD');
         if (!$initialPassword || strlen($initialPassword) < 12) {
@@ -96,9 +101,31 @@ function config(): array
     return $cfg;
 }
 
-function save_config(array $cfg): void
+function config_locked(callable $operation): array
 {
-    if (!store_write('config.json', $cfg)) throw new RuntimeException('后台配置保存失败');
+    $lock = @fopen(data_path('config-write.lock'), 'c');
+    if (!$lock || !flock($lock, LOCK_EX)) {
+        if ($lock) fclose($lock);
+        throw new RuntimeException('后台配置暂不可用，请稍后重试');
+    }
+    try { return $operation(); }
+    finally { flock($lock, LOCK_UN); fclose($lock); }
+}
+
+function config(): array
+{
+    return config_locked(static fn(): array => config_read_locked());
+}
+
+/** The callback sees fresh data under the same lock used by every configuration writer. */
+function config_update(callable $change): array
+{
+    return config_locked(static function () use ($change): array {
+        $next = $change(config_read_locked());
+        if (!is_array($next)) throw new RuntimeException('后台配置更新结果无效');
+        if (!store_write('config.json', $next)) throw new RuntimeException('后台配置保存失败');
+        return $next;
+    });
 }
 
 function catalog(): array
@@ -116,9 +143,11 @@ function catalog(): array
 
 function save_catalog(array &$c): void
 {
-    $c['version'] = (int)($c['version'] ?? 0) + 1;
-    $c['updatedAt'] = date('c');
-    if (!store_write('catalog.json', $c)) throw new RuntimeException('供应商目录保存失败');
+    $next = $c;
+    $next['version'] = (int)($c['version'] ?? 0) + 1;
+    $next['updatedAt'] = date('c');
+    if (!store_write('catalog.json', $next)) throw new RuntimeException('供应商目录保存失败');
+    $c = $next;
 }
 
 /** Keep checksums when editing release notes; never carry a previous build hash to a changed URL/version. */
@@ -152,6 +181,30 @@ function normalize_update(array $body, array $previous): array
 }
 
 /* ------------------------------ 会话与鉴权 ------------------------------ */
+
+/** Failed attempts and password verification share one IP lock, including concurrent sessions. */
+function admin_login_attempt(string $password, string $passwordHash, string $address): array
+{
+    $name = 'fail_' . md5($address) . '.json';
+    $lock = @fopen(data_path($name . '.lock'), 'c');
+    if (!$lock || !flock($lock, LOCK_EX)) {
+        if ($lock) fclose($lock);
+        throw new RuntimeException('登录验证暂不可用');
+    }
+    try {
+        $failure = store_read_strict($name, ['n' => 0, 'until' => 0]);
+        $remaining = (int)($failure['until'] ?? 0) - time();
+        if ($remaining > 0) return ['accepted' => false, 'retryAfter' => $remaining];
+        $accepted = password_verify($password, $passwordHash);
+        if ($accepted) $failure = ['n' => 0, 'until' => 0];
+        else {
+            $failure['n'] = (int)($failure['n'] ?? 0) + 1;
+            if ($failure['n'] >= 5) $failure = ['n' => 0, 'until' => time() + 300];
+        }
+        if (!store_write($name, $failure)) throw new RuntimeException('无法保存登录验证状态');
+        return ['accepted' => $accepted, 'retryAfter' => 0];
+    } finally { flock($lock, LOCK_UN); fclose($lock); }
+}
 
 function boot_session(): void
 {
@@ -222,14 +275,17 @@ function cors(): void
     }
 }
 
-function body_json(): array
+function body_json(?stdClass &$document = null): array
 {
-    $raw = file_get_contents('php://input');
-    if ($raw === false || $raw === '') {
-        return [];
-    }
-    $j = json_decode($raw, true);
-    return is_array($j) ? $j : [];
+    $raw = file_get_contents('php://input', false, null, 0, 4194305);
+    if ($raw === false || strlen($raw) > 4194304) json_out(['error' => '请求内容超过4MB限制'], 413);
+    if ($raw === '') return [];
+    try {
+        $decoded = json_decode($raw, false, 64, JSON_THROW_ON_ERROR);
+        if (!$decoded instanceof stdClass) throw new InvalidArgumentException('请求内容必须是 JSON 对象');
+        $document = $decoded;
+        return json_decode($raw, true, 64, JSON_THROW_ON_ERROR);
+    } catch (JsonException $error) { throw new InvalidArgumentException('请求 JSON 格式无效'); }
 }
 
 function now(): string
@@ -307,29 +363,17 @@ function normalize_provider(array $p): array
 /** 带文件锁的读-改-写：并发埋点不丢数据 */
 function store_update(string $name, callable $fn, array $default = []): array
 {
-    $f = data_path($name);
-    $fp = @fopen($f, 'c+');
-    if (!$fp) {
-        return $default;
+    // Lock a stable sibling file: replacing the data file must not change the lock's inode.
+    $lock = @fopen(data_path($name . '.lock'), 'c');
+    if (!$lock || !flock($lock, LOCK_EX)) {
+        if ($lock) fclose($lock);
+        throw new RuntimeException('统计存储暂不可用');
     }
-    flock($fp, LOCK_EX);
-    $raw = stream_get_contents($fp);
-    $data = $raw ? json_decode($raw, true) : null;
-    if (!is_array($data)) {
-        $data = $default;
-    }
-    $data = $fn($data);
-    $json = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
-    if ($json !== false) {
-        ftruncate($fp, 0);
-        rewind($fp);
-        fwrite($fp, $json);
-        fflush($fp);
-    }
-    flock($fp, LOCK_UN);
-    fclose($fp);
-    @chmod($f, 0600);
-    return $data;
+    try {
+        $data = $fn(store_read($name, $default));
+        if (!is_array($data) || !store_write($name, $data)) throw new RuntimeException('统计保存失败');
+        return $data;
+    } finally { flock($lock, LOCK_UN); fclose($lock); }
 }
 
 /* ------------------------------ 访问统计 ------------------------------ */
@@ -367,7 +411,7 @@ function track(string $kind, array $extra = []): void
     $ip = client_ip();
     $ua = short_ua();
 
-    store_update('analytics.json', function (array $a) use ($kind, $extra, $today, $ip, $ua) {
+    try { store_update('analytics.json', function (array $a) use ($kind, $extra, $today, $ip, $ua) {
         $a['days'] = $a['days'] ?? [];
         $d = $a['days'][$today] ?? ['catalog' => 0, 'update' => 0, 'ping' => 0, 'ips' => [], 'versions' => [], 'platforms' => []];
         $d[$kind] = (int)($d[$kind] ?? 0) + 1;
@@ -412,7 +456,8 @@ function track(string $kind, array $extra = []): void
             }
         }
         return $a;
-    }, ['days' => [], 'clients' => []]);
+    }, ['days' => [], 'clients' => []]); }
+    catch (Throwable $error) { error_log('Aurora analytics write failed: ' . get_class($error)); }
 }
 
 /** 把按天的原始数据压成前端要的形状 */

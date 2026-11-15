@@ -9,6 +9,11 @@
  */
 declare(strict_types=1);
 require __DIR__ . '/lib.php';
+set_exception_handler(function (Throwable $error): void {
+    error_log('Aurora public service failure: ' . get_class($error));
+    header('Cache-Control: no-store');
+    json_out(['error' => '服务暂不可用，请稍后重试'], 503);
+});
 
 cors();
 
@@ -56,7 +61,8 @@ switch ($action) {
         $u = $cfg['update'] ?? [];
         $files = (array)($u['files'] ?? []);
         $key = $platform . '-' . $arch;
-        $url = $files[$key] ?? ($files[$platform] ?? '');
+        $fileKey = isset($files[$key]) ? $key : $platform;
+        $url = $files[$fileKey] ?? '';
         $hasUpdate = version_compare((string)($u['version'] ?? '0.0.0'), $current, '>');
         json_out([
             'version' => $u['version'] ?? '0.0.0',
@@ -66,18 +72,19 @@ switch ($action) {
             'platform' => $platform,
             'arch' => $arch,
             'url' => $url,
-            'sha256' => (string)($u['sha256'][$key] ?? ''),
+            'sha256' => (string)($u['sha256'][$fileKey] ?? ''),
             'publishedAt' => $u['publishedAt'] ?? null,
         ]);
     }
 
     case 'ping': {
         track('ping');
-        $cfg = config();
-        $stats = $cfg['stats'] ?? ['pings' => 0, 'installs' => 0];
-        $stats['pings'] = (int)($stats['pings'] ?? 0) + 1;
-        $cfg['stats'] = $stats;
-        save_config($cfg);
+        config_update(static function (array $cfg): array {
+            $stats = $cfg['stats'] ?? ['pings' => 0, 'installs' => 0];
+            $stats['pings'] = (int)($stats['pings'] ?? 0) + 1;
+            $cfg['stats'] = $stats;
+            return $cfg;
+        });
         json_out(['ok' => true]);
     }
 

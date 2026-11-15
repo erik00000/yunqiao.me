@@ -104,7 +104,12 @@ async function saveSettingsAndRestart(deps: ActionDeps, payload: any) {
     try {
       if (next.gatewayPort !== before.gatewayPort || next.gatewayHost !== before.gatewayHost || next.lanShare !== before.lanShare) await deps.restartGateway?.();
     } catch (error) {
-      deps.store.saveSettings(before);
+      try { deps.store.settings.restoreIfUnchanged(before, next); }
+      catch {
+        try { await deps.restartGateway?.(); }
+        catch { throw new Error('网关重启失败；配置随后已变化或无法恢复，已保留当前文件，当前网关也未能启动，请检查系统设置'); }
+        throw new Error('网关重启失败；配置随后已变化或无法恢复，已保留当前文件并按当前配置恢复网关，请检查系统设置');
+      }
       try { await deps.restartGateway?.(); }
       catch (restoreError) { throw new Error(`${String((error as Error).message)}；原配置已还原，但原网关重启失败：${String((restoreError as Error).message)}`); }
       throw error;
@@ -276,9 +281,9 @@ export async function fetchProviderModels(deps: ActionDeps, payload: { providerI
 }
 
 export function summarizeUsage(records: UsageRecord[]) {
-  const byDay = new Map<string, { cost: number; tokens: number; calls: number }>();
-  const byProvider = new Map<string, { cost: number; tokens: number; calls: number; name: string }>();
-  const byModel = new Map<string, { cost: number; tokens: number; calls: number }>();
+  const byDay = new Map<string, { cost: number; tokens: number; calls: number; unpricedCalls: number }>();
+  const byProvider = new Map<string, { cost: number; tokens: number; calls: number; unpricedCalls: number; name: string }>();
+  const byModel = new Map<string, { cost: number; tokens: number; calls: number; unpricedCalls: number }>();
   const byAgent = new Map<string, { calls: number; tokens: number }>();
   let totalIn = 0,
     totalOut = 0,
@@ -288,25 +293,29 @@ export function summarizeUsage(records: UsageRecord[]) {
     cacheInput = 0,
     cacheReports = 0,
     cacheWriteReports = 0,
-    errors = 0;
+    errors = 0,
+    unpricedCalls = 0;
 
   for (const r of records) {
     const day = r.ts.slice(0, 10);
     const tokens = r.inputTokens + r.outputTokens;
     totalIn += r.inputTokens;
     totalOut += r.outputTokens;
-    totalCost += r.cost;
+    const unknownPrice = r.costKnown === false && r.status >= 200 && r.status < 300 ? 1 : 0;
+    const cost = r.costKnown === false ? 0 : r.cost;
+    unpricedCalls += unknownPrice;
+    totalCost += cost;
     totalCache += r.cacheRead || 0;
     totalCacheWrite += r.cacheWrite || 0;
     if (r.cacheWriteKnown || r.cacheWrite > 0) cacheWriteReports++;
     if (r.cacheReadKnown || r.cacheRead > 0) { cacheInput += r.inputTokens; cacheReports++; }
-    if (r.status >= 400) errors++;
-    const d = byDay.get(day) ?? { cost: 0, tokens: 0, calls: 0 };
-    byDay.set(day, { cost: d.cost + r.cost, tokens: d.tokens + tokens, calls: d.calls + 1 });
-    const p = byProvider.get(r.providerId) ?? { cost: 0, tokens: 0, calls: 0, name: r.providerName };
-    byProvider.set(r.providerId, { cost: p.cost + r.cost, tokens: p.tokens + tokens, calls: p.calls + 1, name: r.providerName });
-    const mo = byModel.get(r.model) ?? { cost: 0, tokens: 0, calls: 0 };
-    byModel.set(r.model, { cost: mo.cost + r.cost, tokens: mo.tokens + tokens, calls: mo.calls + 1 });
+    if (r.error || r.status < 200 || r.status >= 400) errors++;
+    const d = byDay.get(day) ?? { cost: 0, tokens: 0, calls: 0, unpricedCalls: 0 };
+    byDay.set(day, { cost: d.cost + cost, tokens: d.tokens + tokens, calls: d.calls + 1, unpricedCalls: d.unpricedCalls + unknownPrice });
+    const p = byProvider.get(r.providerId) ?? { cost: 0, tokens: 0, calls: 0, unpricedCalls: 0, name: r.providerName };
+    byProvider.set(r.providerId, { cost: p.cost + cost, tokens: p.tokens + tokens, calls: p.calls + 1, unpricedCalls: p.unpricedCalls + unknownPrice, name: r.providerName });
+    const mo = byModel.get(r.model) ?? { cost: 0, tokens: 0, calls: 0, unpricedCalls: 0 };
+    byModel.set(r.model, { cost: mo.cost + cost, tokens: mo.tokens + tokens, calls: mo.calls + 1, unpricedCalls: mo.unpricedCalls + unknownPrice });
     const ag = byAgent.get(r.agent) ?? { calls: 0, tokens: 0 };
     byAgent.set(r.agent, { calls: ag.calls + 1, tokens: ag.tokens + tokens });
   }
@@ -321,6 +330,7 @@ export function summarizeUsage(records: UsageRecord[]) {
       cacheReports,
       cacheWriteReports,
       cost: totalCost,
+      unpricedCalls,
       calls: records.length,
       errors,
     },

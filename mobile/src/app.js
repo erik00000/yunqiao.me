@@ -21,6 +21,8 @@ let liveUpdatedAt = '';
 let sessions = null;
 let page = 'home';
 let epoch = 0;
+let refreshSequence = 0;
+let sessionSequence = 0;
 let updatedAt = '';
 let toastTimer;
 const paths = {
@@ -71,6 +73,7 @@ function empty(title, text) {
 }
 function label(text, input) {
   const n = el('label', 'field');
+  input.setAttribute('aria-label', text);
   n.append(el('span', '', text), input);
   return n;
 }
@@ -154,8 +157,9 @@ function renderConnect() {
 async function refresh(showMessage = true) {
   if (!rpc) return;
   const currentEpoch = epoch;
+  const sequence = ++refreshSequence;
   const results = await Promise.allSettled([rpc('state.get'), rpc('usage.summary', { days: 7 }), rpc('usage.recent')]);
-  if (currentEpoch !== epoch) return;
+  if (currentEpoch !== epoch || sequence !== refreshSequence) return;
   if (results[0].status === 'rejected') throw results[0].reason;
   state = results[0].value;
   if (results[1].status === 'fulfilled') summary = results[1].value;
@@ -237,7 +241,7 @@ function renderHome(content) {
   content.append(statTitle);
   const stats = el('div', 'stats-grid');
   const t = summary?.totals;
-  for (const [name, value, sub] of [['请求次数', number(t?.calls), '经过网关的请求'], ['Token 用量', number(t ? t.inputTokens + t.outputTokens : null), '输入与输出合计'], ['估算费用', money(t?.cost), '按已设置模型价格'], ['失败请求', number(t?.errors), '查看下方请求原因']]) {
+  for (const [name, value, sub] of [['请求次数', number(t?.calls), '经过网关的请求'], ['Token 用量', number(t ? t.inputTokens + t.outputTokens : null), '输入与输出合计'], ['已知价格估算', money(t?.cost), t?.unpricedCalls ? `${t.unpricedCalls} 次请求未计价` : '按已设置模型价格'], ['失败请求', number(t?.errors), '查看下方请求原因']]) {
     const s = el('div', 'card stat'); s.append(el('span', 'muted', name), el('strong', '', value), el('small', 'muted', sub)); stats.append(s);
   }
   content.append(stats);
@@ -257,6 +261,7 @@ function renderHome(content) {
       const row = el('div', 'request-row'); const info = el('div', 'grow');
       info.append(el('strong', 'truncate', r.model || '未知模型'), el('p', 'muted small-text', `${r.agent || '客户端'} · ${r.providerName || '供应商'} · ${date(r.ts)}`));
       info.append(el('p', 'request-usage muted', `输入 ${number(r.inputTokens)} · 输出 ${number(r.outputTokens)}${r.estimated ? '（估算）' : ''}`), el('p', 'request-usage muted', `缓存读 ${number(requestCache(r, 'cacheRead'))} · 缓存写 ${number(requestCache(r, 'cacheWrite'))}`));
+      info.append(el('p', 'request-usage muted', r.costKnown === false ? '价格未配置' : `估算费用 ${money(r.cost)}`));
       if (r.error) info.append(el('p', 'error-text', r.error));
       row.append(info, badge(r.status >= 200 && r.status < 300 ? '成功' : `失败 ${r.status || ''}`, r.status >= 200 && r.status < 300)); list.append(row);
     }
@@ -306,15 +311,20 @@ function sheet(title) {
   overlay.replaceChildren();
   const dialog = el('dialog', 'sheet');
   const head = el('div', 'sheet-header');
-  head.append(el('h2', '', title), iconButton('close', '关闭', () => dialog.close()));
+  let locked = false;
+  const close = iconButton('close', '关闭', () => { if (!locked) dialog.close(); });
+  head.append(el('h2', '', title), close);
   const body = el('div', 'sheet-body');
   dialog.append(head, body); overlay.append(dialog); dialog.showModal();
   dialog.addEventListener('close', () => dialog.remove());
-  return { dialog, body };
+  dialog.addEventListener('cancel', event => { if (locked) event.preventDefault(); });
+  return { dialog, body, lock: value => { locked = value; close.disabled = value; } };
 }
 
 function openClient(agent) {
-  const { dialog, body } = sheet(agent.name);
+  const { dialog, body, lock } = sheet(agent.name);
+  const clientEpoch = epoch, clientRpc = rpc;
+  let selectionVersion = 0;
   body.append(note(agent.supportNote || agent.description || '配置电脑上的客户端。'));
   if (agent.support === 'unsupported' || agent.support === 'manual') {
     body.append(note(agent.support === 'unsupported' ? '此客户端暂不支持通过云桥自动更换模型服务。请在电脑端查看官方接入方式。' : '此客户端需要在应用内手动完成设置，请在电脑端复制参数并按接入说明操作。'));
@@ -323,21 +333,27 @@ function openClient(agent) {
   const providers = state.providers.filter(p => p.enabled && p.models?.length);
   if (!providers.length) { body.append(empty('还没有可用供应商', '先在电脑端添加供应商和模型，再回来选择。')); return; }
   const binding = state.agents?.[agent.id];
+  const authMode = ['codex-cli', 'chatgpt-desktop'].includes(agent.id) && binding?.authMode === 'coexist' ? 'coexist' : 'api';
+  if (authMode === 'coexist') body.append(note('保留电脑端已启用的官方账号共存模式。官方模型选择与账号设置请在电脑端管理。'));
   const provider = el('select'); const model = el('select');
   providers.forEach(p => { const opt = el('option', '', p.name); opt.value = p.id; provider.append(opt); });
   provider.value = providers.some(p => p.id === binding?.providerId) ? binding.providerId : providers[0].id;
   const previewBox = el('div', 'preview');
   const updateModels = () => {
+    selectionVersion++;
     model.replaceChildren();
     (providers.find(p => p.id === provider.value)?.models || []).forEach(m => { const opt = el('option', '', m.displayName ? `${m.displayName} · ${m.id}` : m.id); opt.value = m.id; model.append(opt); });
     if (Array.from(model.options).some(o => o.value === binding?.model)) model.value = binding.model;
     previewBox.replaceChildren();
   };
-  provider.addEventListener('change', updateModels); model.addEventListener('change', () => previewBox.replaceChildren()); updateModels();
+  provider.addEventListener('change', updateModels); model.addEventListener('change', () => { selectionVersion++; previewBox.replaceChildren(); }); updateModels();
   body.append(label('供应商', provider), label('模型', model));
   const preview = button('预览电脑上的配置变更', () => busy(preview, async () => {
-    const payload = { agentId: agent.id, providerId: provider.value, model: model.value, mode: 'gateway' };
-    const result = await rpc('agent.preview', payload);
+    const payload = { agentId: agent.id, providerId: provider.value, model: model.value, mode: 'gateway', authMode };
+    const version = selectionVersion;
+    previewBox.replaceChildren();
+    const result = await clientRpc('agent.preview', payload);
+    if (!dialog.open || clientEpoch !== epoch || version !== selectionVersion) return;
     previewBox.replaceChildren();
     if (result.manual) { previewBox.append(note('该客户端需要手动设置，请在电脑端查看配置参数。')); return; }
     previewBox.append(note(result.message || '确认后将备份并修改电脑上的客户端配置。'));
@@ -348,9 +364,17 @@ function openClient(agent) {
     }
     if (!(result.files || []).length) { previewBox.append(note('没有可应用的文件变更。')); return; }
     const confirm = button('确认应用到电脑', () => busy(confirm, async () => {
-      const applied = await rpc('agent.connect', { ...payload, revision: result.revision });
-      dialog.close(); await refresh(false);
-      toast(applied.restartRequired ? '配置已应用，请在电脑上重启客户端' : applied.message || '配置已应用');
+      if (!dialog.open || clientEpoch !== epoch || version !== selectionVersion) return;
+      lock(true); provider.disabled = true; model.disabled = true; preview.disabled = true;
+      try {
+        const applied = await clientRpc('agent.connect', { ...payload, revision: result.revision });
+        if (clientEpoch !== epoch) return;
+        dialog.close();
+        try { await refresh(false); } catch { toast('配置已应用，但工作台刷新失败，请手动刷新查看。'); return; }
+        toast(applied.restartRequired ? '配置已应用，请在电脑上重启客户端' : applied.message || '配置已应用');
+      } catch (error) {
+        previewBox.replaceChildren(note(error.message || '应用失败，请重新预览后重试', true));
+      } finally { lock(false); provider.disabled = false; model.disabled = false; preview.disabled = false; }
     }));
     previewBox.append(confirm);
   }));
@@ -390,8 +414,9 @@ function renderProviders(content) {
 
 async function loadSessions() {
   const captured = epoch;
-  try { const data = await rpc('sessions.scan'); if (captured !== epoch) return; sessions = Array.isArray(data) ? data : []; if (page === 'sessions') render(); }
-  catch (e) { if (captured === epoch) { toast(e.message); sessions = []; if (page === 'sessions') render(); } }
+  const sequence = ++sessionSequence;
+  try { const data = await rpc('sessions.scan'); if (captured !== epoch || sequence !== sessionSequence) return; sessions = Array.isArray(data) ? data : []; if (page === 'sessions') render(); }
+  catch (e) { if (captured === epoch && sequence === sessionSequence) { toast(e.message); sessions = []; if (page === 'sessions') render(); } }
 }
 function renderSessions(content) {
   content.append(heading('历史会话', '读取电脑上的本地会话，继续了解工作进展。'));

@@ -28,11 +28,15 @@ jobs:
       - uses: shivammathur/setup-php@v2
         with:
           php-version: '8.2'
-          extensions: pdo_sqlite, openssl, curl
+          extensions: pdo_sqlite, openssl, curl, mbstring
           coverage: none
       - run: php scripts/test-members.php
       - run: php scripts/test-catalog-sync.php
       - run: php scripts/test-server-storage.php
+      - run: php scripts/test-config-concurrency.php
+      - run: php scripts/test-admin-auth.php
+      - run: php scripts/test-server-api.php
+      - run: php scripts/test-catalog-publish.php
 
   windows:
     if: github.event_name != 'workflow_dispatch' || inputs.target != 'ios'
@@ -51,12 +55,32 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - run: python -m pip install playwright
+      - run: python -m playwright install chromium
       - run: pnpm test
       - run: node scripts/test-extensions.mjs --renderer
       - run: node scripts/make-icon.mjs build
       - run: pnpm build
+      - name: Verify management workflows and failure recovery
+        run: |
+          python scripts/test-management-ui.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/test-client-catalog-ui.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/test-provider-sync-ui.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/test-update-ui.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/test-plugin-ui.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/test-history-ui.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/test-ui.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - run: node scripts/smoke.mjs
       - run: npx electron-builder --win --x64 --publish never
+      - run: python scripts/test-packaged.py --exe release/win-unpacked/YunQiaoAI.exe
+      - run: python scripts/test-coexist-ui.py --exe release/win-unpacked/YunQiaoAI.exe
       - uses: actions/upload-artifact@v4
         with:
           name: yunqiao-windows

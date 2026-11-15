@@ -175,6 +175,28 @@ try {
   const splitFailedPreview = await split.service.preview({ sourceProvider: 'old', targetProvider: 'aurora' }), splitFailed = await split.service.apply({ ...splitFailedPreview.options, revision: splitFailedPreview.revision });
   check('Failure in a separate catalog database rolls back all databases and source metadata', () => { assert.equal(splitFailed.ok, false); assert.equal(splitFailed.rolledBack, true); assert.equal(read(splitSession.file), splitSession.source); assert.equal(split.db.prepare('SELECT model_provider FROM threads WHERE id=?').get(splitSession.id).model_provider, 'old'); assert.equal(catalogDb.prepare('SELECT model_provider FROM local_thread_catalog WHERE host_id=?').get('desktop').model_provider, 'old'); });
   catalogDb.close(); split.db.close();
+  const racedRestore = fixture('restore-external-next-file'), racedFirst = racedRestore.add(60), racedSecond = racedRestore.add(61);
+  const racedPlan = await racedRestore.service.preview({}), racedApplied = await racedRestore.service.apply({ ...racedPlan.options, revision: racedPlan.revision }); assert(racedApplied.ok, racedApplied.message);
+  const racedPreview = await racedRestore.service.restorePreview({ backupId: racedApplied.backupId }), originalRename = fs.promises.rename;
+  let racedResult, externalSecond;
+  fs.promises.rename = async (from, to) => { const result = await originalRename(from, to); if (to === racedFirst.file) { externalSecond = read(racedSecond.file) + '\nEXTERNAL_NEW_WORK\n'; write(racedSecond.file, externalSecond); } return result; };
+  try { racedResult = await racedRestore.service.restore({ backupId: racedApplied.backupId, revision: racedPreview.revision }); }
+  finally { fs.promises.rename = originalRename; racedRestore.db.close(); }
+  check('Restore preserves a later file changed while an earlier file is being restored', () => { assert.equal(racedResult.ok, false); assert.equal(read(racedSecond.file), externalSecond); assert(racedResult.message.includes('恢复未全部完成')); assert.equal(read(racedFirst.file), racedFirst.source); });
+
+  const copying = fixture('apply-external-during-copy'), copyingSession = copying.add(62), copyingPlan = await copying.service.preview({}), originalCopy = fs.promises.copyFile;
+  let copyingResult, externalCopy;
+  fs.promises.copyFile = async (from, to, flags) => { const result = await originalCopy(from, to, flags); if (String(from).endsWith('.repaired.jsonl') && String(to).startsWith(copyingSession.file + '.aurora-repair-')) { externalCopy = read(copyingSession.file) + '\nEXTERNAL_DURING_COPY\n'; write(copyingSession.file, externalCopy); } return result; };
+  try { copyingResult = await copying.service.apply({ ...copyingPlan.options, revision: copyingPlan.revision }); }
+  finally { fs.promises.copyFile = originalCopy; }
+  check('Apply rechecks the source after copying replacement bytes and preserves concurrent writes', () => { assert.equal(copyingResult.ok, false); assert.equal(read(copyingSession.file), externalCopy); assert.equal(copying.db.prepare('SELECT model_provider FROM threads WHERE id=?').get(copyingSession.id).model_provider, 'old'); }); copying.db.close();
+
+  const damagedCopy = fixture('restore-damaged-temporary'), damagedSession = damagedCopy.add(63), damagedPlan = await damagedCopy.service.preview({}), damagedApplied = await damagedCopy.service.apply({ ...damagedPlan.options, revision: damagedPlan.revision }); assert(damagedApplied.ok, damagedApplied.message);
+  const damagedBefore = read(damagedSession.file), damagedPreview = await damagedCopy.service.restorePreview({ backupId: damagedApplied.backupId }); let damagedResult;
+  fs.promises.copyFile = async (from, to, flags) => { const result = await originalCopy(from, to, flags); if (String(from).endsWith('.original.jsonl') && String(to).startsWith(damagedSession.file + '.aurora-repair-')) write(to, 'DAMAGED_TEMPORARY_COPY'); return result; };
+  try { damagedResult = await damagedCopy.service.restore({ backupId: damagedApplied.backupId, revision: damagedPreview.revision }); }
+  finally { fs.promises.copyFile = originalCopy; }
+  check('Restore verifies replacement bytes before renaming the temporary file', () => { assert.equal(damagedResult.ok, false); assert.equal(read(damagedSession.file), damagedBefore); assert.equal(damagedCopy.db.prepare('SELECT model_provider FROM threads WHERE id=?').get(damagedSession.id).model_provider, 'aurora'); }); damagedCopy.db.close();
   console.log(`\n${count} batch history repair integration checks passed.`);
 } finally {
   if (originalClientHome === undefined) delete process.env.AURORA_CLIENT_HOME; else process.env.AURORA_CLIENT_HOME = originalClientHome;

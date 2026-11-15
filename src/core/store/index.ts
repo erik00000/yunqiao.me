@@ -21,7 +21,9 @@ export * from './types.js';
 export { JsonFile, JsonLines } from './jsonFile.js';
 
 function validateProvider(provider: Provider): Provider {
-  if (!provider.name?.trim()) throw new Error('供应商名称不能为空');
+  if (!provider || typeof provider.name !== 'string' || !provider.name.trim()) throw new Error('供应商名称不能为空');
+  if (typeof provider.baseUrl !== 'string' || typeof provider.enabled !== 'boolean' || !Number.isFinite(provider.priority)) throw new Error('供应商地址、启用状态或优先级无效');
+  if (provider.rateMultiplier !== undefined && (!Number.isFinite(provider.rateMultiplier) || provider.rateMultiplier < 0)) throw new Error('供应商倍率必须为非负数字');
   if (!['anthropic', 'openai-chat', 'openai-responses', 'gemini'].includes(provider.format)) throw new Error('不支持的供应商协议');
   if (provider.baseUrl) {
     let url: URL;
@@ -32,6 +34,8 @@ function validateProvider(provider: Provider): Provider {
   if (provider.models.some(m => !m || typeof m.id !== 'string' || !m.id.trim() || /[\r\n\u0000]/.test(m.id))) throw new Error('模型 ID 不能为空或包含换行');
   if (new Set(provider.models.map(m => m.id)).size !== provider.models.length) throw new Error('同一供应商的模型 ID 不能重复');
   if (provider.apiKeys.some(k => !k || typeof k.key !== 'string' || /[\r\n]/.test(k.key))) throw new Error('API Key 格式不正确');
+  if (provider.apiKeys.some(k => typeof k.id !== 'string' || !k.id || typeof k.enabled !== 'boolean' || !Number.isFinite(k.weight) || k.weight < 0)
+      || new Set(provider.apiKeys.map(k => k.id)).size !== provider.apiKeys.length) throw new Error('密钥标识不能重复，启用状态和权重必须有效');
   for (const model of provider.models) {
     for (const field of ['contextWindow', 'maxOutput', 'inputPrice', 'outputPrice', 'cacheReadPrice', 'cacheWritePrice'] as const) {
       const value = model[field];
@@ -39,6 +43,39 @@ function validateProvider(provider: Provider): Provider {
     }
   }
   return provider;
+}
+
+function validateGroup(group: RoutingGroup, providers: Provider[]): RoutingGroup {
+  if (!group || typeof group.name !== 'string' || !group.name.trim() || !['order', 'rotate', 'weight', 'usage', 'pace', 'smart'].includes(group.mode)
+      || typeof group.enabled !== 'boolean' || !Number.isInteger(group.retries) || group.retries < 0 || group.retries > 10 || !Array.isArray(group.members)) throw new Error('分组名称、路由策略或重试次数无效（重试为 0–10 次）');
+  if (group.members.some(member => !member || !providers.some(p => p.id === member.providerId) || !Number.isFinite(member.weight) || member.weight < 0
+      || (member.model !== null && member.model !== undefined && (typeof member.model !== 'string' || !member.model.trim())))) throw new Error('分组引用了不存在的供应商，或模型、权重无效');
+  return group;
+}
+
+function validUsageRecord(record: any): record is UsageRecord {
+  return !!record && typeof record === 'object'
+    && ['ts', 'agent', 'providerId', 'providerName', 'model', 'requestId'].every(field => typeof record[field] === 'string')
+    && /^\d{4}-\d{2}-\d{2}T/.test(record.ts)
+    && ['status', 'inputTokens', 'outputTokens', 'cacheRead', 'cacheWrite', 'cost', 'latencyMs', 'attempts']
+      .every(field => typeof record[field] === 'number' && Number.isFinite(record[field]) && record[field] >= 0);
+}
+
+/** Recover all committed files after a write failure, even when one rollback also fails. */
+function commitStoreFiles(changes: Array<{ file: JsonFile<any>; before: any; after: any }>): void {
+  const revisions = changes.map(change => change.file.revision(change.before));
+  const committed: typeof changes = [];
+  try {
+    for (const [index, change] of changes.entries()) { change.file.writeIfUnchanged(change.after, revisions[index]); committed.push(change); }
+  } catch (error) {
+    const failed: string[] = [];
+    for (const change of committed.reverse()) {
+      try { change.file.restoreIfUnchanged(change.before, change.after); }
+      catch (error) { failed.push(String((error as Error).message)); }
+    }
+    const conflict = /配置已变化/.test(String((error as Error).message)) ? '检测到外部配置修改，已保留；' : '';
+    throw new Error(failed.length ? `保存失败，部分配置无法恢复；请使用操作前备份检查：${failed.join('；')}` : `${conflict}保存失败，已撤回本次配置变更；请检查数据目录的空间和权限`);
+  }
 }
 
 export const DEFAULT_SETTINGS = (): Settings => ({
@@ -140,6 +177,7 @@ export class AuroraStore {
         this.providers.write([...list]);
         return list[idx];
       }
+      throw new Error('供应商已被删除，请刷新列表后重新添加');
     }
     const preset = catalogPresets(this).find(p => p.id === input.presetId);
     const created: Provider = {
@@ -168,10 +206,24 @@ export class AuroraStore {
   }
 
   deleteProvider(id: string): void {
-    this.providers.write(this.providers.read().filter((p) => p.id !== id));
-    this.groups.write(
-      this.groups.read().map((g) => ({ ...g, members: g.members.filter((m) => m.providerId !== id) })),
-    );
+    const providers = this.listProviders(), provider = providers.find(p => p.id === id);
+    if (!provider) throw new Error('供应商不存在，请刷新列表');
+    const references = Object.values(this.listAgents()).filter(agent => {
+      if (!agent.connected && !agent.pendingReapply) return false;
+      if (agent.providerId === id) return true;
+      return [agent.model, ...Object.values(agent.modelMap || {})].some(model => {
+        if (!model || this.getProvider(agent.providerId || '')?.models.some(item => item.id === model)) return false;
+        if (model.indexOf('/') <= 0) return false;
+        const prefix = model.slice(0, model.indexOf('/'));
+        return prefix === id || prefix.toLowerCase() === provider.name.toLowerCase() || prefix.toLowerCase() === provider.presetId?.toLowerCase();
+      });
+    });
+    if (references.length) throw new Error(`客户端 ${references.map(agent => agent.id).join('、')} 仍引用此供应商，请先更换或恢复客户端配置`);
+    const groups = this.listGroups();
+    commitStoreFiles([
+      { file: this.providers, before: providers, after: providers.filter(p => p.id !== id) },
+      { file: this.groups, before: groups, after: groups.map(g => ({ ...g, members: g.members.filter(m => m.providerId !== id) })) },
+    ]);
   }
 
   /* ---------------------------- groups ---------------------------- */
@@ -185,10 +237,11 @@ export class AuroraStore {
     if (input.id) {
       const idx = list.findIndex((g) => g.id === input.id);
       if (idx >= 0) {
-        list[idx] = { ...list[idx], ...input } as RoutingGroup;
+        list[idx] = validateGroup({ ...list[idx], ...input } as RoutingGroup, this.listProviders());
         this.groups.write([...list]);
         return list[idx];
       }
+      throw new Error('路由分组已被删除，请刷新列表后重新添加');
     }
     const created: RoutingGroup = {
       id: newId('grp_', 8),
@@ -200,6 +253,7 @@ export class AuroraStore {
       notes: input.notes,
       createdAt: nowIso(),
     };
+    validateGroup(created, this.listProviders());
     this.groups.write([...list, created]);
     return created;
   }
@@ -324,14 +378,19 @@ export class AuroraStore {
       const d = new Date(Date.now() - i * 86400000);
       const file = path.join(this.usageDir, `${dayKey(d)}.jsonl`);
       if (!fs.existsSync(file)) continue;
-      out.push(...new JsonLines(file).read(0));
+      for (const record of new JsonLines(file).read(0, validUsageRecord)) out.push(record);
     }
     return out;
   }
 
   recentRequests(limit = 200): UsageRecord[] {
-    const all = this.readUsage(7);
-    return all.slice(-limit).reverse();
+    const maximum = Math.max(1, Math.min(5000, Math.floor(Number(limit) || 200)));
+    const out: UsageRecord[] = [];
+    for (let i = 0; i < 7 && out.length < maximum; i++) {
+      const file = path.join(this.usageDir, `${dayKey(new Date(Date.now() - i * 86400000))}.jsonl`);
+      if (fs.existsSync(file)) out.push(...new JsonLines(file).read(maximum - out.length, validUsageRecord).reverse());
+    }
+    return out;
   }
 
   usageDirPath(): string {
@@ -352,7 +411,7 @@ export class AuroraStore {
   }
 
   exportAll(): Record<string, unknown> {
-    return {
+    return structuredClone({
       version: 1,
       exportedAt: nowIso(),
       providers: this.listProviders(),
@@ -360,7 +419,7 @@ export class AuroraStore {
       settings: this.getSettings(),
       plugins: this.listPlugins(),
       agents: this.listAgents(),
-    };
+    });
   }
 
   importAll(data: any): void {
@@ -369,14 +428,17 @@ export class AuroraStore {
     const validId = (id: unknown) => typeof id === 'string' && /^[a-zA-Z0-9_-]{1,150}$/.test(id) && !['__proto__', 'prototype', 'constructor'].includes(id);
     if (providers.some((p: Provider) => !validId(p.id)) || new Set(providers.map((p: Provider) => p.id)).size !== providers.length) throw new Error('备份中的供应商 ID 无效或重复');
     const groups = data.groups as RoutingGroup[];
+    if (new Set(groups.map(group => group?.id)).size !== groups.length) throw new Error('备份中的分组 ID 重复');
     for (const group of groups) {
       if (!group || !validId(group.id) || !['order', 'rotate', 'weight', 'usage', 'pace', 'smart'].includes(group.mode) || !Array.isArray(group.members)) throw new Error('备份中的路由分组无效');
       if (group.members.some(m => !m || !providers.some((p: Provider) => p.id === m.providerId) || !Number.isFinite(m.weight) || m.weight < 0)) throw new Error('路由分组引用了不存在的供应商或权重无效');
+      validateGroup(group, providers);
     }
     const settings: Settings = { ...DEFAULT_SETTINGS(), ...data.settings, updateUrl: GITHUB_RELEASE_API, autoSyncModels: true, updatedAt: nowIso() };
     if (!settings.gatewayToken) settings.gatewayToken = randomBytes(24).toString('hex');
     this.validateSettings(settings);
     const plugins = data.plugins as PluginRecord[];
+    if (new Set(plugins.map(plugin => plugin?.id)).size !== plugins.length) throw new Error('备份中的插件 ID 重复');
     for (const plugin of plugins) {
       if (!plugin || !validId(plugin.id) || typeof plugin.name !== 'string' || typeof plugin.enabled !== 'boolean' || (plugin.code !== undefined && typeof plugin.code !== 'string')) throw new Error('备份中的插件配置无效');
       if (plugin.builtin && !['model-map', 'system-prompt', 'word-guard', 'param-override', 'token-budget'].includes(plugin.id)) throw new Error('备份包含未知的内置插件');
@@ -392,14 +454,13 @@ export class AuroraStore {
         backupPath: local?.backupPath, configPath: local?.configPath, pendingReapply: !!(local?.backupPath && (local.connected || local.pendingReapply)) };
     }
     const before = this.exportAll();
-    try {
-      this.providers.write(providers); this.groups.write(groups); this.settings.write(settings); this.plugins.write(plugins); this.agents.write(agents);
-    } catch (error) {
-      try {
-        this.providers.write(before.providers as Provider[]); this.groups.write(before.groups as RoutingGroup[]); this.settings.write(before.settings as Settings); this.plugins.write(before.plugins as PluginRecord[]); this.agents.write(before.agents as Record<string, AgentState>);
-      } catch { throw new Error('导入失败且无法自动回滚，请使用导入前的本地备份恢复'); }
-      throw error;
-    }
+    commitStoreFiles([
+      { file: this.providers, before: before.providers, after: providers },
+      { file: this.groups, before: before.groups, after: groups },
+      { file: this.settings, before: before.settings, after: settings },
+      { file: this.plugins, before: before.plugins, after: plugins },
+      { file: this.agents, before: before.agents, after: agents },
+    ]);
     clearAllMiddlewareStatus(this);
   }
 }

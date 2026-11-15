@@ -96,6 +96,11 @@ if (($argv[1] ?? '') === '--worker') {
     catch (Throwable $e) { fwrite(STDERR, get_class($e) . ': ' . $e->getMessage()); exit(1); }
     exit;
 }
+if (($argv[1] ?? '') === '--init-worker') {
+    try { echo json_encode(signedIn(fixture($argv[2]), (int)$argv[3], (int)$argv[3]), JSON_THROW_ON_ERROR); }
+    catch (Throwable $e) { fwrite(STDERR, get_class($e) . ': ' . $e->getMessage()); exit(1); }
+    exit;
+}
 
 $root = sys_get_temp_dir() . '/aurora-members-test-' . bin2hex(random_bytes(6));
 mkdir($root, 0700, true);
@@ -213,6 +218,63 @@ $test('corrupt monetary ledger is not silently reset', static function ($dir): v
     mkdir($dir . '/ledger'); file_put_contents($dir . '/ledger/members.sqlite', 'not a sqlite database');
     $failed = false; try { signedIn(fixture($dir), 1, 1); } catch (PDOException $e) { $failed = true; }
     check($failed && file_get_contents($dir . '/ledger/members.sqlite') === 'not a sqlite database', 'corruption preserved');
+});
+
+$test('initialized empty or incomplete ledgers never rebuild grant history', static function ($dir): void {
+    $service = fixture($dir); $credentials = signedIn($service, 1, 1);
+    $service->handle('claim', [], $credentials); unset($service);
+    $database = db($dir); $database->exec('PRAGMA wal_checkpoint(TRUNCATE)'); unset($database);
+    file_put_contents($dir . '/ledger/members.sqlite', '');
+    expectCode(fn() => signedIn(fixture($dir), 1, 2), 'STORAGE_UNAVAILABLE');
+    check(filesize($dir . '/ledger/members.sqlite') === 0, 'empty ledger preserved');
+    unlink($dir . '/ledger/members.sqlite');
+    $database = db($dir); $database->exec('CREATE TABLE unrelated (id INTEGER)'); unset($database);
+    $original = hash_file('sha256', $dir . '/ledger/members.sqlite');
+    expectCode(fn() => signedIn(fixture($dir), 1, 2), 'STORAGE_UNAVAILABLE');
+    check(hash_file('sha256', $dir . '/ledger/members.sqlite') === $original, 'incomplete ledger preserved');
+    check((int)upstreamDb($dir)->query('SELECT SUM(cents) FROM codes')->fetchColumn() === 1000, 'no extra credit after ledger loss');
+});
+
+$test('failed origin verification never leaves a usable cached database', static function ($dir): void {
+    signedIn(fixture($dir), 1, 1);
+    $service = new MemberService(['enabled' => true, 'origin' => 'https://changed.example.test',
+        'adminKey' => 'test-administrator-key-only', 'secret' => str_repeat('fixture-secret-', 4), 'dataDir' => $dir . '/ledger']);
+    expectCode(fn() => $service->adminOverview(), 'UPSTREAM_CHANGED');
+    expectCode(fn() => $service->adminOverview(), 'UPSTREAM_CHANGED');
+});
+
+$test('simultaneous first requests initialize one complete ledger', static function ($dir): void {
+    // Prepare only the mock upstream. The member ledger does not exist when workers start.
+    fixture($dir);
+    $workers = [];
+    for ($i = 1; $i <= 8; $i++) {
+        $command = [PHP_BINARY];
+        if (PHP_OS_FAMILY === 'Windows') array_push($command, '-d', 'extension_dir=' . ini_get('extension_dir'), '-d', 'extension=pdo_sqlite', '-d', 'extension=openssl');
+        array_push($command, __FILE__, '--init-worker', $dir, (string)$i);
+        $process = proc_open($command, [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+        check(is_resource($process), 'initialization worker launch'); fclose($pipes[0]); $workers[] = [$process, $pipes];
+    }
+    foreach ($workers as [$process, $pipes]) {
+        $out = stream_get_contents($pipes[1]); $err = stream_get_contents($pipes[2]); fclose($pipes[1]); fclose($pipes[2]);
+        check(proc_close($process) === 0, 'initialization worker success ' . $err);
+        check(isset(json_decode($out, true)['sessionToken']), 'initialization worker session');
+    }
+    check((int)db($dir)->query('SELECT COUNT(*) FROM installations')->fetchColumn() === 8, 'all independent installations retained');
+    check(is_file($dir . '/ledger/members.initialized'), 'initialized marker persisted');
+});
+
+$test('missing origin and failed initialization marker remain closed on retries', static function ($dir): void {
+    $service = fixture($dir); signedIn($service, 1, 1); unset($service);
+    $database = db($dir); $database->exec("DELETE FROM member_meta WHERE key='upstream_origin'"); unset($database);
+    $service = fixture($dir);
+    expectCode(fn() => $service->adminOverview(), 'STORAGE_UNAVAILABLE');
+    expectCode(fn() => $service->adminOverview(), 'STORAGE_UNAVAILABLE');
+    check((int)db($dir)->query('SELECT COUNT(*) FROM member_meta')->fetchColumn() === 0, 'missing origin never inferred from new configuration');
+    $database = db($dir); $database->exec("INSERT INTO member_meta VALUES('upstream_origin','https://members.example.test')"); unset($database);
+    unlink($dir . '/ledger/members.initialized'); mkdir($dir . '/ledger/members.initialized');
+    $service = fixture($dir);
+    expectCode(fn() => $service->adminOverview(), 'STORAGE_UNAVAILABLE');
+    expectCode(fn() => $service->adminOverview(), 'STORAGE_UNAVAILABLE');
 });
 
 echo 'All ' . $tests . ' membership integration tests passed. Fixtures: ' . $root . PHP_EOL;

@@ -14,15 +14,19 @@ from playwright.sync_api import sync_playwright, expect
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 STATE = {
     'version': '0.6.0', 'gateway': {'running': True},
-    'providers': [{'id': 'deepseek', 'name': 'DeepSeek 官方', 'enabled': True, 'format': 'openai-chat', 'models': [{'id': 'deepseek-flash', 'contextWindow': 1000000, 'capabilities': {'tools': True}}]}],
-    'agents': {}, 'plugins': [{'id': 'system-prompt', 'name': '统一系统提示', 'enabled': True}],
+    'providers': [{'id': 'deepseek', 'name': 'DeepSeek 官方', 'enabled': True, 'format': 'openai-chat', 'models': [{'id': 'deepseek-flash', 'contextWindow': 1000000, 'capabilities': {'tools': True}}, {'id': 'deepseek-reasoner'}]}],
+    'agents': {'codex-cli': {'connected': True, 'providerId': 'deepseek', 'model': 'deepseek-flash', 'authMode': 'coexist'}}, 'plugins': [{'id': 'system-prompt', 'name': '统一系统提示', 'enabled': True}],
     'agentCatalog': [
         {'id': 'claude-code', 'name': 'Claude Code', 'support': 'automatic', 'description': '终端编程助手'},
+        {'id': 'codex-cli', 'name': 'Codex CLI', 'support': 'automatic', 'description': '终端编程助手'},
         {'id': 'chatgpt-desktop', 'name': 'ChatGPT Desktop', 'support': 'unsupported', 'description': '官方聊天客户端'},
     ],
 }
 SESSION = {'path': '/fixture/session.jsonl', 'title': '移动端验收会话', 'agent': 'Codex', 'updatedAt': '2026-11-15T12:00:00Z', 'project': 'aurora'}
 CALLS = []
+PENDING = []
+DEFER_PREVIEW = False
+FAIL_APPLY = False
 LIVE = [{'id': 'live-1', 'model': 'deepseek-flash', 'agent': 'Claude Code', 'providerName': 'DeepSeek 官方', 'phase': 'streaming', 'startedAtMs': 1794704400000, 'estimatedOutputTokens': 24, 'cacheRead': 0}]
 
 
@@ -42,19 +46,25 @@ def route_rpc(route):
     request = route.request.post_data_json
     action, payload = request['action'], request.get('payload', {})
     CALLS.append(request)
+    if action == 'agent.preview' and DEFER_PREVIEW:
+        PENDING.append(route)
+        return
     if action == 'state.get':
         result = STATE
     elif action == 'usage.summary':
-        result = {'totals': {'calls': 12 if LIVE else 13, 'inputTokens': 1200, 'outputTokens': 340, 'cost': .04, 'errors': 1, 'cacheRead': 600, 'cacheWrite': 120, 'cacheRate': .75, 'cacheReports': 2, 'cacheWriteReports': 2}}
+        result = {'totals': {'calls': 12 if LIVE else 13, 'inputTokens': 1200, 'outputTokens': 340, 'cost': .04, 'unpricedCalls': 1, 'errors': 1, 'cacheRead': 600, 'cacheWrite': 120, 'cacheRate': .75, 'cacheReports': 2, 'cacheWriteReports': 2}}
     elif action == 'usage.recent':
-        result = [{'model': 'deepseek-flash', 'agent': 'Claude Code', 'providerName': 'DeepSeek 官方', 'status': 200, 'ts': '2026-11-15T12:00:00Z', 'inputTokens': 800, 'outputTokens': 340, 'cacheRead': 600, 'cacheReadKnown': True, 'cacheWrite': 0, 'cacheWriteKnown': False}]
+        result = [{'model': 'deepseek-flash', 'agent': 'Claude Code', 'providerName': 'DeepSeek 官方', 'status': 200, 'ts': '2026-11-15T12:00:00Z', 'inputTokens': 800, 'outputTokens': 340, 'cacheRead': 600, 'cacheReadKnown': True, 'cacheWrite': 0, 'cacheWriteKnown': False, 'cost': 0, 'costKnown': False}]
     elif action == 'usage.live':
         result = LIVE
     elif action == 'agent.preview':
         result = {'ok': True, 'revision': 'revision-1', 'files': [{'path': '~/.claude/settings.json', 'after': '{"env":{"ANTHROPIC_MODEL":"deepseek-flash"}}'}], 'warnings': [], 'message': '已生成预览'}
     elif action == 'agent.connect':
         assert payload.get('revision') == 'revision-1', 'Configuration revision must accompany apply'
-        STATE['agents'][payload['agentId']] = {'connected': True, 'providerId': payload['providerId'], 'model': payload['model']}
+        if FAIL_APPLY:
+            route.fulfill(status=200, headers=headers, json={'result': {'ok': False, 'message': '电脑配置已变化，请重新预览'}})
+            return
+        STATE['agents'][payload['agentId']] = {'connected': True, 'providerId': payload['providerId'], 'model': payload['model'], 'authMode': payload['authMode']}
         result = {'ok': True, 'restartRequired': True}
     elif action == 'provider.toggle':
         STATE['providers'][0]['enabled'] = payload['enabled']
@@ -71,6 +81,7 @@ def route_rpc(route):
 
 
 def main():
+    global DEFER_PREVIEW, FAIL_APPLY
     handler = functools.partial(QuietHandler, directory=str(ROOT / 'www'))
     server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -94,16 +105,42 @@ def main():
         expect(page.get_by_label('实时请求')).to_contain_text('缓存读 0')
         expect(page.get_by_label('实时请求')).to_contain_text('缓存写 未提供')
         expect(page.get_by_text('缓存读 600 · 缓存写 —', exact=True)).to_be_visible()
+        expect(page.get_by_text('已知价格估算', exact=True)).to_be_visible()
+        expect(page.get_by_text('1 次请求未计价', exact=True)).to_be_visible()
+        expect(page.get_by_text('价格未配置', exact=True)).to_be_visible()
         LIVE.clear()
         expect(page.get_by_label('实时请求')).to_contain_text('0 个进行中', timeout=6000)
         expect(page.locator('.stat').filter(has_text='请求次数')).to_contain_text('13', timeout=6000)
         page.get_by_role('button', name='客户端', exact=True).click()
         page.get_by_role('button', name='Claude Code').click()
+        DEFER_PREVIEW = True
+        page.get_by_role('button', name='预览电脑上的配置变更').click()
+        expect(page.get_by_role('button', name='预览电脑上的配置变更')).to_be_disabled()
+        page.get_by_label('模型', exact=True).select_option('deepseek-reasoner')
+        assert PENDING, 'Preview must be held while the model selection changes'
+        PENDING.pop().fulfill(status=200, headers={'Access-Control-Allow-Origin': '*'}, json={'result': {'ok': True, 'revision': 'stale-preview', 'files': [{'path': 'fixture', 'after': 'old model'}]}})
+        expect(page.get_by_role('button', name='预览电脑上的配置变更')).to_be_enabled()
+        expect(page.get_by_role('button', name='确认应用到电脑')).to_have_count(0)
+        DEFER_PREVIEW = False
         page.get_by_role('button', name='预览电脑上的配置变更').click()
         expect(page.get_by_text('已生成预览')).to_be_visible()
+        FAIL_APPLY = True
+        page.get_by_role('button', name='确认应用到电脑').click()
+        expect(page.get_by_text('电脑配置已变化，请重新预览', exact=True)).to_be_visible()
+        expect(page.get_by_role('button', name='确认应用到电脑')).to_have_count(0)
+        expect(page.get_by_label('模型', exact=True)).to_be_enabled()
+        FAIL_APPLY = False
+        page.get_by_role('button', name='预览电脑上的配置变更').click()
         page.get_by_role('button', name='确认应用到电脑').click()
         expect(page.get_by_role('dialog')).to_have_count(0)
         expect(page.get_by_role('button', name='Claude Code')).to_contain_text('已接入')
+        assert STATE['agents']['claude-code']['model'] == 'deepseek-reasoner'
+        page.get_by_role('button', name='Codex CLI').click()
+        expect(page.get_by_text('保留电脑端已启用的官方账号共存模式。官方模型选择与账号设置请在电脑端管理。', exact=True)).to_be_visible()
+        page.get_by_role('button', name='预览电脑上的配置变更').click()
+        page.get_by_role('button', name='确认应用到电脑').click()
+        expect(page.get_by_role('dialog')).to_have_count(0)
+        assert STATE['agents']['codex-cli']['authMode'] == 'coexist'
         page.get_by_role('button', name='ChatGPT Desktop').click()
         expect(page.get_by_text('此客户端暂不支持通过云桥自动更换模型服务。请在电脑端查看官方接入方式。')).to_be_visible()
         expect(page.get_by_role('button', name='预览电脑上的配置变更')).to_have_count(0)
@@ -137,7 +174,7 @@ def main():
         assert any(c['action'] == 'agent.connect' for c in CALLS)
         browser.close()
     server.shutdown()
-    print(json.dumps({'passed': True, 'checks': ['auth failure', 'connect', 'brand', 'cache hit rate', 'live reported zero vs missing cache', 'live estimates', 'completion refresh', 'preview/apply revision', 'unsupported client', 'provider toggle', 'models', 'sessions safe text', 'theme', 'no overflow', 'no persisted token', 'disconnect stops polling'], 'rpc_calls': len(CALLS)}, ensure_ascii=True))
+    print(json.dumps({'passed': True, 'checks': ['auth failure', 'connect', 'brand', 'cache hit rate', 'unpriced requests are not free', 'live reported zero vs missing cache', 'live estimates', 'completion refresh', 'late preview discarded after selection change', 'apply failure requires fresh preview', 'preview/apply revision', 'existing official coexist mode preserved', 'unsupported client', 'provider toggle', 'models', 'sessions safe text', 'theme', 'no overflow', 'no persisted token', 'disconnect stops polling'], 'rpc_calls': len(CALLS)}, ensure_ascii=True))
 
 
 if __name__ == '__main__':

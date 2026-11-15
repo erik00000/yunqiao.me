@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { atomicWrite, patchToml } from './agents/configFiles.js';
+import { parse as parseToml } from 'smol-toml';
+import { applyPlan, patchToml, planned, readText } from './agents/configFiles.js';
 
 /**
  * Codex 增强：会话诊断/修复 + 插件·技能·提示词管理。
@@ -21,7 +22,7 @@ export function codexConfigPath(): string {
 
 export function readTomlValue(key: string): string | undefined {
   try {
-    const txt = fs.readFileSync(codexConfigPath(), 'utf8');
+    const txt = readText(codexConfigPath());
     const dot = key.lastIndexOf('.');
     const table = dot < 0 ? '' : key.slice(0, dot), field = dot < 0 ? key : key.slice(dot + 1);
     let section = '', content = '';
@@ -237,7 +238,7 @@ export interface CodexAsset {
 
 function skillEnabled(skillPath: string): boolean {
   try {
-    const txt = fs.readFileSync(codexConfigPath(), 'utf8');
+    const txt = readText(codexConfigPath());
     const blocks = txt.split(/^\s*\[\[skills\.config\]\]\s*$/m).slice(1);
     let enabled = true;
     for (const block of blocks) {
@@ -272,9 +273,9 @@ export function listCodexAssets(): CodexAsset[] {
       try {
         const readme = e.isDirectory() ? path.join(full, 'SKILL.md') : '';
         const mf = e.isDirectory() ? path.join(full, 'manifest.json') : '';
-        if (readme && fs.existsSync(readme)) desc = fs.readFileSync(readme, 'utf8').slice(0, 160).replace(/[#\n]+/g, ' ').trim();
+        if (readme && fs.existsSync(readme)) desc = readText(readme).slice(0, 160).replace(/[#\n]+/g, ' ').trim();
         else if (mf && fs.existsSync(mf)) {
-          const j = JSON.parse(fs.readFileSync(mf, 'utf8'));
+          const j = JSON.parse(readText(mf));
           desc = j.description ?? j.name ?? '';
         }
       } catch {
@@ -303,7 +304,7 @@ export function listCodexAssets(): CodexAsset[] {
 
   // MCP 服务器（从 config.toml 里读）
   try {
-    const txt = fs.readFileSync(codexConfigPath(), 'utf8');
+    const txt = readText(codexConfigPath());
     const re = /^\[mcp_servers\.([^\]]+)\]/gm;
     let m: RegExpExecArray | null;
     while ((m = re.exec(txt))) {
@@ -335,7 +336,9 @@ export function toggleCodexAsset(id: string, enabled: boolean): { ok: boolean; m
   if (!asset?.mutable) return { ok: false, message: '此资源请使用 Codex 自带的管理入口；未修改本地文件' };
   const file = codexConfigPath();
   try {
-    let txt = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+    const plan = planned(file, '');
+    let txt = plan.before;
+    try { parseToml(txt.replace(/^\uFEFF/, '')); } catch { throw new Error('原配置不是有效的 TOML，已停止修改'); }
     if (asset.kind === 'mcp') txt = patchToml(txt, `mcp_servers.${asset.name}`, { enabled });
     else if (asset.kind === 'skill') {
       const selected = path.join(asset.path!, 'SKILL.md');
@@ -352,16 +355,16 @@ export function toggleCodexAsset(id: string, enabled: boolean): { ok: boolean; m
       });
       if (!matched) txt = txt.trimEnd() + `\n\n[[skills.config]]\npath = ${JSON.stringify(selected)}\nenabled = ${enabled}\n`;
     }
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    if (fs.existsSync(file)) fs.copyFileSync(file, `${file}.yunqiao-${Date.now()}.bak`);
-    atomicWrite(file, txt);
+    try { parseToml(txt.replace(/^\uFEFF/, '')); } catch { throw new Error('此 TOML 结构无法安全修改，原配置已保留'); }
+    plan.after = txt;
+    applyPlan('codex-resource-toggle', [plan]);
     return { ok: true, message: `已${enabled ? '启用' : '禁用'} ${asset.name}，重启 Codex 后生效。` };
   } catch (e: any) { return { ok: false, message: String(e?.message ?? e) }; }
 }
 
 export function readAgentsMd(): string {
   try {
-    return fs.readFileSync(path.join(codexHome(), 'AGENTS.md'), 'utf8');
+    return readText(path.join(codexHome(), 'AGENTS.md'));
   } catch {
     return '';
   }
@@ -370,12 +373,8 @@ export function readAgentsMd(): string {
 export function writeAgentsMd(text: string): { ok: boolean; message: string; backup?: string } {
   const file = path.join(codexHome(), 'AGENTS.md');
   try {
-    let backup = '';
-    if (fs.existsSync(file)) {
-      backup = file + `.yunqiao-${Date.now()}.bak`;
-      fs.copyFileSync(file, backup);
-    }
-    atomicWrite(file, text);
+    if (typeof text !== 'string' || Buffer.byteLength(text) > 4 * 1024 * 1024) throw new Error('提示词超过 4 MB，请在原文件中编辑');
+    const plan = planned(file, text), backup = applyPlan('codex-global-prompt', [plan]);
     return { ok: true, message: '已保存，下次新会话生效', backup };
   } catch (e: any) {
     return { ok: false, message: String(e?.message ?? e) };
@@ -407,13 +406,13 @@ export function writeCodexFlag(key: string, value: string): { ok: boolean; messa
   if (value && schema.type === 'number' && (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value) <= 0)) return { ok: false, message: '请输入有效的正整数' };
   const file = codexConfigPath();
   try {
-    const original = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+    const plan = planned(file, ''), original = plan.before;
     const dot = key.lastIndexOf('.');
     const table = dot < 0 ? '' : key.slice(0, dot), field = dot < 0 ? key : key.slice(dot + 1);
     const parsed = !value ? null : schema.type === 'number' ? Number(value) : schema.type === 'bool' ? value === 'true' : value;
     const txt = patchToml(original, table, { [field]: parsed });
-    if (fs.existsSync(file)) fs.copyFileSync(file, file + `.yunqiao-${Date.now()}.bak`);
-    atomicWrite(file, txt);
+    plan.after = txt;
+    applyPlan('codex-setting', [plan]);
     return { ok: true, message: `${value ? '已保存' : '已恢复默认'}「${schema.label}」，重启 Codex 生效` };
   } catch (e: any) {
     return { ok: false, message: String(e?.message ?? e) };

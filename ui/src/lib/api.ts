@@ -288,6 +288,7 @@ export interface UsageRecord {
   cacheRead: number;
   cacheWrite: number;
   cost: number;
+  costKnown?: boolean;
   latencyMs: number;
   firstByteMs?: number;
   error?: string;
@@ -296,10 +297,10 @@ export interface UsageRecord {
 }
 
 export interface UsageSummary {
-  totals: { inputTokens: number; outputTokens: number; cacheRead: number; cacheWrite: number; cacheRate: number; cacheReports: number; cacheWriteReports: number; cost: number; calls: number; errors: number };
-  byDay: Array<{ day: string; cost: number; tokens: number; calls: number }>;
-  byProvider: Array<{ id: string; name?: string; cost: number; tokens: number; calls: number }>;
-  byModel: Array<{ id: string; cost: number; tokens: number; calls: number }>;
+  totals: { inputTokens: number; outputTokens: number; cacheRead: number; cacheWrite: number; cacheRate: number; cacheReports: number; cacheWriteReports: number; cost: number; unpricedCalls?: number; calls: number; errors: number };
+  byDay: Array<{ day: string; cost: number; unpricedCalls?: number; tokens: number; calls: number }>;
+  byProvider: Array<{ id: string; name?: string; cost: number; unpricedCalls?: number; tokens: number; calls: number }>;
+  byModel: Array<{ id: string; cost: number; unpricedCalls?: number; tokens: number; calls: number }>;
   byAgent: Array<{ id: string; calls: number; tokens: number }>;
 }
 

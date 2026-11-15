@@ -203,8 +203,15 @@ final class CatalogSyncService
             }
             $state['audit'] = array_slice(array_merge([['at' => gmdate('c'), 'result' => 'selection', 'provider' => $providerKey, 'added' => $added]], (array)($state['audit'] ?? [])), 0, 50);
             $bundle['status'] = $state;
-            $this->write('catalog-sync-state.json', $bundle);
-            return ['ok' => true, 'added' => $added, 'version' => $catalog['version'] ?? 0];
+            try { $this->write('catalog-sync-state.json', $bundle); }
+            catch (Throwable $error) {
+                // The public catalog is already committed (or the selected models already
+                // existed). Report that outcome accurately; a retry only repairs metadata.
+                error_log('Aurora curated catalog committed; audit write failed: ' . get_class($error));
+                return ['ok' => true, 'added' => $added, 'version' => $catalog['version'] ?? 0, 'auditSaved' => false,
+                    'warning' => '精选目录已生效，但同步审计未保存。请检查数据目录写入权限或磁盘空间，再选择相同模型重试补记；不会重复添加模型。'];
+            }
+            return ['ok' => true, 'added' => $added, 'version' => $catalog['version'] ?? 0, 'auditSaved' => true];
         } finally { flock($lock, LOCK_UN); fclose($lock); }
     }
 }

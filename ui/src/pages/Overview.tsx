@@ -73,9 +73,10 @@ export default function Overview({ state, reload, go }: PageProps) {
           </div>
         </div>
         <div className="card">
-          <Stat k="今日估算花费（UTC）" v={fmtCost(today?.cost ?? 0)} />
+          <Stat k="今日已知价格估算（UTC）" v={usage ? fmtCost(today?.cost ?? 0) : '—'} />
           <div style={{ marginTop: 10, fontSize: 11.5, color: 'var(--muted)' }}>
             今日 {today?.calls ?? 0} 次调用 · {fmtNum(today?.tokens ?? 0)} tokens
+            {!!today?.unpricedCalls && <span> · {today.unpricedCalls} 次未计价</span>}
           </div>
         </div>
         <div className="card">
@@ -148,7 +149,7 @@ export default function Overview({ state, reload, go }: PageProps) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div className="card">
             <div className="card-title">
-              最近 14 天用量 <span className="sub">花费（美元）</span>
+              最近 14 天用量 <span className="sub">已知价格估算（美元）</span>
             </div>
             <div className="bars">
               {(usage?.byDay ?? []).slice(-14).map((d) => {
@@ -161,6 +162,7 @@ export default function Overview({ state, reload, go }: PageProps) {
                   >
                     <span>
                       {d.day.slice(5)} · {fmtCost(d.cost)} · {d.calls} 次
+                      {!!d.unpricedCalls && <span> · {d.unpricedCalls} 次未计价</span>}
                     </span>
                   </div>
                 );

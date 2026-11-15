@@ -15,40 +15,33 @@ if (!empty($_SERVER['HTTP_ORIGIN'])) {
     }
 }
 boot_session();
+header('Cache-Control: no-store, private');
+header('X-Content-Type-Options: nosniff');
+set_exception_handler(function (Throwable $error): void {
+    json_out(['error' => $error instanceof InvalidArgumentException ? $error->getMessage() : '操作失败，请检查服务器日志'], $error instanceof InvalidArgumentException ? 400 : 500);
+});
 
 $action = $_GET['a'] ?? ($_GET['action'] ?? '');
-$body = body_json();
+$document = null;
+$body = body_json($document);
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 $readActions = ['whoami', 'catalog.get', 'analytics.get', 'catalog.sync.status'];
 if (!in_array($action, $readActions, true) && $method !== 'POST') {
     header('Allow: POST');
     json_out(['error' => '写操作必须使用 POST'], 405);
 }
-set_exception_handler(function (Throwable $error): void {
-    json_out(['error' => $error instanceof InvalidArgumentException ? $error->getMessage() : '操作失败，请检查服务器日志'], $error instanceof InvalidArgumentException ? 400 : 500);
-});
 
 /* ------------------------------ 登录 ------------------------------ */
 
 if ($action === 'login') {
     $pass = (string)($body['password'] ?? '');
     $cfg = config();
-    // 简单防爆破：同 IP 连续失败锁定
-    $ip = $_SERVER['REMOTE_ADDR'] ?? '0';
-    $failFile = 'fail_' . md5($ip) . '.json';
-    $fail = store_read($failFile, ['n' => 0, 'until' => 0]);
-    if (($fail['until'] ?? 0) > time()) {
-        json_out(['error' => '尝试太频繁，请 ' . (($fail['until'] - time())) . ' 秒后再试'], 429);
+    $attempt = admin_login_attempt($pass, $cfg['passwordHash'], (string)($_SERVER['REMOTE_ADDR'] ?? '0'));
+    if ($attempt['retryAfter'] > 0) {
+        header('Retry-After: ' . $attempt['retryAfter']);
+        json_out(['error' => '尝试太频繁，请 ' . $attempt['retryAfter'] . ' 秒后再试'], 429);
     }
-    if (!password_verify($pass, $cfg['passwordHash'])) {
-        $fail['n'] = ($fail['n'] ?? 0) + 1;
-        if ($fail['n'] >= 5) {
-            $fail = ['n' => 0, 'until' => time() + 300];
-        }
-        store_write($failFile, $fail);
-        json_out(['error' => '密码不正确'], 401);
-    }
-    store_write($failFile, ['n' => 0, 'until' => 0]);
+    if (!$attempt['accepted']) json_out(['error' => '密码不正确'], 401);
     session_regenerate_id(true);
     $_SESSION['aurora_admin'] = true;
     $_SESSION['loginAt'] = time();
@@ -190,15 +183,19 @@ switch ($action) {
 
     case 'catalog.import': {
         // 整体替换（导入备份）
-        $incoming = $body['catalog']['providers'] ?? $body['providers'] ?? [];
-        if (!is_array($incoming)) {
+        $rawProviders = $document->catalog->providers ?? $document->providers ?? null;
+        $incoming = $body['catalog']['providers'] ?? $body['providers'] ?? null;
+        if (!is_array($rawProviders) || !is_array($incoming) || !array_is_list($incoming)) {
             json_out(['error' => '格式不正确'], 400);
         }
         $list = [];
+        $keys = [];
         foreach ($incoming as $raw) {
-            if (is_array($raw)) {
-                $list[] = normalize_provider($raw);
-            }
+            if (!is_array($raw) || array_is_list($raw)) throw new InvalidArgumentException('供应商记录必须为对象，未导入任何数据');
+            $provider = normalize_provider($raw);
+            if ($provider['key'] === '' || isset($keys[$provider['key']])) throw new InvalidArgumentException('供应商标识缺失或重复，未导入任何数据');
+            $keys[$provider['key']] = true;
+            $list[] = $provider;
         }
         $c = ['version' => (int)(catalog()['version'] ?? 0), 'updatedAt' => now(), 'providers' => $list];
         save_catalog($c);
@@ -211,38 +208,41 @@ switch ($action) {
     }
 
     case 'analytics.reset': {
-        store_write('analytics.json', ['days' => [], 'clients' => []]);
+        store_update('analytics.json', static fn(array $previous): array => ['days' => [], 'clients' => []]);
         json_out(['ok' => true]);
     }
 
     /* ---------- 更新 ---------- */
     case 'update.save': {
-        $cfg = config();
-        $cfg['update'] = normalize_update($body, (array)($cfg['update'] ?? []));
-        save_config($cfg);
+        $cfg = config_update(static function (array $cfg) use ($body): array {
+            $cfg['update'] = normalize_update($body, (array)($cfg['update'] ?? []));
+            return $cfg;
+        });
         json_out(['ok' => true, 'update' => $cfg['update']]);
     }
 
     case 'settings.save': {
-        $cfg = config();
-        if (!empty($body['siteName'])) {
-            $cfg['siteName'] = (string)$body['siteName'];
-        }
+        $newPasswordHash = null;
         if (!empty($body['password'])) {
             $pwd = (string)$body['password'];
             if (strlen($pwd) < 8) {
                 json_out(['error' => '密码至少 8 位'], 400);
             }
-            $cfg['passwordHash'] = password_hash($pwd, PASSWORD_DEFAULT);
+            $newPasswordHash = password_hash($pwd, PASSWORD_DEFAULT);
         }
-        save_config($cfg);
+        config_update(static function (array $cfg) use ($body, $newPasswordHash): array {
+            if (!empty($body['siteName'])) $cfg['siteName'] = (string)$body['siteName'];
+            if ($newPasswordHash !== null) $cfg['passwordHash'] = $newPasswordHash;
+            return $cfg;
+        });
         json_out(['ok' => true]);
     }
 
     case 'stats.reset': {
-        $cfg = config();
-        $cfg['stats'] = ['pings' => 0, 'installs' => 0, 'lastPing' => null];
-        save_config($cfg);
+        config_update(static function (array $cfg): array {
+            $cfg['stats'] = ['pings' => 0, 'installs' => 0, 'lastPing' => null];
+            return $cfg;
+        });
         json_out(['ok' => true]);
     }
 

@@ -35,6 +35,9 @@ export default function Providers({ state, reload, go }: PageProps) {
   const [testing, setTesting] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<Record<string, any>>({});
   const [modelSyncErrors, setModelSyncErrors] = useState<Record<string, string>>({});
+  const [operationError, setOperationError] = useState('');
+  const [mutating, setMutating] = useState<string | null>(null);
+  const mutation = useRef(false);
   const [presetQuery, setPresetQuery] = useState('');
   const cloudRequest = useRef(0);
   const [cloud, setCloud] = useState<{ open: boolean; loading: boolean; importing: boolean; error: string; data: any; picked: Set<string> }>({
@@ -117,15 +120,17 @@ export default function Providers({ state, reload, go }: PageProps) {
 
   async function fetchModelsFromUpstream(p: Partial<Provider>) {
     const saved = await call('provider.save', p);
-    await reload();
-    const r = await call('provider.models', { providerId: saved.id });
+    setEditing(current => current ? { ...current, id: saved.id } : current);
+    let r: any;
+    try { r = await call('provider.models', { providerId: saved.id }); }
+    catch (e: any) { r = { ok: false, message: e.message || '模型同步失败' }; }
     await reload();
     return { ...r, providerId: saved.id };
   }
 
   async function save(p: Partial<Provider>) {
-    try {
     const saved = await call('provider.save', p);
+    setEditing(current => current ? { ...current, id: saved.id } : current);
     await reload();
     toast.push('供应商已保存', 'ok');
     setEditing(null);
@@ -144,7 +149,13 @@ export default function Providers({ state, reload, go }: PageProps) {
         setModelSyncErrors(errors => ({ ...errors, [saved.id]: `供应商已保存，但模型同步失败：${e.message || '请稍后重试'}` }));
       }
     }
-    } catch (e: any) { toast.push(e.message || '保存失败', 'bad'); }
+  }
+
+  async function mutate(id: string, task: () => Promise<void>) {
+    if (mutation.current) return;
+    mutation.current = true; setMutating(id); setOperationError('');
+    try { await task(); } catch (e: any) { setOperationError(e.message || '操作未完成，请重试'); }
+    finally { mutation.current = false; setMutating(null); }
   }
 
   async function test(p: Provider) {
@@ -153,6 +164,9 @@ export default function Providers({ state, reload, go }: PageProps) {
       const r = await call('provider.test', { providerId: p.id });
       setTestResult((s) => ({ ...s, [p.id]: r }));
       toast.push(r.ok ? `连通正常 ${r.latencyMs}ms` : `失败：${r.message}`, r.ok ? 'ok' : 'bad');
+    } catch (e: any) {
+      setTestResult(s => ({ ...s, [p.id]: { ok: false, message: e.message || '测试连接失败' } }));
+      toast.push(e.message || '测试连接失败', 'bad');
     } finally {
       setTesting(null);
     }
@@ -160,6 +174,7 @@ export default function Providers({ state, reload, go }: PageProps) {
 
   return (
     <>
+      {operationError && <div className="notice warning" role="alert">{operationError}</div>}
       <div className="page-head provider-page-head">
         <div>
           <h1>我的供应商</h1>
@@ -175,10 +190,10 @@ export default function Providers({ state, reload, go }: PageProps) {
             onChange={(e) => setQuery(e.target.value)}
           />
           <Btn disabled={!window.aurora || !!scan.busy} onClick={scan.scan}><Ico name="refresh" size={13} />{scan.busy ? '扫描中…' : '重新扫描本机'}</Btn>
-          <Btn disabled={!window.aurora} onClick={openCloud}>
+          <Btn disabled={!window.aurora || !!mutating} onClick={openCloud}>
             <Ico name="cloud" size={13} /> 云端目录
           </Btn>
-          <Btn variant="primary" disabled={!window.aurora} onClick={() => setEditing(EMPTY_PROVIDER())}>
+          <Btn variant="primary" disabled={!window.aurora || !!mutating} onClick={() => setEditing(EMPTY_PROVIDER())}>
             <Ico name="plus" size={13} /> 添加供应商
           </Btn>
         </div>
@@ -217,10 +232,13 @@ export default function Providers({ state, reload, go }: PageProps) {
                 </div>
                 <Toggle
                   on={p.enabled}
-                  onChange={async (v) => {
-                    await call('provider.save', { id: p.id, enabled: v });
+                  title={`启用供应商 ${p.name}`}
+                  disabled={!!mutating}
+                  onChange={(v) => mutate(p.id, async () => {
+                    const result = await call('provider.save', { id: p.id, enabled: v });
+                    if (result?.ok === false) throw new Error(result.message || '供应商状态保存失败');
                     await reload();
-                  }}
+                  })}
                 />
               </div>
 
@@ -274,17 +292,17 @@ export default function Providers({ state, reload, go }: PageProps) {
                   <Ico name="refresh" size={12} /> 同步模型
                 </Btn>
                 <div style={{ flex: 1 }} />
-                <Btn size="sm" variant="ghost" disabled={!window.aurora} onClick={() => setEditing(p)}>
+                <Btn size="sm" variant="ghost" disabled={!window.aurora || !!mutating} onClick={() => setEditing(p)}>
                   编辑
                 </Btn>
                 <Btn
                   size="sm"
                   variant="ghost"
-                  disabled={!window.aurora}
-                  onClick={async () => {
+                  disabled={!window.aurora || !!mutating}
+                  title={`删除供应商 ${p.name}`}
+                  onClick={() => {
                     if (!confirm(`删除供应商「${p.name}」？`)) return;
-                    await call('provider.delete', { id: p.id });
-                    await reload();
+                    void mutate(p.id, async () => { const result = await call('provider.delete', { id: p.id }); if (result?.ok === false) throw new Error(result.message || '删除失败'); await reload(); });
                   }}
                 >
                   <Ico name="trash" size={12} />
@@ -407,10 +425,14 @@ function ProviderEditor({
   onChange: (v: Partial<Provider>) => void;
   onClose: () => void;
   onFetchModels: (v: Partial<Provider>) => Promise<any>;
-  onSave: (v: Partial<Provider>) => void;
+  onSave: (v: Partial<Provider>) => Promise<void>;
 }) {
   const set = (patch: Partial<Provider>) => onChange({ ...value, ...patch });
   const [fetching, setFetching] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const running = useRef(false);
+  const busy = fetching || saving;
   const onToast = useToast().push;
   const keys = value.apiKeys ?? [];
 
@@ -433,19 +455,26 @@ function ProviderEditor({
     <Modal
       title={value.id ? '编辑供应商' : '添加供应商'}
       sub="先选预设（自动填好协议、地址、模型与价格），再填 Key。"
-      onClose={onClose}
+      onClose={() => !running.current && onClose()}
       width={860}
       foot={
         <>
-          <Btn variant="ghost" onClick={onClose}>
+          <Btn variant="ghost" disabled={busy} onClick={onClose}>
             取消
           </Btn>
-          <Btn variant="primary" onClick={() => onSave(value)}>
-            保存
+          <Btn variant="primary" disabled={busy} onClick={async () => {
+            if (running.current) return;
+            running.current = true; setSaving(true); setError('');
+            try { await onSave(value); } catch (e: any) { setError(e.message || '保存失败，请重试'); }
+            finally { running.current = false; setSaving(false); }
+          }}>
+            {saving ? '保存中…' : '保存'}
           </Btn>
         </>
       }
     >
+      {error && <div className="notice warning" role="alert">{error}</div>}
+      <fieldset disabled={busy} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
       <Field label="官方厂商目录" hint="启动时自动同步并缓存，与客户端接入共用同一份目录。"><PresetPicker presets={presets} value={value.presetId} onChange={p => p ? applyPreset(p) : onChange({ ...EMPTY_PROVIDER(), id: value.id })} /></Field>
 
       <div className="grid cols-2">
@@ -657,13 +686,15 @@ function ProviderEditor({
             <Btn
               size="sm"
               onClick={async () => {
-                setFetching(true);
+                if (running.current) return;
+                running.current = true; setFetching(true); setError('');
                 try {
                   const r = await onFetchModels({ ...value, models: value.models ?? [] });
                   if (r?.providerId) set({ id: r.providerId, models: r.models || value.models });
+                  if (!r?.ok) setError(`供应商已保存，但模型同步失败：${r?.message || '请稍后重试'}`);
                   onToast(r?.ok ? `已拉取 ${r.models.length} 个模型` : (r?.message ?? "这家没有公开模型列表"), r?.ok ? "ok" : "bad");
-                } catch (e: any) { onToast(e.message || '拉取失败', 'bad'); } finally {
-                  setFetching(false);
+                } catch (e: any) { setError(e.message || '拉取失败'); } finally {
+                  running.current = false; setFetching(false);
                 }
               }}
             >
@@ -689,6 +720,7 @@ function ProviderEditor({
         </div>
       </Field>
 
+      </fieldset>
       {value.notes && <div className="chip warn" style={{ height: 'auto', padding: '6px 10px' }}>{value.notes}</div>}
     </Modal>
   );

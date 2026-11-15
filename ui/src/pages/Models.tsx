@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { PageProps } from '../App';
 import { Btn, Empty, Field, Ico, Modal, useToast } from '../components/ui';
 import { call, fmtCtx, fmtCost } from '../lib/api';
@@ -9,6 +9,7 @@ export default function Models({ state, reload, go }: PageProps) {
   const [provider, setProvider] = useState('');
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  const running = useRef(false);
   const [operation, setOperation] = useState<'delete' | 'update' | null>(null);
   const [preview, setPreview] = useState<any>(null);
   const [error, setError] = useState('');
@@ -24,14 +25,18 @@ export default function Models({ state, reload, go }: PageProps) {
   const payload = { operation, items, patch };
   const allVisible = rows.length > 0 && rows.every(r => picked.has(r.key));
   async function review() {
+    if (running.current) return;
+    running.current = true;
     setBusy(true); setError('');
-    try { const r = await call('model.batch.preview', payload); if (!r.ok) throw new Error(r.message); setPreview(r); }
-    catch (e: any) { setError(e.message); } finally { setBusy(false); }
+    try { const r = await call('model.batch.preview', payload); if (!r.ok) throw new Error(r.message); setPreview({ ...r, payload }); }
+    catch (e: any) { setError(e.message); } finally { running.current = false; setBusy(false); }
   }
   async function apply() {
+    if (running.current || !preview) return;
+    running.current = true;
     setBusy(true); setError('');
-    try { const r = await call('model.batch.apply', { ...payload, revision: preview.revision }); if (!r.ok) throw new Error(r.message); await reload(); setPicked(new Set()); setOperation(null); setPreview(null); toast.push(r.message, 'ok'); }
-    catch (e: any) { setPreview(null); setError(e.message); } finally { setBusy(false); }
+    try { const r = await call('model.batch.apply', { ...preview.payload, revision: preview.revision }); if (!r.ok) throw new Error(r.message); await reload(); setPicked(new Set()); setOperation(null); setPreview(null); toast.push(r.message, 'ok'); }
+    catch (e: any) { setPreview(null); setError(e.message); } finally { running.current = false; setBusy(false); }
   }
   function open(op: 'delete' | 'update') { setOperation(op); setPreview(null); setError(''); setDraft({}); }
   return <>

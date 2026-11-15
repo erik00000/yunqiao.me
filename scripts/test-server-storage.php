@@ -26,13 +26,25 @@ storage_throws(fn() => config());
 storage_check(!is_file($root . '/initial-admin-password.txt'), 'Bad configuration must not initialize new credentials');
 echo "PASS corrupt configuration and catalog fail closed without overwriting\n";
 
+foreach ([['siteName' => 'preserve', 'update' => ['version' => '9.0.0']], ['passwordHash' => null], ['passwordHash' => ''], ['passwordHash' => []]] as $badConfig) {
+    $original = json_encode($badConfig);
+    file_put_contents($root . '/config.json', $original);
+    storage_throws(fn() => config());
+    storage_check(file_get_contents($root . '/config.json') === $original, 'Incomplete existing settings must not reset credentials or release data');
+    storage_check(!is_file($root . '/initial-admin-password.txt'), 'Incomplete settings must not generate replacement credentials');
+}
+echo "PASS incomplete existing configuration cannot trigger fresh-install initialization\n";
+
 file_put_contents($root . '/catalog.json', json_encode($catalog));
 mkdir($root . '/catalog.json.tmp' . getmypid());
 $before = (string)file_get_contents($root . '/catalog.json');
+$beforeSave = $catalog;
 storage_throws(function () use (&$catalog): void { save_catalog($catalog); });
 storage_check(file_get_contents($root . '/catalog.json') === $before, 'Failed save must retain original');
+storage_check($catalog === $beforeSave, 'Failed save must not advance the caller version');
 mkdir($root . '/config.json.tmp' . getmypid());
-storage_throws(fn() => save_config(['siteName' => 'test']));
+file_put_contents($root . '/config.json', json_encode(['passwordHash' => 'fixture-hash', 'siteName' => 'original']));
+storage_throws(fn() => config_update(static function (array $cfg): array { $cfg['siteName'] = 'test'; return $cfg; }));
 echo "PASS failed catalog and settings writes raise errors\n";
 
 $release = ['version' => '0.6.0', 'notes' => 'original', 'mandatory' => true, 'files' => ['win-x64' => 'https://example.test/setup.exe', 'mac-arm64' => 'https://example.test/app.dmg'], 'sha256' => ['win-x64' => str_repeat('a', 64), 'mac-arm64' => str_repeat('b', 64)]];
@@ -50,4 +62,14 @@ echo "PASS release editing preserves valid hashes and rejects stale or malformed
 
 $provider = normalize_provider(['baseUrl' => 'https://example.test', 'models' => [['id' => 'only-known-id']]]);
 foreach (['contextWindow', 'inputPrice', 'outputPrice'] as $field) storage_check(!array_key_exists($field, $provider['models'][0]), 'Unknown model field must stay unknown');
-echo "PASS unknown model metadata stays absent\nAll 5 server storage checks passed.\n";
+echo "PASS unknown model metadata stays absent\n";
+$statistics = ['days' => ['2026-01-01' => ['ping' => 3]], 'clients' => []];
+store_write('analytics.json', $statistics);
+mkdir($root . '/analytics.json.tmp' . getmypid());
+storage_throws(fn() => store_update('analytics.json', static fn(array $previous): array => ['days' => [], 'clients' => []]));
+storage_check(store_read('analytics.json') === $statistics, 'Failed analytics reset must retain the last complete file');
+rmdir($root . '/analytics.json.tmp' . getmypid());
+storage_throws(fn() => store_update('analytics.json', static function (array $previous): array { throw new RuntimeException('Expected failure'); }));
+$reset = store_update('analytics.json', static fn(array $previous): array => ['days' => [], 'clients' => []]);
+storage_check(store_read('analytics.json') === $reset, 'A failed callback must release the analytics lock');
+echo "PASS analytics failures retain complete data and release the shared reset lock\nAll 7 server storage checks passed.\n";

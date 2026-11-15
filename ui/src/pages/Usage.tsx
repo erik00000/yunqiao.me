@@ -16,10 +16,11 @@ export default function Usage({ state }: PageProps) {
 
   const load = useCallback(async () => {
     const sequence = ++loadSequence.current;
-    try {
-      const [sum, requests] = await Promise.all([call<UsageSummary>('usage.summary', { days }), call<UsageRecord[]>('usage.recent')]);
-      if (mounted.current && sequence === loadSequence.current) { setSummary(sum); setRecent(requests); setSummaryError(''); }
-    } catch (e: any) { if (mounted.current && sequence === loadSequence.current) setSummaryError(e.message); }
+    const [sum, requests] = await Promise.allSettled([call<UsageSummary>('usage.summary', { days }), call<UsageRecord[]>('usage.recent')]);
+    if (!mounted.current || sequence !== loadSequence.current) return;
+    if (sum.status === 'fulfilled') setSummary(sum.value);
+    if (requests.status === 'fulfilled') setRecent(requests.value);
+    setSummaryError([sum.status === 'rejected' ? `用量统计：${sum.reason?.message || '读取失败'}` : '', requests.status === 'rejected' ? `请求日志：${requests.reason?.message || '读取失败'}` : ''].filter(Boolean).join('；'));
   }, [days]);
 
   useEffect(() => {
@@ -65,7 +66,7 @@ export default function Usage({ state }: PageProps) {
 
       <div className="grid cols-4" style={{ marginBottom: 14 }}>
         <div className="card">
-          <Stat k="总花费" v={summary ? fmtCost(summary.totals.cost) : '—'} />
+          <Stat k="已知价格估算" v={summary ? fmtCost(summary.totals.cost) : '—'} />
         </div>
         <div className="card">
           <Stat k="总 tokens" v={summary ? fmtNum(summary.totals.inputTokens + summary.totals.outputTokens) : '—'} />
@@ -80,6 +81,7 @@ export default function Usage({ state }: PageProps) {
 
       <div className="grid cols-4" style={{ marginBottom: 18 }}><div className="card"><Stat k="输入 Token（含缓存）" v={summary ? fmtNum(summary.totals.inputTokens) : '—'} /></div><div className="card"><Stat k="缓存读取 Token" v={summary?.totals.cacheReports ? fmtNum(summary.totals.cacheRead) : '—'} /></div><div className="card"><Stat k="缓存写入 Token" v={summary?.totals.cacheWriteReports ? fmtNum(summary.totals.cacheWrite) : '—'} /></div><div className="card"><Stat k="缓存命中率" v={summary?.totals.cacheReports ? `${((summary.totals.cacheRate || 0) * 100).toFixed(1)}%` : '—'} /></div></div><p className="hint">命中率 = 缓存读取 ÷ 输入总量，仅统计提供缓存数据的请求。上游未返回的字段显示「—」，生成中的输出估算以完成后的上游数据为准。费用按本地价格估算。</p>
 
+      {!!summary?.totals.unpricedCalls && <div className="notice">{summary.totals.unpricedCalls} 次请求价格未配置，未计入费用估算。可在模型管理中补充价格。</div>}
       <div className="seg" style={{ marginBottom: 12 }}>
         <button className={tab === 'overview' ? 'on' : ''} onClick={() => setTab('overview')}>
           概览
@@ -93,13 +95,13 @@ export default function Usage({ state }: PageProps) {
         <div className="grid cols-2">
           <div className="card">
             <div className="card-title">
-              每日花费 <span className="sub">美元</span>
+              每日已知价格估算 <span className="sub">美元</span>
             </div>
             <div className="bars">
               {(summary?.byDay ?? []).map((d) => (
                 <div key={d.day} className="bar" style={{ height: `${Math.max(3, (d.cost / maxCost) * 100)}%` }}>
                   <span>
-                    {d.day} · {fmtCost(d.cost)} · {d.calls} 次
+                    {d.day} · {fmtCost(d.cost)} · {d.calls} 次{d.unpricedCalls ? ` · ${d.unpricedCalls} 次未计价` : ''}
                   </span>
                 </div>
               ))}
@@ -116,7 +118,7 @@ export default function Usage({ state }: PageProps) {
                     <div>{p.name ?? p.id}</div>
                     <div style={{ fontSize: 11, color: 'var(--muted)' }}>{p.calls} 次 · {fmtNum(p.tokens)} tokens</div>
                   </div>
-                  <span className="mono">{fmtCost(p.cost)}</span>
+                  <span className="mono">{fmtCost(p.cost)}{p.unpricedCalls ? ` · ${p.unpricedCalls} 次未计价` : ''}</span>
                 </div>
               ))}
               {!summary?.byProvider?.length && <div style={{ color: 'var(--muted)', fontSize: 12 }}>暂无数据</div>}
@@ -132,7 +134,7 @@ export default function Usage({ state }: PageProps) {
                     {m.id}
                   </div>
                   <span className="chip">{m.calls}</span>
-                  <span className="mono">{fmtCost(m.cost)}</span>
+                  <span className="mono">{fmtCost(m.cost)}{m.unpricedCalls ? ` · ${m.unpricedCalls} 次未计价` : ''}</span>
                 </div>
               ))}
             </div>
@@ -193,7 +195,7 @@ export default function Usage({ state }: PageProps) {
                     <td className="mono">{r.cacheReadKnown || r.cacheRead > 0 ? fmtNum(r.cacheRead) : '—'} / {r.cacheWriteKnown || r.cacheWrite > 0 ? fmtNum(r.cacheWrite) : '—'}</td>
                     <td>{(r.cacheReadKnown || r.cacheRead > 0) && r.inputTokens > 0 ? `${Math.min(100, r.cacheRead / r.inputTokens * 100).toFixed(1)}%` : '—'}{r.estimated && <small> 估算</small>}</td>
                     <td className="mono">{r.latencyMs}ms</td>
-                    <td className="mono">{fmtCost(r.cost)}</td>
+                    <td className="mono">{r.costKnown === false ? '价格未配置' : fmtCost(r.cost)}</td>
                   </tr>
                 ))}
               </tbody>

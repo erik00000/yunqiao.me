@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import PresetPicker from '../components/PresetPicker';
 import type { PageProps } from '../App';
 import { Btn, Empty, Field, Ico, Modal, copyText, useToast } from '../components/ui';
@@ -82,6 +82,7 @@ function ConnectWizard({ agent, state, reload, onClose }: { agent: AgentCatalogI
   const [key, setKey] = useState('');
   const [modelIds, setModelIds] = useState('');
   const [busy, setBusy] = useState(false);
+  const running = useRef(false);
   const [preview, setPreview] = useState<any>(null);
   const [result, setResult] = useState<any>(null);
   const [test, setTest] = useState<any>(null);
@@ -90,7 +91,7 @@ function ConnectWizard({ agent, state, reload, onClose }: { agent: AgentCatalogI
   const provider = choices.find(p => p.id === providerId);
   const chosenModel = manualModel ? model : model || provider?.models[0]?.id || '';
   const payload = { agentId: agent.id, providerId, model: chosenModel, mode: 'gateway', authMode: providerId === 'official' ? 'coexist' : codex ? authMode : 'api' };
-  async function run(task: () => Promise<void>) { setBusy(true); setError(''); try { await task(); } catch (e: any) { setError(e.message || String(e)); } finally { setBusy(false); } }
+  async function run(task: () => Promise<void>) { if (running.current) return; running.current = true; setBusy(true); setError(''); try { await task(); } catch (e: any) { setError(e.message || String(e)); } finally { running.current = false; setBusy(false); } }
   async function saveNew() {
     if (!draft.name?.trim()) throw new Error('请填写供应商名称');
     try { const u = new URL(draft.baseUrl || ''); if (!['http:', 'https:'].includes(u.protocol)) throw new Error(); } catch { throw new Error('请填写有效的 http(s) API 地址'); }
@@ -112,13 +113,19 @@ function ConnectWizard({ agent, state, reload, onClose }: { agent: AgentCatalogI
       await call('provider.save', { id: provider.id, models: [...provider.models, { id: chosenModel }] });
       await reload();
     }
-    const r = await call('agent.preview', payload); if (!r.ok) throw new Error(r.message || '无法生成配置预览'); setPreview(r); setStep(2);
+    const r = await call('agent.preview', payload); if (!r.ok) throw new Error(r.message || '无法生成配置预览'); setPreview({ ...r, selection: payload }); setStep(2);
   }
-  async function apply() { const r = await call('agent.connect', { ...payload, revision: preview?.revision }); if (!r.ok) throw new Error(r.message || '应用失败'); setResult(r); await reload(); toast.push('客户端配置已保存', 'ok'); }
+  async function apply() {
+    let r: any;
+    try { r = await call('agent.connect', { ...preview.selection, revision: preview.revision }); if (!r.ok) throw new Error(r.message || '应用失败'); }
+    catch (error) { setPreview(null); setStep(1); throw error; }
+    setResult(r); await reload(); toast.push('客户端配置已保存', 'ok');
+  }
   if (agent.support === 'unsupported') return <Modal title={agent.name} sub="客户端兼容性说明" onClose={onClose} foot={<><Btn onClick={onClose}>关闭</Btn>{agent.docsUrl && <Btn variant="primary" onClick={() => call('app.openExternal', { url: agent.docsUrl })}>打开官方说明 ↗</Btn>}</>}><div className="compatibility-info"><ClientMark id={agent.id} name={agent.name} /><h2>通过官方账号使用此客户端</h2><p>{agent.supportNote || agent.description}</p><p>如需自定义供应商，可选择支持自定义 API 的编程客户端或 API 工具。</p></div></Modal>;
   return <Modal title={`配置 ${agent.name}`} sub="选择供应商和模型，预览后再应用到客户端。" onClose={() => { if (!busy) onClose(); }} width={800} foot={<><Btn variant="ghost" disabled={busy} onClick={onClose}>{result ? '完成' : '取消'}</Btn>{!result && step > 0 && <Btn disabled={busy} onClick={() => { setStep(step - 1); setPreview(null); setError(''); }}>上一步</Btn>}{!result && step === 0 && <Btn variant="primary" disabled={busy || (!creating && !provider?.enabled)} onClick={() => run(async () => { if (creating) await saveNew(); else setStep(1); })}>{busy ? '保存中…' : creating ? '保存并选模型 →' : '下一步：选择模型 →'}</Btn>}{!result && step === 1 && <Btn variant="primary" disabled={busy || !chosenModel} onClick={() => run(prepare)}>{busy ? '生成预览…' : '预览配置 →'}</Btn>}{!result && step === 2 && agent.support === 'automatic' && <Btn variant="primary" disabled={busy} onClick={() => run(apply)}>{busy ? '正在应用…' : '备份并应用配置'}</Btn>}</>}>
     <div className="wizard-steps">{['连接供应商', '选择模型', '预览并应用'].map((name, i) => <div key={name} className={step === i ? 'active' : step > i ? 'done' : ''}><span>{step > i ? '✓' : i + 1}</span>{name}</div>)}</div>
     {error && <div className="notice warning" role="alert">{error}</div>}
+    <fieldset disabled={busy} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
     {result ? <div className="connection-success"><span><Ico name="check" size={32} /></span><h2>配置已应用</h2><p>{result.message || `重启 ${agent.name} 后开始使用。`}</p>{payload.authMode === 'coexist' && <p>重启客户端后，在模型菜单选择“官方”或对应供应商。切换服务建议新建会话，避免不同供应商的加密上下文不兼容。</p>}<div className="review-summary"><b>{provider?.name}</b><span>→</span><code>{chosenModel}</code></div>{result.path && <p className="mono muted">{result.path}</p>}</div> : <>
       {step === 0 && <>
         {codex && <div className="notice"><Ico name="user" size={18} /><div className="grow"><b>官方账号与第三方模型</b><p>{officialAvailable ? '已检测到官方登录。共存模式保留账号身份，并在同一模型菜单中显示官方与第三方模型。' : state.codexCoexist?.identity.message || '登录官方客户端后，可在这里开启账号与第三方模型共存。'}</p>{officialAvailable && <label className="checkbox-label"><input type="checkbox" aria-label="保留官方账号并与第三方模型共存" checked={authMode === 'coexist' || providerId === 'official'} disabled={providerId === 'official'} onChange={e => setAuthMode(e.target.checked ? 'coexist' : 'api')} />保留官方账号并与第三方模型共存</label>}<p className="hint">官方凭据由原客户端维护；第三方服务仅使用你配置的供应商密钥。</p></div></div>}
@@ -153,5 +160,6 @@ function ConnectWizard({ agent, state, reload, onClose }: { agent: AgentCatalogI
         {agent.support === 'automatic' && <div className="notice"><Ico name="shield" size={17} /><span>应用前自动备份原配置。{preview.requiresRestart ? '完成后请重启客户端。' : '配置生效方式以客户端为准。'}</span></div>}
       </>}
     </>}
+    </fieldset>
   </Modal>;
 }

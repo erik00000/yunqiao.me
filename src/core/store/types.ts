@@ -121,6 +121,8 @@ export interface AgentState {
 }
 
 export interface UsageRecord {
+  /** False when the provider's price metadata was incomplete when the request ran. */
+  costKnown?: boolean;
   threadId?: string;
   cacheReadKnown?: boolean;
   cacheWriteKnown?: boolean;

@@ -67,7 +67,7 @@ export class GatewayServer {
   }
 
   getStatus(): GatewayStatus {
-    return { ...this.status };
+    return { ...this.status, ...(this.router.persistenceWarning ? { lastError: this.router.persistenceWarning } : {}) };
   }
 
   async start(host?: string, port?: number): Promise<GatewayStatus> {
@@ -573,6 +573,8 @@ export class GatewayServer {
         if (typeof req.headers[header] === 'string' && !httpReq.headers[header]) httpReq.headers[header] = req.headers[header] as string;
       }
 
+      let accepted = false;
+      let activeUpstream: NodeJS.ReadableStream | undefined;
       try {
         const upstream = await openUpstream(httpReq.url, {
           method: 'POST',
@@ -583,6 +585,7 @@ export class GatewayServer {
           firstByteTimeoutMs: settings.firstByteTimeoutMs,
           signal: controller.signal,
         });
+        activeUpstream = upstream.stream;
 
         if (upstream.status < 200 || upstream.status >= 300) {
           const text = await readAll(upstream.stream, 1024 * 256).catch(() => '');
@@ -593,17 +596,20 @@ export class GatewayServer {
               cand.key.id,
               `HTTP ${upstream.status}`,
               upstream.status === 429 ? 30_000 : 120_000,
+              cand.key.key,
             );
           }
           continue;
         }
 
         // 成功：记录并转发
-        this.router.markKeySuccess(cand.provider.id, cand.key.id);
+        accepted = true;
+        this.router.markKeySuccess(cand.provider.id, cand.key.id, cand.key.key);
         this.status.requests++;
-        res.setHeader('x-aurora-provider', encodeURIComponent(cand.provider.name));
-        res.setHeader('x-aurora-model', encodeURIComponent(cand.model));
-        res.setHeader('x-aurora-route', encodeURIComponent(resolved.reason));
+        const header = (value: string) => encodeURIComponent(Buffer.from(value, 'utf8').toString('utf8'));
+        res.setHeader('x-aurora-provider', header(cand.provider.name));
+        res.setHeader('x-aurora-model', header(cand.model));
+        res.setHeader('x-aurora-route', header(resolved.reason));
 
         if (ir.stream) {
           await this.pipeStream(upstream.stream, upstream.headers, proto, ir, cand, requestId, res, startedAt, attempt, agent, masker, native);
@@ -612,8 +618,17 @@ export class GatewayServer {
         }
         return;
       } catch (e: any) {
+        (activeUpstream as any)?.destroy?.();
         if (controller.signal.aborted || res.destroyed) { finishRequest(store, requestId); return; }
+        // A delivered response must never be billed again because local bookkeeping failed.
+        if (res.headersSent) {
+          controller.abort(); finishRequest(store, requestId);
+          this.status.lastError = '响应已发送，但本地记录未完成，请检查数据目录和日志设置';
+          if (!res.writableEnded) res.destroy();
+          return;
+        }
         lastErr = { status: 0, message: this.redactError(String(e?.message ?? e)) };
+        if (accepted) { lastErr.message = `上游已接受请求，但响应未能完成；为避免重复消耗，未自动重试。${lastErr.message}`; break; }
         continue;
       }
     }
@@ -713,6 +728,7 @@ export class GatewayServer {
       cacheWriteKnown: usage.cacheWriteTokens !== undefined,
       cacheRead: usage.cacheReadTokens ?? 0,
       cacheWrite: usage.cacheWriteTokens ?? 0,
+      costKnown: this.router.costKnown(cand.provider, cand.providerModel, { cacheRead: usage.cacheReadTokens, cacheWrite: usage.cacheWriteTokens }),
       cost: this.router.costOf(cand.provider, cand.providerModel, {
         input: inputTokens,
         output: usage.outputTokens,
@@ -879,6 +895,7 @@ export class GatewayServer {
       cacheWriteKnown: usage.cacheWriteTokens !== undefined,
       cacheRead: usage.cacheReadTokens ?? 0,
       cacheWrite: usage.cacheWriteTokens ?? 0,
+      costKnown: this.router.costKnown(cand.provider, cand.providerModel, { cacheRead: usage.cacheReadTokens, cacheWrite: usage.cacheWriteTokens }),
       cost: this.router.costOf(cand.provider, cand.providerModel, {
         input: inputTokens,
         output: usage.outputTokens,

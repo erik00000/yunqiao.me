@@ -70,7 +70,7 @@ try {
   const legacyDir = path.join(isolated, 'legacy-store');
   write(path.join(legacyDir, 'settings.json'), JSON.stringify({ theme: 'light', gatewayPort: 3499, autoCheckUpdate: false, closeToTray: false }));
   check('Partial legacy settings persist a missing token before returning it', () => { const legacy = new api.AuroraStore(legacyDir); const first = legacy.getSettings().gatewayToken; assert(first); assert.equal(legacy.getSettings().gatewayToken, first); assert.equal(new api.AuroraStore(legacyDir).getSettings().gatewayToken, first); assert.equal(JSON.parse(read(path.join(legacyDir, 'settings.json'))).gatewayToken, first); });
-  const savedProvider = store.saveProvider(provider);
+  const savedProvider = store.saveProvider({...provider,id:undefined});
   const deps = { store, dataDir: store.dir, gatewayStatus: () => ({ running: true }), gatewayUrl: () => context.gatewayUrl };
   const rpcPreview = await api.runAction(deps, 'agent.preview', { agentId: 'codex-cli', providerId: savedProvider.id, model: 'model-one' });
   const rpcConnect = await api.runAction(deps, 'agent.connect', { agentId: 'codex-cli', providerId: savedProvider.id, model: 'model-one', revision: rpcPreview.revision });

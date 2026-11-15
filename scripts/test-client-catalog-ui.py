@@ -34,7 +34,7 @@ window.renderPage=(page=window.page||'agents')=>{window.page=page;const Page=pag
             page.evaluate("""()=>{
               window.generation=0;
               window.reset=()=>{
-                window.generation++;window.calls=[];window.reloads=0;window.navigation='';window.discovery='ok';window.scanOk=true;window.importResult={ok:true,added:1,merged:0};window.holdImport=false;window.holdNextCatalog=false;window.pendingCatalog=[];
+                window.generation++;window.calls=[];window.reloads=0;window.navigation='';window.discovery='ok';window.scanOk=true;window.importResult={ok:true,added:1,merged:0};window.holdImport=false;window.holdNextCatalog=false;window.pendingCatalog=[];window.holdPreview=false;window.connectFailure='';
                 const provider={key:'fixture',name:'测试预设',vendor:'Fixture',format:'openai-chat',baseUrl:'https://fixture.invalid/v1',region:'cn',models:[{id:'preset-model',contextWindow:64000}]};
                 window.catalog={ok:true,version:1,source:'cache',syncing:true,warning:'更新暂不可用，保留本地缓存',updatedAt:'2026-11-15T01:00:00Z',fetchedAt:'old',providers:[provider]};
                 window.state={settings:{},providers:[],presets:[{...provider,id:provider.key,nameZh:provider.name}],catalog:{version:1,source:'cache',syncing:true,fetchedAt:'old'},agents:{},detected:{},agentCatalog:[{id:'codex-cli',name:'Codex CLI',vendor:'OpenAI',description:'Fixture client',support:'automatic',protocol:'openai-responses',category:'cli'}],codexCoexist:{identity:{available:false},warnings:[],models:[]},localClients:{ok:true,checkedAt:'',accounts:[],sources:[],warnings:[],added:0,updated:0}};
@@ -57,8 +57,10 @@ window.renderPage=(page=window.page||'agents')=>{window.page=page;const Page=pag
                 if(action==='agent.preview'){
                   const p=window.state.providers.find(p=>p.id===payload.providerId);
                   if(payload.providerId!=='official'&&!p.models.some(m=>m.id===payload.model))throw Error('Model was not saved before preview');
+                  if(window.holdPreview)await new Promise(resolve=>window.finishPreview=resolve);
                   return {ok:true,revision:'fixture-preview',files:[{path:'C:/fixture/config.toml',before:'',after:'fixture'}],warnings:[]};
                 }
+                if(action==='agent.connect')return window.connectFailure?{ok:false,message:window.connectFailure}:{ok:true,message:'配置已应用'};
                 if(action==='localClients.scan')return {ok:window.scanOk,warnings:window.scanOk?[]:['部分配置读取失败，请检查文件权限']};
                 if(action==='agent.detect')return {};
                 if(action==='cloud.catalog'){
@@ -90,6 +92,27 @@ window.renderPage=(page=window.page||'agents')=>{window.page=page;const Page=pag
             assert page.evaluate("window.calls.filter(c=>c.action==='provider.models').length") == 1
             expect(dialog.get_by_label('选择模型', exact=True)).to_have_value('preset-model')
             checks.append('A provider created from a nonempty preset synchronizes upstream models and preserves the selected preset model')
+
+            page.evaluate("window.holdPreview=true")
+            dialog.get_by_role('button', name='预览配置 →', exact=True).click()
+            expect(dialog.get_by_label('选择模型', exact=True)).to_be_disabled()
+            expect(dialog.get_by_role('button', name='手动输入其他模型 ID', exact=True)).to_be_disabled()
+            expect(dialog.get_by_role('button', name='取消', exact=True)).to_be_disabled()
+            page.keyboard.press('Escape')
+            expect(dialog).to_be_visible()
+            page.evaluate("window.finishPreview();window.holdPreview=false;window.connectFailure='配置已被其他程序修改，请重新预览'")
+            dialog.get_by_role('button', name='备份并应用配置', exact=True).click()
+            expect(dialog.get_by_role('alert')).to_contain_text('配置已被其他程序修改，请重新预览')
+            expect(dialog.get_by_role('button', name='备份并应用配置', exact=True)).to_have_count(0)
+            expect(dialog.get_by_label('选择模型', exact=True)).to_be_enabled()
+            dialog.get_by_label('选择模型', exact=True).select_option('fresh-model')
+            page.evaluate("window.connectFailure=''")
+            dialog.get_by_role('button', name='预览配置 →', exact=True).click()
+            dialog.get_by_role('button', name='备份并应用配置', exact=True).click()
+            expect(dialog.get_by_role('heading', name='配置已应用', exact=True)).to_be_visible()
+            assert page.evaluate("window.calls.filter(c=>c.action==='agent.connect').at(-1).payload.model") == 'fresh-model'
+            assert page.evaluate("window.calls.filter(c=>c.action==='agent.connect').at(-1).payload.revision") == 'fixture-preview'
+            checks.append('Pending client preview locks model edits; failed application requires a fresh reviewed selection and revision')
 
             for failure in ['unavailable', 'reject']:
                 reset(); page.evaluate('value=>window.discovery=value', failure); dialog = wizard(); fill_new(dialog)

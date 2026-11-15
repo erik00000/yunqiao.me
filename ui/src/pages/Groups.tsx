@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import type { PageProps } from '../App';
 import { Btn, Empty, Field, Ico, Modal, Toggle, useToast } from '../components/ui';
 import { MODE_TEXT, RouteMode, RoutingGroup, call } from '../lib/api';
@@ -6,9 +6,21 @@ import { MODE_TEXT, RouteMode, RoutingGroup, call } from '../lib/api';
 export default function Groups({ state, reload }: PageProps) {
   const toast = useToast();
   const [editing, setEditing] = useState<Partial<RoutingGroup> | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const running = useRef(false);
+
+  async function run(task: () => Promise<void>) {
+    if (running.current) return;
+    running.current = true; setBusy(true); setError('');
+    try { await task(); } catch (e: any) { setError(e.message || '操作未完成，请重试'); }
+    finally { running.current = false; setBusy(false); }
+  }
 
   async function save(g: Partial<RoutingGroup>) {
-    await call('group.save', g);
+    const saved = await call('group.save', g);
+    if (saved?.ok === false) throw new Error(saved.message || '分组保存失败');
+    setEditing(current => current && saved?.id ? { ...current, id: saved.id } : current);
     await reload();
     setEditing(null);
     toast.push('分组已保存', 'ok');
@@ -24,10 +36,8 @@ export default function Groups({ state, reload }: PageProps) {
         <div className="actions">
           <Btn
             variant="primary"
-            disabled={!window.aurora}
-            onClick={() =>
-              setEditing({ name: '', mode: 'order', members: [], enabled: true, retries: 2 })
-            }
+            disabled={!window.aurora || busy}
+            onClick={() => { setError(''); setEditing({ name: '', mode: 'order', members: [], enabled: true, retries: 2 }); }}
           >
             <Ico name="plus" size={13} /> 新建分组
           </Btn>
@@ -35,6 +45,7 @@ export default function Groups({ state, reload }: PageProps) {
       </div>
 
       {!window.aurora && <div className="notice">当前为只读远程视图，路由分组请在桌面端管理。</div>}
+      {error && !editing && <div className="notice warning" role="alert">{error}</div>}
       {state.groups.length === 0 ? (
         <div className="card">
           <Empty
@@ -53,12 +64,14 @@ export default function Groups({ state, reload }: PageProps) {
                 <span className="sub">
                   {g.members.length} 个成员
                   <Toggle
-                    disabled={!window.aurora}
+                    title={`启用分组 ${g.name}`}
+                    disabled={!window.aurora || busy}
                     on={g.enabled}
-                    onChange={async (v) => {
-                      await call('group.save', { ...g, enabled: v });
+                    onChange={(v) => run(async () => {
+                      const result = await call('group.save', { id: g.id, enabled: v });
+                      if (result?.ok === false) throw new Error(result.message || '分组状态保存失败');
                       await reload();
-                    }}
+                    })}
                   />
                 </span>
               </div>
@@ -81,18 +94,18 @@ export default function Groups({ state, reload }: PageProps) {
                 {g.members.length === 0 && <div style={{ color: 'var(--muted)', fontSize: 12 }}>没有成员</div>}
               </div>
               <div className="row" style={{ marginTop: 10 }}>
-                <Btn size="sm" disabled={!window.aurora} onClick={() => setEditing(g)}>
+                <Btn size="sm" disabled={!window.aurora || busy} onClick={() => { setError(''); setEditing(g); }}>
                   编辑
                 </Btn>
                 <div style={{ flex: 1 }} />
                 <Btn
                   size="sm"
                   variant="ghost"
-                  disabled={!window.aurora}
-                  onClick={async () => {
+                  title={`删除分组 ${g.name}`}
+                  disabled={!window.aurora || busy}
+                  onClick={() => {
                     if (!confirm(`删除分组「${g.name}」？`)) return;
-                    await call('group.delete', { id: g.id });
-                    await reload();
+                    void run(async () => { const result = await call('group.delete', { id: g.id }); if (result?.ok === false) throw new Error(result.message || '删除失败'); await reload(); });
                   }}
                 >
                   <Ico name="trash" size={12} />
@@ -107,22 +120,25 @@ export default function Groups({ state, reload }: PageProps) {
         <Modal
           title={editing.id ? '编辑分组' : '新建分组'}
           sub="客户端把模型名写成 group/分组名 就会走这个组。"
-          onClose={() => setEditing(null)}
+          onClose={() => !running.current && setEditing(null)}
           foot={
             <>
-              <Btn variant="ghost" onClick={() => setEditing(null)}>
+              <Btn variant="ghost" disabled={busy} onClick={() => setEditing(null)}>
                 取消
               </Btn>
-              <Btn variant="primary" onClick={() => save(editing)}>
-                保存
+              <Btn variant="primary" disabled={busy} onClick={() => run(() => save(editing))}>
+                {busy ? '保存中…' : '保存'}
               </Btn>
             </>
           }
         >
+          {error && <div className="notice warning" role="alert">{error}</div>}
+          <fieldset disabled={busy} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
           <div className="grid cols-2">
             <Field label="分组名" hint="只能英文/数字/短横线，客户端会拼成 group/名字">
               <input
                 className="input mono"
+                aria-label="分组名"
                 value={editing.name ?? ''}
                 onChange={(e) => setEditing({ ...editing, name: e.target.value })}
                 placeholder="coding"
@@ -218,6 +234,7 @@ export default function Groups({ state, reload }: PageProps) {
               </Btn>
             </div>
           </Field>
+          </fieldset>
         </Modal>
       )}
     </>

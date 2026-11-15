@@ -3,7 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { createHash, randomBytes } from 'node:crypto';
 import type { AuroraStore } from '../store/index.js';
-import { applyPlan, patchToml, planned } from '../agents/configFiles.js';
+import { applyPlan, patchToml, planned, readText } from '../agents/configFiles.js';
 
 export type MarketSource = 'public' | 'full';
 export interface MarketEntry { id: string; name: string; displayName: string; description: string; version: string; author: string; tags: string[]; license: string; path: string; tree: string; bytes: number; skills: number; requiresAuth: boolean; catalogMissing?: boolean }
@@ -85,10 +85,12 @@ export function packagePresent(store: AuroraStore, p: NativeInstall): boolean {
   } catch { return false; }
 }
 export function installedPlugins(store: AuroraStore): Record<string, NativeInstall> {
-  const value = store.readExtra<Record<string, NativeInstall>>('extension-native.json', {});
+  const file=path.join(store.dir,'extension-native.json');
+  let value:Record<string,NativeInstall>;
+  try{value=fs.existsSync(file)?JSON.parse(readText(file)):{};}catch{throw new Error('本地插件安装记录无法读取，已停止修改；请检查 extension-native.json');}
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('本地插件安装记录无效，请检查 extension-native.json');
   for (const [key, entry] of Object.entries(value)) {
-    if (!entry || !Object.hasOwn(REPOSITORIES, entry.source) || key !== nativeKey(entry.source, entry.id) || !/^[a-zA-Z0-9._~-]{1,150}$/.test(entry.id) || !/^[a-f0-9]{40}$/.test(entry.tree)) throw new Error('本地插件安装记录无效，请检查 extension-native.json');
+    if (!entry || !Object.hasOwn(REPOSITORIES, entry.source) || key !== nativeKey(entry.source, entry.id) || !/^[a-zA-Z0-9._~-]{1,150}$/.test(entry.id) || !/^[a-f0-9]{40}$/.test(entry.tree) || !/^[a-f0-9]{40}$/.test(entry.revision) || typeof entry.enabled!=='boolean') throw new Error('本地插件安装记录无效，请检查 extension-native.json');
     safeRelative(entry.name); safeRelative(entry.version);
     if (entry.name.includes('/') || entry.version.includes('/')) throw new Error('本地插件安装路径无效');
   }
