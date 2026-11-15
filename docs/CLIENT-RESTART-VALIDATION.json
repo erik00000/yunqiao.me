@@ -35,5 +35,30 @@
     "Ambiguous Store entries and shortcuts with additional arguments require manual handling.",
     "Existing ChatGPT desktop enhancement connections need reconnecting after restart."
   ],
-  "lifecycleSourceSha256": "6a86a63b94be6410ae0ab4ec4a9c797b11a17b9329a6ad021a08fa0449395a49"
+  "lifecycleSourceSha256": "6a86a63b94be6410ae0ab4ec4a9c797b11a17b9329a6ad021a08fa0449395a49",
+  "windowsDebug": {
+    "executable": "release\\client-restart-debug-0.6.0\\win-unpacked\\YunQiaoAI.exe",
+    "exeSha256": "fc91193c967fd98a0271e8501496b227a89fb47a5aacbc4e6b74322d596297c8",
+    "asarSha256": "a99610b88064b357ff33c2503e823c2576aa9f90c95418e2525bbc1b1deedfbc",
+    "build": {
+      "id": "20261115T064549Z-0d8e6309",
+      "builtAt": "2026-11-15T06:45:49.518Z",
+      "revision": "0d8e6309",
+      "channel": "local"
+    },
+    "resourceFilesVerified": 188,
+    "compiledFilesMatched": [
+      "dist/main/gateway-cli.cjs",
+      "dist/main/main.cjs",
+      "dist/main/preload.cjs",
+      "dist/ui/index.html",
+      "dist/ui/tray.png",
+      "dist/ui/assets/index-BAeYezsI.js",
+      "dist/ui/assets/index-ZuSQ_ymv.css"
+    ],
+    "packagedAcceptanceChecks": 12,
+    "packagedAcceptancePassed": true,
+    "existingUserProcessUntouched": true,
+    "publishedRelease": false
+  }
 }
