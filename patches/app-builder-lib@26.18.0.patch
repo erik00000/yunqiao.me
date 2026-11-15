@@ -1,0 +1,27 @@
+diff --git a/templates/nsis/portable.nsi b/templates/nsis/portable.nsi
+index e5436bb0f810058b52e15ce65b3d256f86dabc6f..1c64aee83d6c235d52f2a4e3c28855b900cefdfa 100644
+--- a/templates/nsis/portable.nsi
++++ b/templates/nsis/portable.nsi
+@@ -84,8 +84,20 @@ Section
+   !endif
+ 
+ 	ExecWait "$INSTDIR\${APP_EXECUTABLE_FILENAME} $R0" $0
+-  SetErrorLevel $0
+ 
+   SetOutPath $EXEDIR
+-	RMDir /r $INSTDIR
++  # Retry transient image-file locks without killing another process. Cleanup
++  # is restricted to this launch's private plugin directory, never a named TEMP path.
++  StrCmp $PLUGINSDIR "" yunqiao_cleanup_done
++  StrCmp $INSTDIR "$PLUGINSDIR\app" 0 yunqiao_cleanup_done
++  StrCpy $R1 40
++yunqiao_cleanup_retry:
++  RMDir /r "$PLUGINSDIR\app"
++  IfFileExists "$PLUGINSDIR\app\*.*" 0 yunqiao_cleanup_done
++  IntCmp $R1 0 yunqiao_cleanup_done
++  Sleep 250
++  IntOp $R1 $R1 - 1
++  Goto yunqiao_cleanup_retry
++yunqiao_cleanup_done:
++  SetErrorLevel $0
+ SectionEnd

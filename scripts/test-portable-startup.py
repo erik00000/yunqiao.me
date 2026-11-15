@@ -5,6 +5,8 @@ unpacked build must match dist. Both launches share a disposable Chromium profil
 and use a TEMP path containing spaces. Windows Job Objects own every process from
 before its first instruction, so cleanup cannot target another running user app.
 No client is launched/configured and no supplier, login or model request is used.
+Final cleanup is exercised under a real Windows read handle without delete
+sharing, which is released only after the launcher has reached cleanup.
 """
 import argparse
 import ctypes
@@ -163,6 +165,41 @@ class OwnedJob:
                 self.kernel.CloseHandle(process.hProcess)
 
 
+class CleanupReadLock:
+    """Hold only the verified fixture image, allowing reads/writes but not deletion."""
+    def __init__(self, executable, temporary):
+        executable = executable.resolve()
+        assert executable.is_file() and executable.is_relative_to(temporary.resolve())
+        self.kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+        self.kernel.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                                           ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+        self.kernel.CreateFileW.restype = wintypes.HANDLE
+        self.kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        self.kernel.CloseHandle.restype = wintypes.BOOL
+        self.invalid = ctypes.c_void_p(-1).value
+        # GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, OPEN_EXISTING.
+        self.handle = self.kernel.CreateFileW(str(executable), 0x80000000, 3, None, 3, 0x80, None)
+        if self.handle == self.invalid:
+            self.handle = None
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            # Request DELETE access without deleting anything. The held read handle
+            # must deny it with ERROR_SHARING_VIOLATION, not a guessed simulation.
+            probe = self.kernel.CreateFileW(str(executable), 0x10000, 7, None, 3, 0x80, None)
+            error = ctypes.get_last_error()
+            if probe != self.invalid:
+                self.kernel.CloseHandle(probe)
+            assert probe == self.invalid and error == 32, f'Delete sharing was not blocked: {error}'
+        except BaseException:
+            self.close()
+            raise
+
+    def close(self):
+        if self.handle is not None:
+            self.kernel.CloseHandle(self.handle)
+            self.handle = None
+
+
 def app_windows(job):
     user = ctypes.WinDLL('user32', use_last_error=True)
     callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
@@ -303,7 +340,7 @@ def main():
                        AURORA_CLIENT_HOME=str(clients), YUNQIAO_TEST_ISOLATED='1', USERPROFILE=str(clients), HOME=str(clients),
                        CODEX_HOME=str(clients / '.codex'), APPDATA=str(profile / 'appdata'), LOCALAPPDATA=str(profile / 'localappdata'),
                        HTTP_PROXY=proxy, HTTPS_PROXY=proxy, ALL_PROXY=proxy, NO_PROXY='127.0.0.1,localhost')
-    job, watcher, logs = None, ExtractionWatcher(temporary, executable.name), []
+    job, watcher, logs, cleanup_lock = None, ExtractionWatcher(temporary, executable.name), [], None
     report = {'passed': False, 'version': args.version, 'launcher': str(launcher),
               'launcherSha256': HELPERS.sha256(launcher), 'referenceAsarSha256': asar_hash,
               'profile': str(profile), 'temporaryPathContainsSpaces': True, 'checks': []}
@@ -390,18 +427,48 @@ def main():
             assert not errors, errors
             page.screenshot(path=str(profile / 'single-instance.png'))
             report['checks'].append('Exactly one native window remains; navigation and IPC work after duplicate cleanup; client fixtures stay unchanged')
+            surviving = next(process for process in processes if job.exit_code(process) is None)
+            cleanup_lock = CleanupReadLock(runtime_dir / executable.name, temporary)
+            report['cleanupLock'] = {'nativeReadHandle': True, 'deleteSharingDenied': True}
+            quit_started = time.monotonic()
             try:
                 invoke(page, 'app.quit')
             except PlaywrightError as error:
                 if not ('closed' in str(error).lower() or 'destroyed' in str(error).lower()):
                     raise
+            # Seeing app.asar disappear proves RMDir has run while the executable
+            # remains locked. Do not release on a guessed startup/exit delay.
+            cleanup_deadline = time.monotonic() + 8
+            while runtime_asar.exists() and time.monotonic() < cleanup_deadline:
+                assert job.exit_code(surviving) is None, 'Launcher exited before cleanup could retry the locked executable'
+                time.sleep(.05)
+            assert not runtime_asar.exists(), 'Launcher did not reach cleanup within 8 seconds'
+            assert (runtime_dir / executable.name).is_file(), 'The native locked executable disappeared'
+            assert job.exit_code(surviving) is None, 'Launcher did not wait for the real Windows file lock'
+            cleanup_observed = time.monotonic()
+            # Keep the lock across multiple 250 ms retry intervals; this controlled
+            # hold tests retry behavior rather than synchronizing on a fixed sleep.
+            while time.monotonic() - cleanup_observed < .75:
+                assert job.exit_code(surviving) is None, 'Launcher abandoned cleanup while the file was locked'
+                time.sleep(.05)
+            report['cleanupLock'].update(cleanupObservedMs=round((cleanup_observed - quit_started) * 1000),
+                                         heldDuringCleanupMs=round((time.monotonic() - cleanup_observed) * 1000))
+            cleanup_lock.close()
+            cleanup_released = time.monotonic()
             quit_deadline = time.monotonic() + 20
             while any(job.exit_code(process) is None for process in processes) and time.monotonic() < quit_deadline:
                 time.sleep(.1)
             final_codes = [job.exit_code(process) for process in processes]
-            assert final_codes == [0, 0], f'Portable launchers did not quit cleanly: {final_codes}'
-            assert not runtime_dir.exists(), 'The final launcher did not clean its own extracted runtime'
             report['finalExitCodes'] = final_codes
+            assert final_codes == [0, 0], f'Portable launchers did not quit cleanly: {final_codes}'
+            cleanup_deadline = time.monotonic() + 5
+            while runtime_dir.exists() and time.monotonic() < cleanup_deadline:
+                time.sleep(.05)
+            report['cleanupLock']['cleanupAfterReleaseMs'] = round((time.monotonic() - cleanup_released) * 1000)
+            if runtime_dir.exists():
+                report['cleanupRemainingFiles'] = sorted(str(file.relative_to(runtime_dir)) for file in runtime_dir.rglob('*') if file.is_file())
+            assert not runtime_dir.exists(), 'The final launcher did not clean its own extracted runtime'
+            report['checks'].append('A real Windows file lock blocks deletion; the portable launcher retries and cleans its private directory after release')
             report['checks'].append('Application Quit returns both launcher exit codes 0 and removes the final extracted runtime')
             report['passed'] = True
     except BaseException as error:
@@ -409,6 +476,8 @@ def main():
         report['traceback'] = traceback.format_exc()
         raise
     finally:
+        if cleanup_lock:
+            cleanup_lock.close()
         watcher.stop.set()
         if watcher.thread.is_alive():
             watcher.thread.join(timeout=5)
