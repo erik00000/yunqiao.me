@@ -1,0 +1,26 @@
+{
+  "passed": true,
+  "count": 18,
+  "checks": [
+    "All Settings tabs hide directory address, model-sync switch, and update-source URL",
+    "Manual checks ignore legacy URL settings and only an explicit GitHub download opens a link",
+    "Website fallback passes source and minimumVersion and opens only the validated returned URL",
+    "Older website release remains visible without navigation and can recover on retry",
+    "Missing platform package remains visible without navigation and can recover on retry",
+    "Website network rejection remains visible without navigation and can recover on retry",
+    "Update RPC failure stays on the page and a new check recovers without navigation",
+    "Rejected update IPC stays on the page and a new check recovers without navigation",
+    "A pending manual check disables repeated clicks until it completes",
+    "Both download actions disable duplicate website requests and pending browser opens",
+    "Browser-open failures remain visible and retry succeeds",
+    "An up-to-date installation shows no installer actions",
+    "Automatic website fallback is labelled and still requires an explicit download",
+    "Desktop App banner checks automatically but downloads and dismisses only on user action",
+    "Remote Web App never checks host updates and disables desktop update controls",
+    "Dark theme update result and banner fit a 720px desktop window without horizontal overflow",
+    "No renderer exceptions during the exercised update flows",
+    "All IPC, RPC and external downloads remain isolated; no network requests escape the fixture"
+  ],
+  "failures": [],
+  "scope": "Chromium real Settings/App/UpdateActions with controlled IPC and RPC responses; no real update services, downloads, or local client changes"
+}

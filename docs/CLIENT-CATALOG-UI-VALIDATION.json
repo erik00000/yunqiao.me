@@ -1,0 +1,18 @@
+{
+  "passed": true,
+  "count": 11,
+  "checks": [
+    "A provider created from a nonempty preset synchronizes upstream models and preserves the selected preset model",
+    "unavailable model discovery keeps the saved provider usable; manual IDs are saved before preview without duplicate providers",
+    "reject model discovery keeps the saved provider usable; manual IDs are saved before preview without duplicate providers",
+    "Official-account models stay restricted to the verified native model catalog",
+    "Partial local scan failures remain visible, link to scan details and only report success after recovery",
+    "Cloud import shows cache warnings, follows background catalog updates, drops removed selections and supports explicit refresh",
+    "Failed cloud imports preserve the dialog and selection; retry disables duplicate requests and closes only after success",
+    "Closing a loading catalog prevents its late response from reopening the modal",
+    "The vendor directory follows completed startup synchronization without a manual refresh and removes stale selections",
+    "A late stale directory response cannot overwrite a newer background snapshot",
+    "No renderer exceptions or real client/configuration/network actions occurred"
+  ],
+  "scope": "Real React components with controlled IPC; no real client, provider or published catalog changes"
+}

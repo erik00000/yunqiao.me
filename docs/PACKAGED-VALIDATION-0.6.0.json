@@ -1,24 +1,37 @@
 {
   "version": "0.6.0",
   "passed": true,
-  "count": 8,
+  "count": 12,
   "checks": [
     "Packaged version and AGPL notices",
     "All 217 packaged resource hashes match pinned source",
+    "Portable wrapper extracts the verified application and all 217 pinned resources",
     "Actual packaged EXE renders app.asar with an isolated data directory",
     "Packaged gateway health is ready and management rejects missing credentials",
     "Installed runtime loads 5 complete packages, 32 builtins and both pinned markets",
+    "Packaged settings hide catalog controls and migrate legacy preferences to automatic sync and GitHub releases",
+    "The packaged build is identifiable and source links do not depend on an unpublished release tag",
+    "The actual EXE exposes history region selection and native provider discovery through IPC",
     "Packaged plugin page renders the five bundled packages without errors",
     "Packaged membership onboarding renders without authenticated user state",
     "No page exceptions or changes to isolated client configuration"
   ],
-  "executable": "release\\win-unpacked\\YunQiaoAI.exe",
-  "exeSha256": "f19f95b206f7ce0ea057a6ad4e43dd35a948ad871454c79332a405918e785a9f",
-  "asarSha256": "539aea26f1180a9396dce4817d7fc0d4d72bd526633e886628b3c0013fc5ecd9",
+  "executable": "release\\local-debug-0.6.0\\win-unpacked\\YunQiaoAI.exe",
+  "exeSha256": "d9ab1a9dc118cf972e788a62458efd4c0d1b50da22f1ca8578d60854651855f8",
+  "asarSha256": "23a62f51fe371bf62260e27c2d5cc01cced2acbbc8880c0642cfc31aa895e253",
+  "portable": "release\\local-debug-0.6.0\\YunQiaoAI-0.6.0-local-debug-win-x64.exe",
+  "portableSha256": "840b04866e3ac1a7120c56022adcd7f7bc8f6f1da33abd2e3e577a0a56605215",
+  "build": {
+    "id": "20261115T034746Z-03346ace",
+    "builtAt": "2026-11-15T03:47:46.435Z",
+    "revision": "03346ace",
+    "channel": "local"
+  },
   "resourceFilesVerified": 217,
   "profile": "isolated temporary app, gateway and client directories",
   "membershipPublicConfigWarning": [],
   "screenshots": [
+    "docs/images/settings-v0.6.png",
     "docs/images/plugins-v0.6.png",
     "docs/images/membership-v0.6.png"
   ]

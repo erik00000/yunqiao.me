@@ -1,0 +1,24 @@
+{
+  "passed": true,
+  "count": 17,
+  "checks": [
+    "All five bundled packages use product-facing descriptions while retaining their original license in details",
+    "Real upstream format:file exposes the image chooser; picker and validation failures remain inside the open modal",
+    "Malformed advanced configuration is rejected locally without invoking the backend",
+    "Bundled extension removal and reinstall preserve explicit enablement while runtime errors never claim activation",
+    "Pet settings disclose backend limitations and expose only supported native sound choices",
+    "Legacy unsupported enhancements can be disabled while unsupported enabling stays blocked",
+    "All-market refresh includes both catalogs, source refresh is scoped, and tag search ignores surrounding spaces",
+    "A failed plugin list refresh retains visible installed entries and can recover without restarting",
+    "Market installation remains disabled until explicit enabling and preserves authorization and restart notices",
+    "Installed version, update and missing-package repair actions follow the backend contract",
+    "Delisted plugins remain manageable and uninstall failures stay visible without dismissing details",
+    "Connection validation stays in its modal and a new client version requires a new compatibility acknowledgement",
+    "Custom middleware validates JSON, displays backend save errors in the editor and starts disabled",
+    "Middleware separates enabled state from waiting, successful, failed and blocked execution with verification time",
+    "Custom middleware deletion keeps failure visible and removes the card only after success",
+    "Workspace asset failure preserves the last list and the native-plugin card links to managed plugins",
+    "Remote mode exposes no desktop mutation controls or editable middleware scripts; no renderer exceptions"
+  ],
+  "scope": "Chromium UI with real bundled manifest schemas and controlled IPC responses; no real client injection or downloads"
+}

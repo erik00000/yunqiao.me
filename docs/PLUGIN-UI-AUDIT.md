@@ -19,7 +19,7 @@
 
 ## 验证
 
-`python scripts/test-plugin-ui.py` 共 **16 项通过**，结果见 `PLUGIN-UI-VALIDATION.json`。脚本运行真实 React 界面，使用随附包的实际 manifest/schema 和受控 IPC 响应，覆盖安装、停用、移除重装、更新与修复、下架项管理、来源筛选、标签搜索、失败后保留状态、弹窗错误、版本确认、中间件编辑和执行结果、桌面资源入口、远程只读限制。没有 renderer 异常。
+`python scripts/test-plugin-ui.py` 共 **17 项通过**，结果见 `PLUGIN-UI-VALIDATION.json`。脚本运行真实 React 界面，使用随附包的实际 manifest/schema 和受控 IPC 响应，覆盖安装、停用、移除重装、更新与修复、下架项管理、来源筛选、标签搜索、失败后保留状态、弹窗错误、版本确认、中间件编辑和执行结果、桌面资源入口、远程只读限制。没有 renderer 异常。
 
 `npm run typecheck` 通过。
 

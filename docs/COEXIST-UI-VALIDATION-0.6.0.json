@@ -1,0 +1,28 @@
+{
+  "version": "0.6.0",
+  "passed": true,
+  "count": 11,
+  "checkedAt": "2026-11-15T03:48:16.148638+00:00",
+  "checks": [
+    "Real Electron startup imports two matching native sources into one supplier without modifying native files",
+    "Supplier page separates official identities, credential status and both API configuration sources",
+    "Accounts page distinguishes detected, expired and missing credentials without claiming subscription validity",
+    "Official wizard applies dedicated loopback routing, synchronizes CLI/desktop state and preserves OAuth, permissions and MCP",
+    "Same wizard switches from official account to API supplier with redacted preview and unchanged native authentication",
+    "UI restore returns the exact original configuration across repeated choices and disconnects both entry points",
+    "The running application automatically discovers source rotation and new models without clicking rescan",
+    "Explicit rescan retains user changes instead of replacing them with subsequently changed source files",
+    "Deleted imported providers stay deleted during subsequent forced scans",
+    "An empty supplier accepts a manually typed model ID, persists it before preview, applies and restores successfully",
+    "No renderer exceptions, real client profile writes or OAuth mutations"
+  ],
+  "runtime": "packaged Windows EXE",
+  "executable": "D:\\btc\\aurora\\release\\local-debug-0.6.0\\win-unpacked\\YunQiaoAI.exe",
+  "exeSha256": "d9ab1a9dc118cf972e788a62458efd4c0d1b50da22f1ca8578d60854651855f8",
+  "asarSha256": "23a62f51fe371bf62260e27c2d5cc01cced2acbbc8880c0642cfc31aa895e253",
+  "profile": "isolated temporary app, Chromium and native client directories",
+  "screenshots": [
+    "docs/images/coexist-v0.6.png"
+  ],
+  "scope": "local validation only; no real provider requests or publication"
+}
