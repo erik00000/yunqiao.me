@@ -28,10 +28,12 @@ let gateway;
 try {
  const defaults=new AuroraStore(path.join(scratch,'blank-defaults'));
  check('A fresh profile contains no demo suppliers, routes, client connections or synthetic usage',()=>{assert.deepEqual(defaults.listProviders(),[]);assert.deepEqual(defaults.listGroups(),[]);assert.deepEqual(defaults.listAgents(),{});assert.deepEqual(defaults.readUsage(),[]);assert.deepEqual(activeRequests(defaults),[]);assert.equal(summarizeUsage(defaults.readUsage()).totals.calls,0);});
- const custom=catalogPresets(defaults).filter(p=>['relay-openai','relay-anthropic','relay-gemini'].includes(p.id));
- check('Custom relay templates do not supply example endpoints, credentials or invented models',()=>{
-  assert.equal(custom.length,3);
+ const custom=catalogPresets(defaults).filter(p=>p.customBaseUrl);
+ check('Every custom-address template starts without example endpoints, credentials or invented models',()=>{
+  assert.equal(custom.length,4);
   for(const preset of custom){assert.equal(preset.baseUrl,'');assert.equal(preset.customBaseUrl,true);assert.deepEqual(preset.models,[]);const p=defaults.saveProvider({presetId:preset.id});assert.equal(p.baseUrl,'');assert.deepEqual(p.models,[]);assert.ok(p.apiKeys.every(k=>k.key===''));}
+  const seed=JSON.parse(fs.readFileSync(path.join(process.cwd(),'server','seed-catalog.json'),'utf8')).providers.filter(p=>p.customBaseUrl);
+  assert.equal(seed.length,custom.length);assert.ok(seed.every(p=>p.baseUrl===''));
  });
  check('Legacy custom catalog placeholders are cleared while real custom endpoints remain intact',()=>{
   const template={key:'relay',name:'Custom relay',format:'openai-chat',customBaseUrl:true,models:[]};
@@ -41,6 +43,17 @@ try {
   assert.equal(validateCloudProvider({...template,baseUrl:base}).baseUrl,base);
   assert.equal(validateCloudProvider({...template,baseUrl:''}).baseUrl,'');
   assert.throws(()=>validateCloudProvider({...template,customBaseUrl:false,baseUrl:''}),/地址/);
+ });
+ check('Legacy Azure placeholders are cleared from cached catalogs without changing real Azure endpoints',()=>{
+  const template={key:'azure-openai',name:'Azure OpenAI',format:'openai-chat',customBaseUrl:true,models:[]};
+  for(const baseUrl of ['https://{resource}.openai.azure.com/openai/deployments/{deployment}','https://{resource}.openai.azure.com/openai/deployments/%7Bdeployment%7D']){
+   const cached={getSettings:()=>({catalogUrl:base+'/old-azure-directory'}),readExtra:()=>({version:1,providers:[{...template,baseUrl}]})};
+   assert.equal(catalogPresets(cached)[0].baseUrl,'');
+  }
+  const actual='https://customer-resource.openai.azure.com/openai/deployments/production';
+  assert.equal(validateCloudProvider({...template,baseUrl:actual}).baseUrl,actual);
+  const provider=defaults.saveProvider({presetId:'azure-openai',baseUrl:actual,models:[{id:'production'}]});
+  assert.equal(provider.baseUrl,actual);assert.equal(provider.models[0].id,'production');
  });
  const unfinished=defaults.listProviders()[0],missingAddress=await fetchProviderModels({store:defaults},{providerId:unfinished.id});
  check('An unfinished custom supplier asks for its actual API address before model discovery',()=>{assert.equal(missingAddress.ok,false);assert.match(missingAddress.message,/实际 API 地址/);assert.deepEqual(missingAddress.models,[]);assert.equal(defaults.getProvider(unfinished.id).baseUrl,'');});

@@ -147,8 +147,9 @@ export function validateCloudProvider(raw: unknown): CloudProvider {
   }).filter((m: { id: string }) => !seen.has(m.id) && !!seen.add(m.id));
   const customBaseUrl = p.customBaseUrl === true;
   const baseUrl = customBaseUrl && p.baseUrl === '' ? '' : webUrl(p.baseUrl, `供应商「${p.name}」地址`);
-  // Older bundled/remote templates used this documentation host as a saved default.
-  const legacyPlaceholder = customBaseUrl && baseUrl && new URL(baseUrl).hostname === 'api.example.com';
+  // Clear only the known placeholders shipped in older bundled/remote templates.
+  const legacyPlaceholder = customBaseUrl && baseUrl && (new URL(baseUrl).hostname === 'api.example.com'
+    || baseUrl === 'https://{resource}.openai.azure.com/openai/deployments/%7Bdeployment%7D');
   return {
     key: p.key.trim(), name: p.name.trim(), format: p.format, baseUrl: legacyPlaceholder ? '' : baseUrl, customBaseUrl,
     vendor: optionalText(p.vendor, 160), region: optionalText(p.region, 40),

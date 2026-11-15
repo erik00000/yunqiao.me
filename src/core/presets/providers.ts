@@ -1009,7 +1009,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     vendor: 'Microsoft',
     region: 'global',
     format: 'openai-chat',
-    baseUrl: 'https://{resource}.openai.azure.com/openai/deployments/{deployment}',
+    baseUrl: '',
     color: '#0078d4',
     icon: '🅰️',
     customBaseUrl: true,
