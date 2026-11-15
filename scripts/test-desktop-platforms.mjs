@@ -35,6 +35,8 @@ try {
     assert.throws(() => api.desktopDebugLaunch(result, 9222, 'darwin'), /原生聊天版/);
   });
   test('macOS isolated discovery reads Applications and actual Contents/Resources', () => {
+    write(path.join(app, 'Contents', 'Resources', 'app', 'package.json'), '{"main":"index.js"}');
+    write(path.join(app, 'Contents', 'Resources', 'app', 'index.js'), 'require("electron");');
     write(path.join(app, 'Contents', 'Resources', 'codex'), 'resource marker');
     const found = api.detectCodingDesktop(undefined, options);
     assert.equal(found.executable, main); assert.equal(found.supportsCodexConfig, true);
@@ -46,6 +48,8 @@ try {
   test('Windows isolated discovery preserves executable and resource layouts', () => {
     const exe = path.join(temporaryRoot, 'AppData', 'Local', 'Programs', 'ChatGPT', 'ChatGPT.exe');
     write(exe, 'private fixture'); write(path.join(path.dirname(exe), 'resources', 'app-server.exe'), 'private resource');
+    write(path.join(path.dirname(exe), 'resources', 'app', 'package.json'), '{"main":"index.js"}');
+    write(path.join(path.dirname(exe), 'resources', 'app', 'index.js'), 'require("electron");');
     const found = api.detectCodingDesktop(undefined, { platform: 'win32', isolatedHome: temporaryRoot });
     assert.equal(found.executable, exe); assert.equal(found.supportsCodexConfig, true);
     assert.deepEqual(api.desktopDebugLaunch(found, 9222, 'win32'), { command: exe, args: ['--remote-debugging-port=9222', '--remote-debugging-address=127.0.0.1'] });

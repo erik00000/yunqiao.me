@@ -44,11 +44,14 @@ function inspectClient(deps: ActionDeps, payload: unknown): ClientDiagnosticRepo
   let paths: string[] = [], automatic = false;
   try {
     const detected = adapter.detect();
-    add('installation', detected.installed || !adapter.needsInstall ? 'ok' : 'warning', '客户端安装', detected.installed || !adapter.needsInstall ? '已检测到客户端或此入口无需安装。' : '未找到客户端程序。可先安装，再点击“检测本地客户端”；已有配置不代表程序已安装。');
+    const sharedDesktop = adapter.id === 'chatgpt-desktop';
+    add('installation', detected.installed || !adapter.needsInstall ? 'ok' : sharedDesktop && detected.configured ? 'info' : 'warning', '客户端安装', detected.installed || !adapter.needsInstall ? '已检测到客户端或此入口无需安装。' : sharedDesktop ? '尚未确认桌面程序位置。可继续保存与 Codex CLI 共享的编程配置；程序启动与桌面增强需另行确认安装位置。' : '未找到客户端程序。可先安装，再点击“检测本地客户端”；已有配置不代表程序已安装。');
     paths = adapter.configPaths();
     automatic = adapter.support === 'automatic';
-    add('support', automatic ? 'ok' : 'info', '配置方式', automatic ? '此客户端提供自动配置适配。' : '此版本需要在客户端内配置，或尚未支持自动接入；请查看接入说明。');
-    add('location', detected.detectionError || (automatic && !paths.length) ? 'error' : paths.length ? 'ok' : 'info', '配置位置', detected.detectionError || (automatic && !paths.length) ? '无法唯一确认安装能力或配置目录。请检查是否存在多个版本／配置目录，再重新检测；本次未改写文件。' : paths.length ? '已按当前系统和客户端配置规则确定检查位置。' : '此入口没有已验证的自动配置位置，请在客户端内核对手动配置。');
+    add('support', automatic ? 'ok' : 'info', '配置方式', sharedDesktop && automatic ? '可自动备份并写入用户级共享编程配置，遵循 CODEX_HOME；官方登录文件保持不变。' : automatic ? '此客户端提供自动配置适配。' : '此版本需要在客户端内配置，或尚未支持自动接入；请查看接入说明。');
+    if (sharedDesktop) add('desktop-capability', detected.supportsCodexConfig ? 'ok' : 'warning', '桌面程序能力', detected.supportsCodexConfig ? '已从桌面安装资源确认 Codex 编程配置能力；运行中的客户端仍需重启后验证。' : '尚未验证桌面程序是否读取 Codex 编程配置。此状态不阻止共享配置保存，也不表示纯聊天界面可以切换模型。');
+    const locationError = (!sharedDesktop && detected.detectionError) || (automatic && !paths.length);
+    add('location', locationError ? 'error' : paths.length ? 'ok' : 'info', '配置位置', locationError ? '无法唯一确认配置目录。请检查是否存在多个版本／配置目录，再重新检测；本次未改写文件。' : paths.length ? '已按当前系统和客户端配置规则确定检查位置。' : '此入口没有已验证的自动配置位置，请在客户端内核对手动配置。');
   } catch {
     add('location', 'error', '配置位置', '无法安全检测客户端或读取配置位置，请检查安装目录与文件权限后重试。');
   }

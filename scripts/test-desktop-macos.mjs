@@ -18,7 +18,7 @@ let passed = 0;
 try {
   process.env.AURORA_CLIENT_HOME = root;
   const bundle = path.join(root, 'api.cjs');
-  await build({ stdin: { contents: `export * from './src/core/desktopDetection.ts'; export * from './src/core/clientProcesses.ts'; export { desktopDebugLaunch } from './src/core/injector.ts'; export { configureDesktopPath, getAdapter, detectAll } from './src/core/agents/adapters.ts'; export { runningClients } from './src/core/historyRepairIO.ts'; export { runExtensionAction } from './src/core/extensions/index.ts'; export { AuroraStore } from './src/core/store/index.ts';`, resolveDir: workspace, loader: 'ts' }, outfile: bundle, bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent' });
+  await build({ stdin: { contents: `export * from './src/core/desktopDetection.ts'; export * from './src/core/clientProcesses.ts'; export { desktopDebugLaunch } from './src/core/injector.ts'; export { configureDesktopPath, getAdapter, detectAll, detectReset } from './src/core/agents/adapters.ts'; export { runningClients } from './src/core/historyRepairIO.ts'; export { runExtensionAction } from './src/core/extensions/index.ts'; export { AuroraStore } from './src/core/store/index.ts';`, resolveDir: workspace, loader: 'ts' }, outfile: bundle, bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent' });
   const api = createRequire(import.meta.url)(bundle);
   const app = path.join(root, 'Applications', 'ChatGPT Beta.app');
   const plist = path.join(app, 'Contents', 'Info.plist');
@@ -26,6 +26,8 @@ try {
   write(plist, '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>CFBundleExecutable</key><string>Fixture Desktop</string><key>CFBundleIdentifier</key><string>io.aurora.mac.fixture</string><key>CFBundleName</key><string>Fixture Desktop</string><key>CFBundleShortVersionString</key><string>2.3.4</string></dict></plist>');
   write(executable, '#!/bin/sh\nexit 0\n', 0o700);
   write(path.join(app, 'Contents', 'Resources', 'codex'), 'fixture resource');
+  write(path.join(app, 'Contents', 'Resources', 'app', 'package.json'), '{"main":"index.js"}');
+  write(path.join(app, 'Contents', 'Resources', 'app', 'index.js'), 'require("electron");');
   let detected = api.inspectCodingDesktop(app);
   assert.equal(detected.executable, executable); assert.equal(detected.version, '2.3.4'); assert.equal(detected.supportsCodexConfig, true);
   console.log('PASS native plutil resolves XML app metadata and its actual main executable'); passed++;
@@ -66,17 +68,22 @@ try {
     assert.throws(() => api.inspectCodingDesktop(updatingApp));
     assert.equal(api.detectCodingDesktop(updatingApp).installed, false);
     assert.match(api.detectCodingDesktop().detectionError, /更新/);
-    assert.equal(api.getAdapter('chatgpt-desktop').support, 'manual');
+    assert.equal(api.getAdapter('chatgpt-desktop').support, 'automatic');
+    const context = { provider: { id: 'fixture', name: 'Fixture', enabled: true, format: 'openai-responses', baseUrl: 'https://example.com/v1', models: [{ id: 'model-one' }], apiKeys: [{ enabled: true, key: 'private-fixture-key' }] }, model: 'model-one', mode: 'direct', gatewayUrl: 'http://127.0.0.1:3425' };
+    const preview = api.getAdapter('chatgpt-desktop').preview(context);
+    assert.equal(preview.ok, true, preview.message); assert(preview.warnings.some(item => item.includes('共享编程配置')));
+    assert.throws(() => api.desktopDebugLaunch(api.detectCodingDesktop(updatingApp), 9222), /未找到桌面程序/);
     assert.match(api.detectAll()['chatgpt-desktop'].detectionError, /更新/);
     await assert.rejects(api.runningClients(), /状态暂时无法确认/);
     await assert.rejects(api.runExtensionAction({ store }, 'extension.configure', { exePath: updatingApp }), /Info.plist/);
     fs.writeFileSync(updatingPlist, originalPlist);
+    api.detectReset();
     assert.equal(api.detectCodingDesktop(updatingApp).installed, true);
     assert.equal(api.detectCodingDesktop().installed, true);
     assert.equal(api.getAdapter('chatgpt-desktop').support, 'automatic');
     assert.equal(api.detectAll()['chatgpt-desktop'].installed, true);
   } finally { api.configureDesktopPath(undefined); process.env.AURORA_CLIENT_HOME = root; }
-  console.log('PASS a broken configured app leaves settings accessible, blocks history writes and recovers without cached failure'); passed++;
+  console.log('PASS a broken configured app permits shared configuration preview, blocks desktop operations and recovers after explicit refresh'); passed++;
   const processes = await api.runningCodingClients();
   assert(Array.isArray(processes)); assert(processes.every(name => typeof name === 'string'));
   console.log('PASS native ps comm query executes without reading process arguments'); passed++;

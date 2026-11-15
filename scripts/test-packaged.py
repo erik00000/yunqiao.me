@@ -1,4 +1,4 @@
-"""Read-only acceptance of an unpacked Windows/macOS application, using isolated profiles.
+"""Acceptance of an unpacked Windows/macOS application, using isolated profiles.
 
 Run after packaging: python scripts/test-packaged.py
 Requires Python Playwright. Refuses an old/missing app.asar before launching an EXE.
@@ -153,6 +153,7 @@ def main():
     fixture_files = {
         clients / '.claude/settings.json': '{"permissions":{"allow":["Read"]},"env":{"FIXTURE":"unchanged"}}\n',
         clients / '.codex/config.toml': 'model = "fixture-model"\n',
+        clients / '.codex/auth.json': '{"auth_mode":"chatgpt","tokens":{"refresh_token":"fixture-not-a-real-login"}}\n',
     }
     for file, value in fixture_files.items():
         file.write_text(value, encoding='utf-8')
@@ -299,7 +300,39 @@ def main():
             checks.append('Packaged client cards expose restart and terminal actions; native IPC rejects API services and process overrides without launching any client')
             assert not errors, errors
             assert all(file.read_bytes() == before for file, before in original.items()), 'A read-only check changed a client config'
-            checks.append('No page exceptions or changes to isolated client configuration')
+            checks.append('Read-only views leave isolated client configurations unchanged')
+
+            supplier = page.evaluate("""() => window.aurora.invoke('provider.save', {
+                name:'Native configuration acceptance',baseUrl:'http://127.0.0.1:9/v1',format:'openai-responses',enabled:true,
+                apiKeys:[{id:'fixture',label:'fixture',key:'fixture-not-a-real-key',enabled:true,weight:1}],models:[{id:'gpt-6.1-sol'}]
+            })""")
+            detected = page.evaluate("async () => (await window.aurora.invoke('agent.detect'))['chatgpt-desktop']")
+            assert detected['configured'] is True and detected['installed'] is False, detected
+            assert Path(detected['configPath']).resolve() == (clients / '.codex/config.toml').resolve()
+            page.locator('nav').get_by_role('button', name='我的供应商', exact=True).click()
+            page.locator('nav').get_by_role('button', name='客户端接入', exact=True).click()
+            card = page.locator('.client-card').filter(has=page.get_by_text('ChatGPT 桌面版', exact=True))
+            expect(card.get_by_text('发现本地配置', exact=True)).to_be_visible()
+            card.get_by_role('button', name='开始配置 →', exact=True).click()
+            wizard = page.get_by_role('dialog', name='配置 ChatGPT 桌面版', exact=True)
+            wizard.get_by_role('button', name='下一步：选择模型 →', exact=True).click()
+            expect(wizard.get_by_role('region', name='共享编程配置')).to_be_visible()
+            wizard.get_by_role('button', name='预览配置 →', exact=True).click()
+            expect(wizard.get_by_role('button', name='备份并应用配置', exact=True)).to_be_visible()
+            assert (clients / '.codex/config.toml').read_bytes() == original[clients / '.codex/config.toml']
+            wizard.get_by_role('button', name='备份并应用配置', exact=True).click()
+            expect(wizard.get_by_role('heading', name='配置已应用', exact=True)).to_be_visible()
+            configured = (clients / '.codex/config.toml').read_text(encoding='utf-8')
+            assert 'model_provider = "aurora"' in configured and supplier['id'] + '/gpt-6.1-sol' in configured
+            assert (clients / '.codex/auth.json').read_bytes() == original[clients / '.codex/auth.json']
+            shared = page.evaluate("async () => (await window.aurora.invoke('state.get')).agents")
+            assert all(shared[client]['connected'] is True for client in ['codex-cli', 'chatgpt-desktop'])
+            wizard.get_by_role('button', name='完成', exact=True).click()
+            restored = page.evaluate("() => window.aurora.invoke('agent.disconnect', {agentId:'chatgpt-desktop'})")
+            assert restored['ok'], restored
+            assert all(file.read_bytes() == before for file, before in original.items()), 'Shared configuration restore changed original bytes'
+            assert not errors, errors
+            checks.append('Native wizard previews, backs up, applies and restores shared Codex configuration without a desktop executable; auth bytes stay intact and CLI state stays synchronized')
             report = {
                 'version': args.version, 'platform': sys.platform, 'passed': True, 'count': len(checks), 'checks': checks,
                 'executable': str(executable.relative_to(ROOT)) if executable.is_relative_to(ROOT) else str(executable),

@@ -49,6 +49,18 @@ const validKey = (v: unknown): v is string => typeof v === 'string' && v.length 
   && !/^eyJ[^.]+\.[^.]+\.[^.]+$/.test(v);
 const modelId = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= 300 && !/[\s\u0000-\u001f]/.test(v) && !dynamic(v);
 
+function codexStaticHeadersSupported(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (!object(value)) return false;
+  const entries = Object.entries(value);
+  // Sub2API's Codex API-key template uses this exact non-credential marker.
+  // Ignore it during import: it is neither an API key nor an imported capability.
+  // Requiring one entry also rejects duplicate names with different casing.
+  return entries.length === 0 || (entries.length === 1
+    && entries[0][0].toLowerCase() === 'x-openai-actor-authorization'
+    && entries[0][1] === 'local-image-extension');
+}
+
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return '[' + value.map(canonical).join(',') + ']';
   if (object(value)) return '{' + Object.keys(value).sort().filter(k => value[k] !== undefined).map(k => JSON.stringify(k) + ':' + canonical(value[k])).join(',') + '}';
@@ -185,7 +197,8 @@ function discover(ctx: Context): { candidates: Candidate[]; sources: LocalClient
       const s = source('codex-cli', `Codex / ChatGPT · ${textValue(p.name) || id}`, codexFile, id);
       if (id === 'aurora') { note(s, 'ignored', '云桥管理的 provider 不重复导入。'); continue; }
       if (p.wire_api !== undefined && !['responses', 'chat'].includes(p.wire_api)) { note(s, 'unsupported', '此 provider 使用的接口协议暂不支持自动导入。'); continue; }
-      if (p.api_key_helper || p.apiKeyHelper || (object(p.http_headers) && Object.keys(p.http_headers).length) || (object(p.env_http_headers) && Object.keys(p.env_http_headers).length)) {
+      if (p.api_key_helper || p.apiKeyHelper || !codexStaticHeadersSupported(p.http_headers)
+        || (p.env_http_headers !== undefined && (!object(p.env_http_headers) || Object.keys(p.env_http_headers).length))) {
         note(s, 'unsupported', '此 provider 使用自定义认证头或动态助手，请手动配置，未执行任何命令。'); continue;
       }
       let key: unknown = p.experimental_bearer_token;

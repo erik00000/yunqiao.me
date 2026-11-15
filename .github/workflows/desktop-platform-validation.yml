@@ -71,6 +71,7 @@ jobs:
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           python scripts/test-client-restart-ui.py
+          python scripts/test-desktop-setup-ui.py
           python scripts/test-client-diagnostics-ui.py
           python scripts/test-provider-views-ui.py
           python scripts/test-model-context-ui.py

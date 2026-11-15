@@ -1,0 +1,16 @@
+.desktop-setup-recovery { margin: 16px 0; padding: 14px 16px; border: 1px solid var(--stroke); border-radius: 10px; background: var(--bg); min-width: 0; }
+.desktop-setup-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; font-size: 12px; }
+.desktop-setup-facts { display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 7px 12px; font-size: 11px; margin: 13px 0; }
+.desktop-setup-facts dt { color: var(--muted); }
+.desktop-setup-facts dd { margin: 0; color: var(--text-2); overflow-wrap: anywhere; }
+.desktop-setup-note, .desktop-setup-warning { margin: 9px 0; font-size: 11px; line-height: 1.8; overflow-wrap: anywhere; color: var(--text-2); }
+.desktop-setup-warning { color: var(--warn); }
+.desktop-setup-evidence { font-size: 11px; color: var(--text-2); }
+.desktop-setup-evidence summary { cursor: pointer; color: var(--accent); }
+.desktop-setup-evidence li { overflow-wrap: anywhere; line-height: 1.8; }
+.desktop-setup-program { margin-top: 12px; border-top: 1px solid var(--stroke); padding-top: 11px; font-size: 11px; }
+.desktop-setup-program > summary { cursor: pointer; color: var(--text-2); line-height: 1.8; }
+.desktop-setup-program-content { padding-top: 12px; }
+.desktop-setup-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.desktop-setup-actions .client-diagnostics { margin: 0; }
+@media (max-width: 600px) { .desktop-setup-recovery { padding: 12px; } .desktop-setup-heading .chip { height: auto; min-height: 23px; } }

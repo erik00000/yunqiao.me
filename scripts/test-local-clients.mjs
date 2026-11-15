@@ -18,6 +18,8 @@ function scan(f, options = {}) { return api.syncLocalClients(f.store, { ...f.opt
 function codex(f, config, auth) { write(path.join(f.home, '.codex', 'config.toml'), config); if (auth) write(path.join(f.home, '.codex', 'auth.json'), auth); }
 function test(label, run) { run(); passed++; console.log(`PASS ${label}`); }
 const relayConfig = (key, name = 'Relay') => `model_provider = "relay"\nmodel = "gpt-current"\n[model_providers.relay]\nname = ${JSON.stringify(name)}\nbase_url = "https://relay.test/v1"\nwire_api = "responses"\nexperimental_bearer_token = ${JSON.stringify(key)}\n`;
+// Matches Sub2API's codexAuthConfig.ts API-key block; the actor marker is not a credential.
+const sub2apiConfig = (headers = 'http_headers = { "x-openai-actor-authorization" = "local-image-extension" }') => `model_provider = "sub2api"\nmodel = "gpt-5.4"\n[model_providers.sub2api]\nname = "Sub2API"\nbase_url = "https://sub2api.test/v1"\nwire_api = "responses"\nrequires_openai_auth = false\nexperimental_bearer_token = "sk-sub2api-static-bearer"\n${headers}\n`;
 
 try {
   test('official OAuth and independent third-party providers coexist without auth writes', () => {
@@ -32,6 +34,63 @@ try {
     assert.equal(f.store.listProviders()[0].apiKeys[0].key, 'sk-relay-current-key'); assert.equal(f.store.listProviders()[0].official, false);
     const snapshot = JSON.stringify(result) + fs.readFileSync(path.join(f.store.dir, 'local-client-imports.json'), 'utf8');
     for (const secret of ['sk-relay-current-key', 'official-oauth-access-private', 'official-refresh-private', 'claude-oauth-private']) assert(!snapshot.includes(secret));
+  });
+  test('Sub2API static image marker imports only the bearer credential and preserves source/auth bytes', () => {
+    const f = fixture('sub2api-marker');
+    const originalAuth = '{\r\n  "auth_mode": "chatgpt", "tokens": { "access_token": "sub2api-official-access-private", "refresh_token": "sub2api-official-refresh-private" }\r\n}\r\n';
+    codex(f, sub2apiConfig(), originalAuth);
+    const configFile = path.join(f.home, '.codex', 'config.toml'), authFile = path.join(f.home, '.codex', 'auth.json');
+    const before = fs.readFileSync(configFile), authBefore = fs.readFileSync(authFile);
+    const result = scan(f); assert.equal(result.added, 1); assert.equal(result.accounts.length, 1); assert.equal(result.accounts[0].importable, false);
+    const provider = f.store.listProviders()[0];
+    assert.equal(provider.format, 'openai-responses'); assert.equal(provider.baseUrl, 'https://sub2api.test/v1'); assert.deepEqual(provider.models.map(model => model.id), ['gpt-5.4']);
+    assert.equal(provider.apiKeys.length, 1); assert.equal(provider.apiKeys[0].key, 'sk-sub2api-static-bearer'); assert.equal(provider.official, false);
+    assert(!JSON.stringify(provider).includes('local-image-extension')); assert(!Object.hasOwn(provider, 'http_headers'));
+    assert.deepEqual(fs.readFileSync(configFile), before); assert.deepEqual(fs.readFileSync(authFile), authBefore);
+    const again = scan(f); assert.equal(again.added, 0); assert.equal(again.updated, 0); assert.equal(f.store.listProviders().length, 1); assert.equal(f.store.listProviders()[0].id, provider.id);
+    for (const secret of ['sk-sub2api-static-bearer', 'sub2api-official-access-private', 'sub2api-official-refresh-private']) assert(!JSON.stringify(result).includes(secret));
+  });
+  test('Sub2API marker header names are case insensitive and existing suppliers are deduplicated', () => {
+    const f = fixture('sub2api-marker-casing');
+    const existing = f.store.saveProvider({ name: 'Existing service', format: 'openai-responses', baseUrl: 'https://sub2api.test/v1/', models: [{ id: 'user-picked-model' }], apiKeys: [{ id: 'known-key', label: 'Existing', key: 'sk-sub2api-static-bearer', enabled: true, weight: 1 }], enabled: true });
+    for (const header of ['X-OpenAI-Actor-Authorization', 'X-OPENAI-ACTOR-AUTHORIZATION']) {
+      codex(f, sub2apiConfig(`http_headers = { "${header}" = "local-image-extension" }`));
+      const result = scan(f); assert.equal(result.added, 0); assert(result.sources.some(source => source.status === 'linked' && source.providerId === existing.id));
+      assert.equal(f.store.listProviders().length, 1); assert.deepEqual(f.store.getProvider(existing.id), existing);
+    }
+  });
+  test('Sub2API marker alone is never accepted as a key or a reason to reuse auth.json credentials', () => {
+    const f = fixture('sub2api-marker-without-key');
+    codex(f, sub2apiConfig().replace(/^experimental_bearer_token = .*\n/m, ''), { auth_mode: 'apikey', OPENAI_API_KEY: 'sk-unrelated-auth-credential' });
+    const authFile = path.join(f.home, '.codex', 'auth.json'), authBefore = fs.readFileSync(authFile);
+    const result = scan(f); assert.equal(result.added, 0); assert.equal(f.store.listProviders().length, 0); assert(result.sources.some(source => source.status === 'missing-key'));
+    assert.deepEqual(fs.readFileSync(authFile), authBefore);
+  });
+  test('unknown, duplicate, changed, dynamic and malformed Codex headers still block automatic import', () => {
+    const cases = [
+      ['unknown', 'http_headers = { "Authorization" = "Bearer fixture-header-secret" }'],
+      ['extra', 'http_headers = { "x-openai-actor-authorization" = "local-image-extension", "X-Custom" = "fixture" }'],
+      ['duplicate-case', 'http_headers = { "x-openai-actor-authorization" = "local-image-extension", "X-OpenAI-Actor-Authorization" = "local-image-extension" }'],
+      ['duplicate-exact', 'http_headers = { "x-openai-actor-authorization" = "local-image-extension", "x-openai-actor-authorization" = "local-image-extension" }'],
+      ['changed-value', 'http_headers = { "x-openai-actor-authorization" = "LOCAL-IMAGE-EXTENSION" }'],
+      ['padded-value', 'http_headers = { "x-openai-actor-authorization" = " local-image-extension" }'],
+      ['dynamic-value', 'http_headers = { "x-openai-actor-authorization" = "${ACTOR_MARKER}" }'],
+      ['env-header', 'http_headers = { "x-openai-actor-authorization" = "local-image-extension" }\nenv_http_headers = { "x-openai-actor-authorization" = "ACTOR_MARKER" }'],
+      ['unknown-env-header', 'env_http_headers = { "Authorization" = "AUTH_TOKEN" }'],
+      ['string-headers', 'http_headers = "local-image-extension"'],
+      ['array-headers', 'http_headers = ["local-image-extension"]'],
+      ['number-marker', 'http_headers = { "x-openai-actor-authorization" = 123 }'],
+      ['string-env-headers', 'env_http_headers = "ACTOR_MARKER"'],
+      ['dynamic-helper', 'http_headers = { "x-openai-actor-authorization" = "local-image-extension" }\napi_key_helper = "fixture-command-must-not-run"'],
+    ];
+    for (const [label, headers] of cases) {
+      const f = fixture(`codex-headers-${label}`); codex(f, sub2apiConfig(headers), { auth_mode: 'apikey', OPENAI_API_KEY: 'sk-header-fallback-must-not-import' });
+      const file = path.join(f.home, '.codex', 'config.toml'), authFile = path.join(f.home, '.codex', 'auth.json');
+      const before = fs.readFileSync(file), authBefore = fs.readFileSync(authFile);
+      const result = scan(f, { environment: { ACTOR_MARKER: 'local-image-extension', AUTH_TOKEN: 'Bearer fixture-header-secret' } });
+      assert.equal(result.added, 0, label); assert.equal(f.store.listProviders().length, 0, label); assert(result.sources.some(source => source.status === 'unsupported'), label);
+      assert.deepEqual(fs.readFileSync(file), before, label); assert.deepEqual(fs.readFileSync(authFile), authBefore, label);
+    }
   });
   test('current profile maps auth.json API key to the actual custom URL', () => {
     const f = fixture('profile-auth');

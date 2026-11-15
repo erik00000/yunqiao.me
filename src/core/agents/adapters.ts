@@ -6,6 +6,7 @@ import type { AgentId, Provider } from '../store/types.js';
 import { nowIso } from '../util.js';
 import { isValidContextWindow } from '../modelContext.js';
 import { detectCodingDesktop } from '../injector.js';
+import { clearDesktopDetectionCache } from '../desktopDetection.js';
 import { cliCandidates, desktopCandidates, type ClientPathContext } from '../clientPaths.js';
 import { CLAUDE_DESKTOP_PROFILE, claudeDesktopConfigFiles, claudeDesktopRestorePaths, resolveClaudeDesktopConfig } from '../claudeDesktopPaths.js';
 import { readOfficialCodexIdentity, codexCoexistBaseUrl, CODEX_COEXIST_BASE_PATH } from '../gateway/coexist.js';
@@ -210,15 +211,38 @@ const codexCli = makeAdapter({
   warnings: ['Codex CLI 与 Codex 桌面共享用户级配置；当前 profile 或项目配置可能覆盖此设置。', '部分新版 CLI 已停用 config.toml 内的旧 profile 表，改用 --profile 名称和独立配置文件；请先确认原配置可由当前 CLI 正常读取，云桥不会自动迁移这些文件。', CODEX_CONTEXT_WARNING],
 });
 const codexDesktop = makeAdapter({
-  id: 'chatgpt-desktop', name: 'ChatGPT 桌面版', vendor: 'OpenAI', category: 'desktop', support: 'automatic', protocol: 'openai-responses', description: '统一识别 ChatGPT、ChatGPT Beta 与原 Codex 桌面版，按已安装版本的实际能力接入。',
-  supportNote: '具有 Codex 编程模块的桌面版本可配置 Responses 供应商；旧版纯聊天应用需要升级或使用 CLI。', docsUrl: 'https://developers.openai.com/codex/config-reference', desktop: 'ChatGPT', paths: () => [codexConfig()], hint: '完全退出 ChatGPT / Codex 桌面版（包括托盘）后重新打开', plan: codexPlan,
+  id: 'chatgpt-desktop', name: 'ChatGPT 桌面版', vendor: 'OpenAI', category: 'desktop', support: 'automatic', protocol: 'openai-responses', description: '配置与 Codex CLI 共享的编程模型，另行识别桌面程序以支持重启和增强。',
+  supportNote: '备份并写入 .codex/config.toml（遵循 CODEX_HOME），保留官方登录文件。此配置与 Codex CLI 共享，由支持 Codex 编程配置的桌面版本读取；不会替换纯聊天界面的模型。', docsUrl: 'https://developers.openai.com/codex/config-reference', desktop: 'ChatGPT', paths: () => [codexConfig()], hint: '完全退出支持编程配置的 ChatGPT / Codex 桌面版（包括托盘）后重新打开', plan: codexPlan,
   warnings: ['此变更也会影响 Codex CLI；切换供应商后部分历史会话可能被客户端按 provider 筛选，可到历史会话页查看。', CODEX_CONTEXT_WARNING],
 });
 const desktopPreview = codexDesktop.preview.bind(codexDesktop), desktopConnect = codexDesktop.connect.bind(codexDesktop);
-Object.defineProperty(codexDesktop, 'support', { enumerable: true, get: () => desktopDetection().supportsCodexConfig ? 'automatic' : 'manual' });
 codexDesktop.detect = () => { const detected = desktopDetection(); return { installed: detected.installed, configured: fs.existsSync(codexConfig()), command: detected.executable, version: detected.version, configPath: codexConfig(), productName: detected.productName, supportsCodexConfig: detected.supportsCodexConfig, evidence: detected.evidence, detectionError: detected.detectionError }; };
-codexDesktop.preview = ctx => desktopDetection().supportsCodexConfig ? desktopPreview(ctx) : { ok: false, message: '尚未从安装资源确认该桌面版本支持 Codex 配置。请升级到含编程模块的 ChatGPT 桌面版，或在桌面增强中指定程序路径后重新检测。', files: [], warnings: [], requiresRestart: false };
-codexDesktop.connect = ctx => desktopDetection().supportsCodexConfig ? desktopConnect(ctx) : { ok: false, message: '当前桌面版本的编程配置能力尚未确认，未改写任何客户端配置。' };
+function desktopConfigurationNotice(): string | undefined {
+  let status = '尚未确认桌面程序位置。';
+  try {
+    const detected = desktopDetection();
+    if (detected.supportsCodexConfig) return undefined;
+    if (detected.installed) status = '已找到桌面程序，尚未确认它是否读取 Codex 配置。';
+  } catch { /* Optional installation diagnostics must not break a configuration transaction. */ }
+  return `${status}可以继续保存共享编程配置；这不表示桌面版本已验证可用。重启或桌面增强可另行选择程序，纯聊天界面不会读取此配置。`;
+}
+// Configuration is shared with the CLI and can be prepared before discovering a
+// desktop executable. Program discovery and runtime checks remain separate.
+codexDesktop.preview = ctx => {
+  const preview = desktopPreview(ctx);
+  if (!preview.ok) return preview;
+  const notice = desktopConfigurationNotice();
+  const warnings = [...preview.warnings];
+  if (ctx.authMode !== 'coexist') warnings.push('普通 API 模式保留 auth.json 登录文件，但部分桌面版本的官方聊天和云功能可能暂不可用。需要同时使用官方账号与第三方模型时，请选择官方账号共存。');
+  if (notice) warnings.push(notice);
+  return { ...preview, warnings };
+};
+codexDesktop.connect = ctx => {
+  const result = desktopConnect(ctx);
+  if (!result.ok) return result;
+  const notice = desktopConfigurationNotice();
+  return notice ? { ...result, message: `共享编程配置已保存并备份。${notice}` } : result;
+};
 const DESKTOP_PROFILE = CLAUDE_DESKTOP_PROFILE;
 function desktopConfigPaths(): string[] {
   const selected = resolveClaudeDesktopConfig();
@@ -281,7 +305,7 @@ export function detectAll(_fast = false): Record<string, AgentDetection> {
   for (const adapter of AGENT_ADAPTERS) { try { data[adapter.id] = adapter.detect(); } catch { data[adapter.id] = { installed: false, configured: false }; } }
   detectCache = Object.values(data).some(item => item.detectionError) ? null : { at: Date.now(), data }; return data;
 }
-export function detectReset(): void { detectCache = null; }
+export function detectReset(): void { detectCache = null; clearDesktopDetectionCache(); }
 export function exportEnvScript(ctx: ConnectContext, protocol: string, platform: NodeJS.Platform = process.platform): string {
   const ep = connectionParameters(ctx, protocol);
   const quote = (value: string) => `'${value.replace(/'/g, `'"'"'`)}'`;

@@ -244,6 +244,18 @@ export interface GatewayStatus {
   lastError?: string;
 }
 
+export interface AgentDetection {
+  installed: boolean;
+  configured?: boolean;
+  version?: string;
+  command?: string;
+  configPath?: string;
+  productName?: string;
+  supportsCodexConfig?: boolean;
+  evidence?: string[];
+  detectionError?: string;
+}
+
 export interface AppState {
   build?: { id: string; builtAt: string; revision: string; channel: 'local' | 'release' };
   settings: Settings;
@@ -268,7 +280,7 @@ export interface AppState {
   dataDir: string;
   version: string;
   platform: string;
-  detected: Record<string, { installed: boolean; configured?: boolean; version?: string; command?: string; configPath?: string; productName?: string; supportsCodexConfig?: boolean; evidence?: string }>;
+  detected: Record<string, AgentDetection>;
   mode?: 'desktop' | 'web';
 }
 

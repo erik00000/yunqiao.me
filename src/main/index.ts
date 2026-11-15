@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { AuroraStore, DEFAULT_SETTINGS, getStore, setDataDir } from '../core/store/index.js';
 import { memberAction } from './member.js';
 import { describeClientLifecycle, restartClient } from './clientLifecycle.js';
+import { selectClientDesktop } from './clientDesktopSelection.js';
 import { runtimeFor } from '../core/extensions/runtime.js';
 import { syncLocalClients } from '../core/localClients.js';
 import { getCoexistCatalog, isCodexCoexistConfigured } from '../core/gateway/coexist.js';
@@ -143,6 +144,10 @@ async function handleAction(action: string, payload: any) {
     return shared;
   }
   switch (action) {
+    case 'agent.desktop.select': return selectClientDesktop(store, payload, {
+      platform: process.platform, ownExecutable: process.execPath,
+      choose: options => win && !win.isDestroyed() ? dialog.showOpenDialog(win, options) : dialog.showOpenDialog(options), disconnect: () => runtimeFor(store).disconnect(),
+    });
     case 'agent.lifecycle': return describeClientLifecycle(payload);
     case 'agent.restart': {
       const reconnect = ['chatgpt-desktop', 'codex-desktop'].includes(payload?.agentId) && !!runtimeFor(store).cdp?.connected;

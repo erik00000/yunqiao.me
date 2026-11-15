@@ -2,9 +2,10 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import PresetPicker from '../components/PresetPicker';
 import ClientRestart from '../components/ClientRestart';
 import ClientDiagnostics from '../components/ClientDiagnostics';
+import DesktopSetupRecovery from '../components/DesktopSetupRecovery';
 import type { PageProps } from '../App';
 import { Btn, Empty, Field, Ico, Modal, copyText, useToast } from '../components/ui';
-import { AgentCatalogItem, CloudCatalog, Preset, Provider, PROTOCOL_TEXT, call, fmtCtx } from '../lib/api';
+import { AgentCatalogItem, AgentDetection, CloudCatalog, Preset, Provider, PROTOCOL_TEXT, call, fmtCtx } from '../lib/api';
 
 const BRANDS: Record<string, { mark: string; color: string; bg: string }> = {
   'claude-code': { mark: '✳', color: '#ae6a48', bg: '#fbf0e9' }, 'claude-desktop': { mark: '✳', color: '#ae6a48', bg: '#fbf0e9' },
@@ -51,7 +52,7 @@ export default function Agents({ state, reload, go }: PageProps) {
     <div className="client-grid">{clients.map(a => {
       const st = state.agents[a.id]; const found = state.detected[a.id];
       return <article className={`client-card ${st?.connected ? 'is-connected' : ''}`} key={a.id}>
-        <div className="client-card-top"><ClientMark id={a.id} name={a.name} /><span className={`client-state ${st?.connected ? 'connected' : ''}`}><span className={`dot ${st?.connected ? 'on' : 'off'}`} />{st?.connected ? '已接入' : found?.installed ? '已检测到' : a.category === 'service' ? 'API 服务' : '待配置'}</span></div>
+        <div className="client-card-top"><ClientMark id={a.id} name={a.name} /><span className={`client-state ${st?.connected ? 'connected' : ''}`}><span className={`dot ${st?.connected ? 'on' : 'off'}`} />{st?.connected ? '已接入' : found?.installed ? '已检测到' : found?.configured ? '发现本地配置' : a.category === 'service' ? 'API 服务' : '待配置'}</span></div>
         <h3>{a.name}</h3>{found?.productName && <small className="hint">识别为 {found.productName}{found.version ? ` · ${found.version}` : ''}</small>}<div className="client-vendor">{a.vendor}<span>·</span>{a.category === 'desktop' ? '桌面应用' : a.category === 'cli' ? '命令行工具' : 'API / 服务'}</div>
         <p className="client-description">{a.description}</p>
         <div className="tag-list"><span className={`chip ${a.support === 'automatic' ? 'accent' : ''}`}>{a.support === 'automatic' ? '自动配置' : a.support === 'unsupported' ? '官方账号登录' : '手动接入'}</span>{st?.connected && <span className="chip ok ellipsis" title={st.model}>{st.model}</span>}{a.protocol && a.support !== 'unsupported' && <span className="chip">{PROTOCOL_TEXT[a.protocol] || a.protocol}</span>}</div>
@@ -61,14 +62,15 @@ export default function Agents({ state, reload, go }: PageProps) {
     })}</div>
     {!clients.length && <Empty icon="⌕" title="没有匹配的客户端" hint="调整筛选条件，或搜索 Claude、Codex、WorkBuddy。" />}
     <div className="page-footnote"><Ico name="cloud" size={15} /><span>还没有模型服务？从厂商目录发现国内外供应商。</span><button className="text-button" onClick={() => go('catalog')}>浏览厂商目录 →</button></div>
-    {selected && <ConnectWizard agent={selected} state={state} reload={reload} onClose={() => setSelected(null)} />}
+    {selected && <ConnectWizard agent={state.agentCatalog.find(agent => agent.id === selected.id) || selected} state={state} reload={reload} onClose={() => setSelected(null)} />}
     {restoring && <Modal title={`恢复 ${restoring.name} 的原配置`} sub="恢复接入前保存的配置备份。此操作会退出云桥的网关配置。" onClose={() => setRestoring(null)} foot={<><Btn onClick={() => setRestoring(null)}>取消</Btn><Btn variant="primary" disabled={busy} onClick={async () => { setBusy(true); try { const r = await call('agent.disconnect', { agentId: restoring.id }); if (!r.ok) throw new Error(r.message); await reload(); setRestoring(null); toast.push(r.message || '原配置已恢复', 'ok'); } catch (e: any) { toast.push(e.message, 'bad'); } finally { setBusy(false); } }}>恢复原配置</Btn></>}><div className="notice">恢复后，请重启对应客户端。你的历史会话不受此操作影响。</div></Modal>}
   </>;
 }
 
 function ConnectWizard({ agent, state, reload, onClose }: { agent: AgentCatalogItem; state: PageProps['state']; reload: PageProps['reload']; onClose: () => void }) {
   const previous = state.agents[agent.id];
-  const codex = ['codex-cli', 'chatgpt-desktop'].includes(agent.id);
+  const codingDesktop = ['chatgpt-desktop', 'codex-desktop'].includes(agent.id);
+  const codex = agent.id === 'codex-cli' || codingDesktop;
   const officialAvailable = codex && !!state.codexCoexist?.identity.available;
   const officialModels = (state.codexCoexist?.models || []).filter(m => m.official).map(m => ({ id: m.upstreamModel, displayName: m.displayName, contextWindow: m.contextWindow }));
   const officialProvider: Provider | undefined = officialAvailable ? { id: 'official', name: 'ChatGPT 官方账号', format: 'openai-responses', baseUrl: 'https://chatgpt.com/backend-api/codex', apiKeys: [], models: officialModels, enabled: officialModels.length > 0, priority: 0, createdAt: '', updatedAt: '' } : undefined;
@@ -91,6 +93,12 @@ function ConnectWizard({ agent, state, reload, onClose }: { agent: AgentCatalogI
   const [result, setResult] = useState<any>(null);
   const [test, setTest] = useState<any>(null);
   const [error, setError] = useState('');
+  const [desktopDetection, setDesktopDetection] = useState<AgentDetection | null>(null);
+  const [recoveryOperation, setRecoveryOperation] = useState<'detect' | 'select' | null>(null);
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  const detected = desktopDetection || state.detected[agent.id] || (codingDesktop ? state.detected['chatgpt-desktop'] : undefined);
+  const support = agent.support;
   const toast = useToast();
   const provider = choices.find(p => p.id === providerId);
   const chosenModel = manualModel ? model : model || provider?.models[0]?.id || '';
@@ -119,20 +127,41 @@ function ConnectWizard({ agent, state, reload, onClose }: { agent: AgentCatalogI
     }
     const r = await call('agent.preview', payload); if (!r.ok) throw new Error(r.message || '无法生成配置预览'); setPreview({ ...r, selection: payload }); setStep(2);
   }
+  async function recoverDesktop(operation: 'detect' | 'select') {
+    const priorError = error;
+    setRecoveryOperation(operation); setPreview(null);
+    try {
+      if (operation === 'select') {
+        const response = await call<{ ok: boolean; canceled?: boolean; detected?: AgentDetection; message?: string }>('agent.desktop.select', { agentId: 'chatgpt-desktop' });
+        if (!alive.current) return;
+        if (response.canceled) { setError(priorError); return; }
+        if (response.detected) setDesktopDetection(response.detected);
+        if (!response.ok) throw new Error(response.message || '未能选择客户端程序，请重新选择实际安装的主程序');
+      } else {
+        const response = await call<Record<string, AgentDetection>>('agent.detect');
+        if (!alive.current) return;
+        const found = response['chatgpt-desktop'] || response[agent.id];
+        if (!found || typeof found.installed !== 'boolean') throw new Error('未获得桌面客户端检测结果，请稍后重试');
+        setDesktopDetection(found);
+      }
+      await reload();
+      if (alive.current) await prepare();
+    } finally { if (alive.current) setRecoveryOperation(null); }
+  }
   async function apply() {
     let r: any;
     try { r = await call('agent.connect', { ...preview.selection, revision: preview.revision }); if (!r.ok) throw new Error(r.message || '应用失败'); }
     catch (error) { setPreview(null); setStep(1); throw error; }
     setResult(r); await reload(); toast.push('客户端配置已保存', 'ok');
   }
-  if (agent.support === 'unsupported') return <Modal title={agent.name} sub="客户端兼容性说明" onClose={onClose} foot={<><Btn onClick={onClose}>关闭</Btn>{agent.docsUrl && <Btn variant="primary" onClick={() => call('app.openExternal', { url: agent.docsUrl })}>打开官方说明 ↗</Btn>}</>}><div className="compatibility-info"><ClientMark id={agent.id} name={agent.name} /><h2>通过官方账号使用此客户端</h2><p>{agent.supportNote || agent.description}</p><p>如需自定义供应商，可选择支持自定义 API 的编程客户端或 API 工具。</p></div></Modal>;
-  return <Modal title={`配置 ${agent.name}`} sub="选择供应商和模型，预览后再应用到客户端。" onClose={() => { if (!busy && !clientActionActive) onClose(); }} width={800} foot={<><Btn variant="ghost" disabled={busy || clientActionActive} onClick={onClose}>{result ? '完成' : '取消'}</Btn>{!result && step > 0 && <Btn disabled={busy} onClick={() => { setStep(step - 1); setPreview(null); setError(''); }}>上一步</Btn>}{!result && step === 0 && <Btn variant="primary" disabled={busy || (!creating && !provider?.enabled)} onClick={() => run(async () => { if (creating) await saveNew(); else setStep(1); })}>{busy ? '保存中…' : creating ? '保存并选模型 →' : '下一步：选择模型 →'}</Btn>}{!result && step === 1 && <Btn variant="primary" disabled={busy || !chosenModel} onClick={() => run(prepare)}>{busy ? '生成预览…' : '预览配置 →'}</Btn>}{!result && step === 2 && agent.support === 'automatic' && <Btn variant="primary" disabled={busy} onClick={() => run(apply)}>{busy ? '正在应用…' : '备份并应用配置'}</Btn>}</>}>
+  if (support === 'unsupported' && !codingDesktop) return <Modal title={agent.name} sub="客户端兼容性说明" onClose={onClose} foot={<><Btn onClick={onClose}>关闭</Btn>{agent.docsUrl && <Btn variant="primary" onClick={() => call('app.openExternal', { url: agent.docsUrl })}>打开官方说明 ↗</Btn>}</>}><div className="compatibility-info"><ClientMark id={agent.id} name={agent.name} /><h2>通过官方账号使用此客户端</h2><p>{agent.supportNote || agent.description}</p><p>如需自定义供应商，可选择支持自定义 API 的编程客户端或 API 工具。</p></div></Modal>;
+  return <Modal title={`配置 ${agent.name}`} sub="选择供应商和模型，预览后再应用到客户端。" onClose={() => { if (!busy && !clientActionActive) onClose(); }} width={800} foot={<><Btn variant="ghost" disabled={busy || clientActionActive} onClick={onClose}>{result ? '完成' : '取消'}</Btn>{!result && step > 0 && <Btn disabled={busy} onClick={() => { setStep(step - 1); setPreview(null); setError(''); }}>上一步</Btn>}{!result && step === 0 && <Btn variant="primary" disabled={busy || (!creating && !provider?.enabled)} onClick={() => run(async () => { if (creating) await saveNew(); else setStep(1); })}>{busy ? '保存中…' : creating ? '保存并选模型 →' : '下一步：选择模型 →'}</Btn>}{!result && step === 1 && <Btn variant="primary" disabled={busy || !chosenModel} onClick={() => run(prepare)}>{busy ? '生成预览…' : '预览配置 →'}</Btn>}{!result && step === 2 && support === 'automatic' && <Btn variant="primary" disabled={busy} onClick={() => run(apply)}>{busy ? '正在应用…' : '备份并应用配置'}</Btn>}</>}>
     <div className="wizard-steps">{['连接供应商', '选择模型', '预览并应用'].map((name, i) => <div key={name} className={step === i ? 'active' : step > i ? 'done' : ''}><span>{step > i ? '✓' : i + 1}</span>{name}</div>)}</div>
     {error && <div className="notice warning" role="alert">{error}</div>}
     <fieldset disabled={busy} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
     {result ? <div className="connection-success"><span><Ico name="check" size={32} /></span><h2>配置已应用</h2><p>{result.message || `重启 ${agent.name} 后开始使用。`}</p>{payload.authMode === 'coexist' && <p>重启客户端后，在模型菜单选择“官方”或对应供应商。切换服务建议新建会话，避免不同供应商的加密上下文不兼容。</p>}<div className="review-summary"><b>{provider?.name}</b><span>→</span><code>{chosenModel}</code></div>{result.path && <p className="mono muted">{result.path}</p>}</div> : <>
       {step === 0 && <>
-        {codex && <div className="notice"><Ico name="user" size={18} /><div className="grow"><b>官方账号与第三方模型</b><p>{officialAvailable ? '已检测到官方登录。共存模式保留账号身份，并在同一模型菜单中显示官方与第三方模型。' : state.codexCoexist?.identity.message || '登录官方客户端后，可在这里开启账号与第三方模型共存。'}</p>{officialAvailable && <label className="checkbox-label"><input type="checkbox" aria-label="保留官方账号并与第三方模型共存" checked={authMode === 'coexist' || providerId === 'official'} disabled={providerId === 'official'} onChange={e => setAuthMode(e.target.checked ? 'coexist' : 'api')} />保留官方账号并与第三方模型共存</label>}<p className="hint">官方凭据由原客户端维护；第三方服务仅使用你配置的供应商密钥。</p></div></div>}
+        {codex && <div className="notice"><Ico name="user" size={18} /><div className="grow"><b>官方账号与第三方模型</b><p>{officialAvailable ? '已检测到官方登录。共存模式保留账号身份，并在同一模型菜单中显示官方与第三方模型。' : state.codexCoexist?.identity.message || '登录官方客户端后，可在这里开启账号与第三方模型共存。'}</p>{officialAvailable && <label className="checkbox-label"><input type="checkbox" aria-label="保留官方账号并与第三方模型共存" checked={authMode === 'coexist' || providerId === 'official'} disabled={providerId === 'official'} onChange={e => setAuthMode(e.target.checked ? 'coexist' : 'api')} />保留官方账号并与第三方模型共存</label>}<p className="hint">{authMode === 'coexist' || providerId === 'official' ? '共存模式保留官方账号身份；第三方服务仅使用你配置的供应商密钥。' : 'API 模式保留官方登录文件，但桌面账号显示可能变化，官方聊天及云功能可能暂不可用；需要这些功能时，请使用共存模式。'}</p></div></div>}
         {codex && authMode === 'coexist' && state.codexCoexist?.warnings.map((message, i) => <div className="notice warning" key={i}>{message}</div>)}
         {!window.aurora && !state.providers.some(p => p.enabled) && <div className="notice">请先在电脑桌面端添加并启用供应商，再从这里选择客户端连接。</div>}
         <div className="wizard-toggle"><button className={!creating ? 'selected' : ''} disabled={!choices.length} onClick={() => setCreating(false)}>使用已有供应商</button><button className={creating ? 'selected' : ''} disabled={!window.aurora} onClick={() => setCreating(true)}><Ico name="plus" size={14} />添加供应商</button></div>
@@ -145,6 +174,7 @@ function ConnectWizard({ agent, state, reload, onClose }: { agent: AgentCatalogI
         </div> : <div className="provider-choices">{choices.map(p => <button className={`provider-choice ${providerId === p.id ? 'selected' : ''}`} key={p.id} disabled={!p.enabled} onClick={() => { setProviderId(p.id); setModel(p.models[0]?.id || ''); setManualModel(false); if (p.id === 'official') setAuthMode('coexist'); setTest(null); }}><span className="vendor-avatar" style={{ color: p.color || 'var(--accent)' }}>{p.name.slice(0, 1)}</span><div><b>{p.name}</b><small>{p.id === 'official' ? '使用官方登录 · ' : ''}{p.models.length} 个模型 · {PROTOCOL_TEXT[p.format]}{!p.enabled ? p.id === 'official' ? ' · 请先在官方客户端加载模型' : ' · 已停用' : ''}</small></div><span className="choice-radio">{providerId === p.id ? '●' : '○'}</span></button>)}</div>}
       </>}
       {step === 1 && <>
+        {codingDesktop && <DesktopSetupRecovery agent={agent} detected={detected} platform={state.platform} busy={busy} operation={recoveryOperation} canPreview={!!chosenModel} onDetect={() => { void run(() => recoverDesktop('detect')); }} onSelect={() => { void run(() => recoverDesktop('select')); }} />}
         <div className="review-summary"><b>{provider?.name}</b><span className="chip">{PROTOCOL_TEXT[provider?.format || '']}</span><span className="grow" /><Btn size="sm" disabled={busy || providerId === 'official'} onClick={() => run(async () => { const r = await call('provider.models', { providerId }); if (!r.ok) throw new Error(r.message); await reload(); toast.push(`模型已同步，新增 ${r.added || 0} 个`, 'ok'); })}><Ico name="refresh" size={12} />同步模型</Btn></div>
         <Field label="选择模型"><select aria-label="选择模型" className="select" disabled={manualModel} value={chosenModel} onChange={e => { setModel(e.target.value); setTest(null); }}><option value="" disabled>请选择模型</option>{provider?.models.map(m => <option key={m.id} value={m.id}>{m.displayName || m.id}{m.contextWindow ? ` · ${fmtCtx(m.contextWindow)} 上下文` : ''}</option>)}</select></Field>
         {providerId !== 'official' && <>
@@ -160,8 +190,8 @@ function ConnectWizard({ agent, state, reload, onClose }: { agent: AgentCatalogI
         {preview.warnings?.map((w: string, i: number) => <div className="notice warning" key={i}>{w}</div>)}
         {agent.supportNote && <p className="muted">{agent.supportNote}</p>}
         {preview.files?.map((f: any) => <details className="config-preview" key={f.path} open><summary>{f.existed ? '修改' : '新建'} · {f.path}</summary><div className="preview-columns"><div><label>当前配置</label><pre>{f.before || '此文件尚不存在'}</pre></div><div><label>应用后</label><pre>{f.after}</pre></div></div></details>)}
-        {agent.support === 'manual' && <div className="manual-instructions"><h3>在客户端中手动填写连接参数</h3><p>{preview.message}</p><div className="kv"><span className="k">API 地址</span><code className="v">{preview.manual?.baseUrl}</code><span className="k">模型</span><code className="v">{preview.manual?.model}</code><span className="k">访问令牌</span><code className="v">{preview.manual?.apiKey || '••••••••'}</code></div><Btn disabled={!window.aurora} onClick={() => run(async () => { const r = await call('agent.parameters', payload); if (!r.ok) throw new Error(r.message); const p = r.manual || r.parameters || r; await copyText(`Base URL: ${p.baseUrl}\nAPI Key: ${p.apiKey}\nModel: ${p.model}`); toast.push('连接参数已复制，请粘贴到客户端', 'ok'); })}><Ico name="copy" size={14} />复制完整连接参数</Btn>{!window.aurora && <p>完整连接参数包含访问令牌，请在电脑桌面端复制。</p>}</div>}
-        {agent.support === 'automatic' && <div className="notice"><Ico name="shield" size={17} /><span>应用前自动备份原配置。{preview.requiresRestart ? '完成后请重启客户端。' : '配置生效方式以客户端为准。'}</span></div>}
+        {support === 'manual' && <div className="manual-instructions"><h3>在客户端中手动填写连接参数</h3><p>{preview.message}</p><div className="kv"><span className="k">API 地址</span><code className="v">{preview.manual?.baseUrl}</code><span className="k">模型</span><code className="v">{preview.manual?.model}</code><span className="k">访问令牌</span><code className="v">{preview.manual?.apiKey || '••••••••'}</code></div><Btn disabled={!window.aurora} onClick={() => run(async () => { const r = await call('agent.parameters', payload); if (!r.ok) throw new Error(r.message); const p = r.manual || r.parameters || r; await copyText(`Base URL: ${p.baseUrl}\nAPI Key: ${p.apiKey}\nModel: ${p.model}`); toast.push('连接参数已复制，请粘贴到客户端', 'ok'); })}><Ico name="copy" size={14} />复制完整连接参数</Btn>{!window.aurora && <p>完整连接参数包含访问令牌，请在电脑桌面端复制。</p>}</div>}
+        {support === 'automatic' && <div className="notice"><Ico name="shield" size={17} /><span>应用前自动备份原配置。{preview.requiresRestart ? '完成后请重启客户端。' : '配置生效方式以客户端为准。'}</span></div>}
       </>}
     </>}
     </fieldset>
