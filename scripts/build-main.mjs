@@ -1,9 +1,15 @@
 import { build } from 'esbuild';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const base = path.resolve(root, '..');
+const builtAt = new Date().toISOString();
+let revision = '';
+try { revision = execFileSync('git', ['rev-parse', '--short=8', 'HEAD'], { cwd: base, encoding: 'utf8', windowsHide: true }).trim(); } catch { /* Source archives do not require Git. */ }
+const buildInfo = { id: builtAt.replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z') + (revision ? `-${revision}` : ''),
+  builtAt, revision, channel: process.env.YUNQIAO_BUILD_CHANNEL === 'local' ? 'local' : 'release' };
 
 const common = {
   bundle: true,
@@ -12,7 +18,7 @@ const common = {
   format: 'cjs',
   sourcemap: false,
   logLevel: 'info',
-  define: { 'process.env.AURORA_BUILD': '"production"' },
+  define: { 'process.env.AURORA_BUILD': '"production"', __YUNQIAO_BUILD_INFO__: JSON.stringify(buildInfo) },
 };
 
 const entries = [

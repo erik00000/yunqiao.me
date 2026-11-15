@@ -3,10 +3,10 @@ import path from 'node:path';
 import os from 'node:os';
 import { createHash, randomBytes } from 'node:crypto';
 import type { AuroraStore } from '../store/index.js';
-import { atomicWrite, applyPlan, patchToml, planned, readText } from '../agents/configFiles.js';
+import { applyPlan, patchToml, planned } from '../agents/configFiles.js';
 
 export type MarketSource = 'public' | 'full';
-export interface MarketEntry { id: string; name: string; displayName: string; description: string; version: string; author: string; tags: string[]; license: string; path: string; tree: string; bytes: number; skills: number; requiresAuth: boolean }
+export interface MarketEntry { id: string; name: string; displayName: string; description: string; version: string; author: string; tags: string[]; license: string; path: string; tree: string; bytes: number; skills: number; requiresAuth: boolean; catalogMissing?: boolean }
 export interface MarketIndex { schemaVersion: number; repository: string; revision: string; updatedAt: string; plugins: MarketEntry[] }
 export interface NativeInstall { source: MarketSource; id: string; name: string; version: string; tree: string; revision: string; enabled: boolean; installedAt: string; license: string }
 export const REPOSITORIES = { public: 'BigPizzaV3/CodexPlusPlusPluginCache', full: 'BigPizzaV3/CodexPlusPlusFullPluginCache' };
@@ -72,16 +72,41 @@ function codexHome(): string { return process.env.AURORA_CLIENT_HOME ? path.join
 export function marketName(source: MarketSource, id: string): string { return `aurora-plugin-${createHash('sha256').update(`${source}:${id}`).digest('hex').slice(0, 16)}`; }
 function marketRoot(store: AuroraStore, source: MarketSource, id: string): string { return path.join(store.dir, 'extensions', 'native', marketName(source, id)); }
 export function packageRoot(store: AuroraStore, p: NativeInstall): string { return path.join(marketRoot(store, p.source, p.id), 'packages', p.name, p.version); }
-export function installedPlugins(store: AuroraStore): Record<string, NativeInstall> { return store.readExtra('extension-native.json', {}); }
+/** Presence is separate from installation records; content integrity is rechecked during install. */
+export function packagePresent(store: AuroraStore, p: NativeInstall): boolean {
+  try {
+    const root = packageRoot(store, p);
+    const dir = fs.lstatSync(root); if (!dir.isDirectory() || dir.isSymbolicLink()) return false;
+    return ['.codex-plugin/plugin.json', '.claude-plugin/plugin.json', 'plugin.json'].some(relative => {
+      const file = path.join(root, relative); if (!fs.existsSync(file)) return false;
+      const stat = fs.lstatSync(file); if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 1024 * 1024) return false;
+      const manifest = JSON.parse(fs.readFileSync(file, 'utf8')); return manifest.name === p.name && String(manifest.version) === p.version;
+    });
+  } catch { return false; }
+}
+export function installedPlugins(store: AuroraStore): Record<string, NativeInstall> {
+  const value = store.readExtra<Record<string, NativeInstall>>('extension-native.json', {});
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('本地插件安装记录无效，请检查 extension-native.json');
+  for (const [key, entry] of Object.entries(value)) {
+    if (!entry || !Object.hasOwn(REPOSITORIES, entry.source) || key !== nativeKey(entry.source, entry.id) || !/^[a-zA-Z0-9._~-]{1,150}$/.test(entry.id) || !/^[a-f0-9]{40}$/.test(entry.tree)) throw new Error('本地插件安装记录无效，请检查 extension-native.json');
+    safeRelative(entry.name); safeRelative(entry.version);
+    if (entry.name.includes('/') || entry.version.includes('/')) throw new Error('本地插件安装路径无效');
+  }
+  return value;
+}
 export function nativeKey(source: MarketSource, id: string): string { return `${source}:${id}`; }
 function patchRegistration(store: AuroraStore, entry: NativeInstall, enabled: boolean, remove = false, marketManifest?: unknown): void {
   const market = marketName(entry.source, entry.id); const file = path.join(codexHome(), 'config.toml');
+  const all = installedPlugins(store), key = nativeKey(entry.source, entry.id), previous = all[key];
   const plan = planned(file, '');
   let config = plan.before; config = patchToml(config, `marketplaces.${market}`, { source_type: remove ? null : 'local', source: remove ? null : marketRoot(store, entry.source, entry.id) });
+  if (previous && previous.name !== entry.name) config = patchToml(config, `plugins.${JSON.stringify(`${previous.name}@${market}`)}`, { enabled: null });
   config = patchToml(config, `plugins.${JSON.stringify(`${entry.name}@${market}`)}`, { enabled: remove ? null : enabled });
   plan.after = config;
   const files = [plan];
   if (marketManifest) files.push(planned(path.join(marketRoot(store, entry.source, entry.id), '.agents', 'plugins', 'marketplace.json'), JSON.stringify(marketManifest, null, 2)));
+  if (remove) delete all[key]; else all[key] = { ...entry, enabled };
+  files.push(planned(path.join(store.dir, 'extension-native.json'), JSON.stringify(all, null, 2)));
   applyPlan(`plugin-${market}`, files);
 }
 const installJobs = new Map<string, Promise<NativeInstall>>();
@@ -96,13 +121,13 @@ export function installNative(store: AuroraStore, source: MarketSource, id: stri
 export function nativeInstallStatus(store: AuroraStore, source: MarketSource, id: string): any {
   const key = jobKey(store, source, id),busy = installJobs.has(key),record = installedPlugins(store)[nativeKey(source,id)];
   const failure = installFailures.get(key);
-  return { status: failure ? 'failed' : 'ok', source, id, busy, stage: busy ? 'downloading' : failure || !record ? 'failed' : 'complete', message: failure || (record ? '插件已安装，可在云桥启用后重启客户端' : '没有安装记录'), installedVersion: record?.version,
+  const present = !!record && packagePresent(store, record);
+  return { status: failure || (!busy && !present) ? 'failed' : 'ok', source, id, busy, stage: busy ? 'downloading' : failure || !present ? 'failed' : 'complete', message: failure || (record ? present ? '插件已安装，可在云桥启用后重启客户端' : '插件文件缺失或清单无效，请重新安装' : '没有安装记录'), installedVersion: record?.version,
     plugin: record ? { ...record, installed: true, installedVersion: record.version } : undefined, nativeResult: record ? { appsNeedingAuth: [], authPolicy: 'ON_USE' } : undefined, restartRequired: true };
 }
 async function doInstallNative(store: AuroraStore, source: MarketSource, id: string): Promise<NativeInstall> {
   const index = loadIndex(store, source); const p = index.plugins.find(x => x.id === id); if (!p) throw new Error('目录中没有此插件');
   const current = installedPlugins(store); const key = nativeKey(source, id);
-  if (current[key]?.tree === p.tree && fs.existsSync(packageRoot(store, current[key]))) return current[key];
   const tree = JSON.parse((await download(`https://api.github.com/repos/${index.repository}/git/trees/${p.tree}?recursive=1`, 8 * 1024 * 1024)).toString('utf8'));
   if (tree.truncated || tree.sha !== p.tree || !Array.isArray(tree.tree)) throw new Error('GitHub 返回了不完整的插件树');
   const files = verifyTree(tree.tree, p.tree);
@@ -124,36 +149,45 @@ async function doInstallNative(store: AuroraStore, source: MarketSource, id: str
     if (manifest.name !== p.name || String(manifest.version) !== p.version) throw new Error('插件清单名称或版本与目录不一致');
     const dest = packageRoot(store, record); fs.mkdirSync(path.dirname(dest), { recursive: true });
     if (fs.existsSync(dest)) {
+      if (fs.lstatSync(dest).isSymbolicLink() || !fs.lstatSync(dest).isDirectory()) throw new Error('插件缓存不是普通目录');
       const actual: string[] = [];
       const walk = (dir: string) => { for (const e of fs.readdirSync(dir, { withFileTypes: true })) { const f = path.join(dir, e.name); if (e.isSymbolicLink()) throw new Error('缓存包含符号链接'); if (e.isDirectory()) walk(f); else if (e.isFile()) actual.push(path.relative(dest, f).replace(/\\/g, '/')); else throw new Error('缓存包含未知文件类型'); } };
       walk(dest);
       if (actual.length !== files.length || files.some(e => !actual.includes(e.path) || gitBlobHash(fs.readFileSync(path.join(dest, ...e.path.split('/')))) !== e.sha)) throw new Error('同版本插件缓存与目录校验不一致，请手动检查缓存目录');
     } else fs.renameSync(temp, dest);
     const marketManifest = { name: marketName(source, id), interface: { displayName: `云桥插件 · ${p.displayName || p.name}` }, plugins: [{ name: p.name, source: { source: 'local', path: dest }, policy: { installation: 'AVAILABLE', authentication: 'ON_USE' }, category: 'Productivity' }] };
-    patchRegistration(store, record, record.enabled, false, marketManifest); const latest = installedPlugins(store); latest[key] = record; store.writeExtra('extension-native.json', latest); return record;
+    patchRegistration(store, record, record.enabled, false, marketManifest); return record;
   } finally {
     // Only remove this operation's random staging directory, never client packages or user files.
     const resolved = path.resolve(temp); if (resolved.startsWith(path.resolve(root) + path.sep) && path.basename(resolved).startsWith('.download-')) fs.rmSync(resolved, { recursive: true, force: true });
   }
 }
 export function toggleNative(store: AuroraStore, source: MarketSource, id: string, enabled: boolean): NativeInstall {
+  if (installJobs.has(jobKey(store, source, id))) throw new Error('插件正在安装，请等待完成');
   const all = installedPlugins(store); const record = all[nativeKey(source, id)]; if (!record) throw new Error('请先安装此插件');
-  if (!fs.existsSync(packageRoot(store, record))) throw new Error('插件文件已丢失，请重新安装');
-  patchRegistration(store, record, enabled); record.enabled = enabled; store.writeExtra('extension-native.json', all); return record;
+  if (enabled && !packagePresent(store, record)) throw new Error('插件文件已丢失或清单无效，请重新安装');
+  patchRegistration(store, record, enabled); return { ...record, enabled };
 }
 export function removeNative(store: AuroraStore, source: MarketSource, id: string): void {
+  if (installJobs.has(jobKey(store, source, id))) throw new Error('插件正在安装，请等待完成');
   const all = installedPlugins(store); const key = nativeKey(source, id); const record = all[key]; if (!record) return;
-  patchRegistration(store, record, false, true); delete all[key]; store.writeExtra('extension-native.json', all);
+  patchRegistration(store, record, false, true);
   // Retain downloaded source and its licenses for audit/recovery; no arbitrary package hooks execute.
 }
 export function nativeAliases(index: MarketIndex): Map<string, string> {
   const counts = new Map<string, number>(); for (const p of index.plugins) counts.set(p.name, (counts.get(p.name) || 0) + 1);
   return new Map(index.plugins.map(p => [p.id, counts.get(p.name)! > 1 ? `${p.name}-${createHash('sha256').update(p.id).digest('hex').slice(0, 10)}` : p.name]));
 }
+/** An upstream delisting must not hide a user's existing local installation. */
+export function managedIndex(store: AuroraStore, source: MarketSource, index = loadIndex(store, source)): MarketIndex {
+  const ids = new Set(index.plugins.map(p => p.id));
+  const retained = Object.values(installedPlugins(store)).filter(p => p.source === source && !ids.has(p.id)).map(p => ({ id: p.id, name: p.name, displayName: p.name, description: '此插件已从当前目录下架，保留本地安装管理', version: p.version, author: '', tags: [], license: p.license, path: '', tree: p.tree, bytes: 0, skills: 0, requiresAuth: false, catalogMissing: true }));
+  return { ...index, plugins: [...index.plugins, ...retained] };
+}
 export function nativeSummary(store: AuroraStore, source: MarketSource, p: MarketEntry, index?: MarketIndex, installs?: Record<string, NativeInstall>, alias?: string): any {
   const record = (installs || installedPlugins(store))[nativeKey(source, p.id)];
-  return { id: `${p.name}@${marketName(source, p.id)}`, name: alias || p.name, codexPlusIndexId: p.id, source: { type: 'git', url: `https://github.com/${REPOSITORIES[source]}.git`, path: p.path, sha: (index || loadIndex(store, source)).revision }, installed: !!record, enabled: record?.enabled || false,
-    version: p.version, localVersion: record?.version || null, authPolicy: 'ON_USE', installPolicy: 'AVAILABLE', availability: 'AVAILABLE', disabledReason: null, keywords: p.tags || [], mustShowInstallationInterstitial: false,
+  return { id: `${p.name}@${marketName(source, p.id)}`, name: alias || p.name, codexPlusIndexId: p.id, source: p.catalogMissing && record ? { type: 'local', path: packageRoot(store, record) } : { type: 'git', url: `https://github.com/${REPOSITORIES[source]}.git`, path: p.path, sha: (index || loadIndex(store, source)).revision }, installed: !!record, enabled: record?.enabled || false, catalogMissing: p.catalogMissing === true,
+    version: p.version, localVersion: record?.version || null, installedVersion: record?.version || null, updateAvailable: !p.catalogMissing && !!record && record.tree !== p.tree, authPolicy: 'ON_USE', installPolicy: 'AVAILABLE', availability: 'AVAILABLE', disabledReason: record && !packagePresent(store, record) ? '本地插件文件已丢失，请在云桥管理安装' : p.catalogMissing ? '目录已下架；请在云桥管理本地启停和移除' : null, keywords: p.tags || [], mustShowInstallationInterstitial: false,
     interface: { displayName: p.displayName || p.name, shortDescription: p.description, longDescription: p.description, developerName: p.author, category: 'Productivity', capabilities: [], screenshots: [], logo: null, logoDark: null, composerIcon: null } };
 }
 export async function nativeRequest(store: AuroraStore, payload: any): Promise<any> {
@@ -161,11 +195,11 @@ export async function nativeRequest(store: AuroraStore, payload: any): Promise<a
   const source: MarketSource = payload.source === 'public' || /virtual-public|index-public/.test(String(params.marketplacePath || params.localMarketplaceName || '')) ? 'public' : 'full';
   if (['plugin/list', 'list-plugins', 'search-plugins', 'installed-plugins', 'plugin/installed'].includes(method)) {
     const installedOnly = /installed/.test(method); const query = String(params.query || '').toLowerCase();
-    const index = loadIndex(store, source); const all = installedPlugins(store), aliases = nativeAliases(index);
+    const index = managedIndex(store, source); const all = installedPlugins(store), aliases = nativeAliases(index);
     const plugins = index.plugins.filter(p => (!query || `${p.name} ${p.displayName} ${p.description}`.toLowerCase().includes(query)) && (!installedOnly || all[nativeKey(source, p.id)])).map(p => nativeSummary(store, source, p, index, all, aliases.get(p.id)));
     return { marketplaces: [{ name: `codex-plus-index-${source}`, path: path.join(store.dir, 'codex-plus-plugin-market', `virtual-${source}`, '.agents', 'plugins', 'marketplace.json'), interface: { displayName: `云桥插件 · ${source === 'full' ? '完整库' : '公开库'}` }, plugins }], marketplaceLoadErrors: [], featuredPluginIds: [] };
   }
-  const index = loadIndex(store, source), aliases = nativeAliases(index); const item = index.plugins.find(p => p.id === params.codexPlusIndexId || p.id === params.id || aliases.get(p.id) === params.pluginName || `${p.name}@${marketName(source, p.id)}` === params.pluginId);
+  const index = managedIndex(store, source), aliases = nativeAliases(index); const item = index.plugins.find(p => p.id === params.codexPlusIndexId || p.id === params.id || aliases.get(p.id) === params.pluginName || `${p.name}@${marketName(source, p.id)}` === params.pluginId);
   if (!item) throw new Error('插件目录中没有找到此项目');
   if (['plugin/install', 'install-plugin'].includes(method)) { await installNative(store, source, item.id); return { appsNeedingAuth: [], authPolicy: 'ON_USE' }; }
   if (['plugin/read', 'read-plugin'].includes(method)) return { plugin: { summary: nativeSummary(store, source, item, index, undefined, aliases.get(item.id)), marketplaceName: `codex-plus-index-${source}`, description: item.description, skills: [], mcpServers: [], hooks: [], apps: [], appTemplates: [] } };

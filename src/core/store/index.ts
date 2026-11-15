@@ -13,7 +13,9 @@ import type {
   UsageRecord,
 } from './types.js';
 import { catalogPresets } from '../catalog.js';
+import { GITHUB_RELEASE_API } from '../releaseSources.js';
 import { newId, nowIso, dayKey } from '../util.js';
+import { validatePluginConfiguration, clearMiddlewareStatus, clearAllMiddlewareStatus } from '../plugins/middleware.js';
 
 export * from './types.js';
 export { JsonFile, JsonLines } from './jsonFile.js';
@@ -62,7 +64,7 @@ export const DEFAULT_SETTINGS = (): Settings => ({
   firstByteTimeoutMs: 120000,
   logRequests: true,
   catalogUrl: 'https://ai.haowucm.cn/pub.php?action=catalog',
-  updateUrl: 'https://ai.haowucm.cn/pub.php?action=update',
+  updateUrl: GITHUB_RELEASE_API,
   autoCheckUpdate: true,
   adminUrl: 'https://ai.haowucm.cn/',
   autoSyncModels: true,
@@ -210,16 +212,18 @@ export class AuroraStore {
 
   getSettings(): Settings {
     const stored = this.settings.read();
-    const settings = { ...DEFAULT_SETTINGS(), ...stored };
+    const settings = { ...DEFAULT_SETTINGS(), ...stored, updateUrl: GITHUB_RELEASE_API, autoSyncModels: true };
+    let migrated = stored.updateUrl !== GITHUB_RELEASE_API || stored.autoSyncModels !== true;
     if (typeof stored.gatewayToken !== 'string' || !stored.gatewayToken.trim()) {
       settings.gatewayToken = randomBytes(24).toString('hex');
-      this.settings.write(settings);
+      migrated = true;
     }
+    if (migrated) this.settings.write(settings);
     return settings;
   }
 
   saveSettings(patch: Partial<Settings>): Settings {
-    const next = { ...this.getSettings(), ...patch, updatedAt: nowIso() };
+    const next = { ...this.getSettings(), ...patch, updateUrl: GITHUB_RELEASE_API, autoSyncModels: true, updatedAt: nowIso() };
     this.validateSettings(next);
     this.settings.write(next);
     return next;
@@ -252,10 +256,16 @@ export class AuroraStore {
   }
 
   saveAgent(state: AgentState): AgentState {
+    return this.saveAgents([state])[0];
+  }
+
+  /** Shared clients must commit all connection records in the same atomic write. */
+  saveAgents(states: AgentState[]): AgentState[] {
     const all = { ...this.agents.read() };
-    all[state.id] = { ...all[state.id], ...state, lastSyncAt: nowIso() };
-    this.agents.write({ ...all });
-    return all[state.id];
+    const lastSyncAt = nowIso();
+    for (const state of states) all[state.id] = { ...all[state.id], ...state, lastSyncAt };
+    this.agents.write(all);
+    return states.map(state => all[state.id]);
   }
 
   /* ---------------------------- plugins ---------------------------- */
@@ -272,7 +282,10 @@ export class AuroraStore {
       const idx = list.findIndex((x) => x.id === p.id);
       if (idx >= 0) {
         list[idx] = { ...list[idx], ...p, builtin, updatedAt: nowIso() } as PluginRecord;
+        // A legacy invalid plugin must remain possible to disable without first editing its code.
+        if (!(p.enabled === false && Object.keys(p).every(key => ['id', 'enabled'].includes(key)))) validatePluginConfiguration(list[idx]);
         this.plugins.write([...list]);
+        clearMiddlewareStatus(this, list[idx].id);
         return list[idx];
       }
     }
@@ -286,12 +299,15 @@ export class AuroraStore {
       options: p.options,
       updatedAt: nowIso(),
     };
+    validatePluginConfiguration(rec);
     this.plugins.write([...list, rec]);
+    clearMiddlewareStatus(this, rec.id);
     return rec;
   }
 
   deletePlugin(id: string): void {
     this.plugins.write(this.plugins.read().filter((p) => p.id !== id));
+    clearMiddlewareStatus(this, id);
   }
 
   /* ---------------------------- usage ---------------------------- */
@@ -357,7 +373,7 @@ export class AuroraStore {
       if (!group || !validId(group.id) || !['order', 'rotate', 'weight', 'usage', 'pace', 'smart'].includes(group.mode) || !Array.isArray(group.members)) throw new Error('备份中的路由分组无效');
       if (group.members.some(m => !m || !providers.some((p: Provider) => p.id === m.providerId) || !Number.isFinite(m.weight) || m.weight < 0)) throw new Error('路由分组引用了不存在的供应商或权重无效');
     }
-    const settings: Settings = { ...DEFAULT_SETTINGS(), ...data.settings, updatedAt: nowIso() };
+    const settings: Settings = { ...DEFAULT_SETTINGS(), ...data.settings, updateUrl: GITHUB_RELEASE_API, autoSyncModels: true, updatedAt: nowIso() };
     if (!settings.gatewayToken) settings.gatewayToken = randomBytes(24).toString('hex');
     this.validateSettings(settings);
     const plugins = data.plugins as PluginRecord[];
@@ -384,6 +400,7 @@ export class AuroraStore {
       } catch { throw new Error('导入失败且无法自动回滚，请使用导入前的本地备份恢复'); }
       throw error;
     }
+    clearAllMiddlewareStatus(this);
   }
 }
 

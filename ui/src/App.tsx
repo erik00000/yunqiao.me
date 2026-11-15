@@ -14,6 +14,7 @@ import Sessions from './pages/Sessions';
 import Usage from './pages/Usage';
 import SettingsPage from './pages/Settings';
 import Membership from './pages/Membership';
+import UpdateActions from './components/UpdateActions';
 
 export type PageId = 'overview' | 'agents' | 'catalog' | 'providers' | 'models' | 'groups' | 'accounts' | 'codex' | 'plugins' | 'sessions' | 'usage' | 'settings' | 'membership';
 export interface PageProps { state: AppState; reload: () => Promise<void>; go: (p: PageId) => void; }
@@ -64,7 +65,7 @@ function Shell() {
     return () => { off?.(); clearInterval(timer); window.removeEventListener('keydown', onKey); };
   }, [reload]);
   useEffect(() => {
-    if (!state?.settings.autoCheckUpdate) return;
+    if (!window.aurora || !state?.settings.autoCheckUpdate) return;
     let alive = true;
     call<UpdateInfo>('update.check', {}).then(r => { if (alive && r.ok && r.hasUpdate) setUpdate(r); }).catch(() => {});
     return () => { alive = false; };
@@ -103,12 +104,12 @@ function Shell() {
         <nav aria-label="主导航">{NAV.map(g => <div className="nav-group" key={g.group}><div className="nav-group-label">{g.group}</div>{g.items.map(it => <button key={it.id} aria-label={it.label} className={`nav-item ${page === it.id ? 'active' : ''}`} aria-current={page === it.id ? 'page' : undefined} onClick={() => go(it.id)}><Ico name={it.icon} size={17} /><span>{it.label}</span>{it.id === 'providers' && state.providers.length > 0 && <span className="badge">{state.providers.length}</span>}</button>)}</div>)}</nav>
         <div className="sidebar-bottom">
           <div className="gateway-mini"><span className={`dot ${state.gateway.running ? 'on' : 'off'}`} /><div><b>{state.gateway.running ? '本地网关运行中' : '本地网关已停止'}</b><small>{state.gatewayUrl.replace('http://', '')}</small></div><button className="icon-button" title="网关设置" onClick={() => go('settings')}><Ico name="ext" size={13} /></button></div>
-          <button aria-label="系统设置" className={`nav-item ${page === 'settings' ? 'active' : ''}`} onClick={() => go('settings')}><Ico name="gear" size={17} /><span>系统设置</span><small className="version">v{state.version}</small></button>
+          <button aria-label="系统设置" className={`nav-item ${page === 'settings' ? 'active' : ''}`} onClick={() => go('settings')}><Ico name="gear" size={17} /><span>系统设置</span><small className="version" title={state.build?.id}>v{state.version}{state.build?.channel === 'local' ? ' 调试' : ''}</small></button>
         </div>
       </aside>
       <main className="main" id="main-content">
         {err && <div className="notice warning" role="alert">连接暂时中断：{err}<Btn size="sm" onClick={reload}>重试</Btn></div>}
-        {update && <div className="notice"><Ico name="download" /><span className="grow">新版本 v{update.version} 已发布 · {update.notes?.slice(0, 70)}</span>{update.url && <Btn size="sm" onClick={() => call('app.openExternal', { url: update.url })}>下载更新</Btn>}<Btn variant="ghost" size="sm" onClick={() => setUpdate(null)}>稍后</Btn></div>}
+        {update && <div className="notice" style={{ flexWrap: 'wrap' }}><Ico name="download" /><span className="grow">新版本 v{update.version} 已发布 · {update.source === 'website' ? '官网备用' : 'GitHub'}</span><UpdateActions key={`${update.source}:${update.version}`} update={update} /><Btn variant="ghost" size="sm" onClick={() => setUpdate(null)}>稍后</Btn></div>}
         <Page state={state} reload={reload} go={go} />
       </main>
     </div>

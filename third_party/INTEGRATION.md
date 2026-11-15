@@ -139,3 +139,29 @@ CodexPlusPlus 根许可为 **AGPL-3.0-only**。复制的 renderer、桥接和相
 主题上游 `cidala-tiger/dream-skin/glass-vision/skin-packs/snow-skin` 的 MIT LICENSE 已保留；Whale 的代码 MIT 许可与图片/音效范围不同，见原 `PROVENANCE.md`。素材按上游声明原样随插件运行分发，不赋予再许可、不声称 Aurora 原创。materialized agent-pet 另附 WHALE-LICENSE / WHALE-PROVENANCE.md。
 
 发布前的实际验收至少包括：冷启动能找到资产；五包实际脚本装载；插件启停后无残留效果；原生窗口版本检测失败能明确提示；目录刷新与单包固定版本安装；原生列表发现已装插件；启用后能调用其实际功能；缺少授权明确呈现；批量修复预览不写文件；执行校验过期版本；成功/失败/中断均有可解释结果；备份冲突保留现状。无需远端权限的 renderer 测试、真实 CDP 客户端验收、外部供应商调用测试应分别记录，不能互相代替。
+
+## 官方账号与第三方供应商共存：源码核对记录
+
+核对源码固定于 CodexPlusPlus `75d25e0b8020a4a96cb4b75c00d75ee31ed2cc3c`（2.6.9）。
+
+| 路径（相对于 `.reference/CodexPlusPlus`） | 结论 |
+|---|---|
+| `crates/codex-plus-core/src/gateway/apply.rs:373`、`:410`、`:982` | 已登录时保留 `model_provider="openai"`；实际推理传输经根 `openai_base_url` 的本地代理；未登录则使用 custom API provider。 |
+| `crates/codex-plus-core/src/relay_config.rs:6440` | OpenAI 会话身份与 Official+API 混合模式设置根 `openai_base_url`，传输供应商配置和会话身份分离。 |
+| `crates/codex-plus-core/src/relay_config.rs:6528` | 传统 Official+API 形态使用 `requires_openai_auth=true` 读取登录展示，用 `experimental_bearer_token` 发供应商请求；这本身不等于官方和第三方模型的完整聚合。 |
+| `crates/codex-plus-core/src/gateway/apply.rs:209`、`:494` | 供应商池所有可用模型写入原生 `model_catalog_json`，注入层 `/codex-model-catalog` 提供分组、窗口和推理档位；不能仅返回 OpenAI `/models` 的 data 数组。 |
+| `crates/codex-plus-core/src/official_login.rs:23`、`protocol_proxy.rs:3823`、`:6484` | 官方账号请求固定送到 `https://chatgpt.com/backend-api/codex`，带 OAuth Bearer、`chatgpt-account-id`、`originator=codex_cli_rs`。API 供应商独立构建鉴权。 |
+| `crates/codex-plus-core/src/launcher.rs:2196`、`:2222` | 上游旧 helper 入口依赖回环监听与拒绝网页 Origin；有 token 的网关入口是另一层。Aurora 共存入口额外匹配当前本机 OAuth，不开放通用免鉴权代理。 |
+| `crates/codex-plus-core/src/launcher.rs:2336`、`:2554`、`:9197` | WebSocket GET 返回 426 要求 HTTP 回退；现代客户端发送 zstd 压缩 Responses，回归验证代理替换入站官方鉴权。 |
+| `crates/codex-plus-core/src/relay_config.rs:5969`、`gateway/apply.rs:1405` | 写登录态时应优先保留 live token、恢复只处理工具自己改动的字段。Aurora 最小方案直接不写 auth.json。 |
+| `crates/codex-plus-core/src/native_auth.rs:207`、`official_login.rs:847` | 原生登录备份不能当成独立网关登录轮换刷新；原生账号 token 过期交回官方客户端。 |
+| `crates/codex-plus-core/src/native_auth.rs:483` | 完整多账号切换另有显式身份选择、保存当前登录和竞争检查；Aurora 本次不实现账号替换或出借。 |
+| `crates/codex-plus-core/src/model_suffix.rs:757`、`:799` | 新原生目录需要 `base_instructions`；可从本机官方模型缓存读取实际 schema；缓存只读。 |
+
+当前行为与配置说明见 [官方账号与第三方推理供应商共存](../docs/CODEX-COEXISTENCE.md)。
+
+## 历史供应商区域迁移：源码核对记录
+
+实现参考本地 CodexPlusPlus 的 `crates/codex-plus-data/src/provider_sync.rs`：`prepare_thread_provider` 使用原生 `threads` 归属作为来源证据，`load_provider_sync_targets` / `resolve_provider_sync_target_snapshot` 校验真实配置，批量同步同时处理 rollout 元数据和本机目录投影。本项目另将活动 profile 中的 provider 表纳入目标解析。
+
+当前操作与实现边界见 [历史会话供应商区域迁移](../docs/HISTORY-PROVIDER-MIGRATION.md)。

@@ -1,9 +1,11 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { parse as parseToml } from 'smol-toml';
 import type { AgentId, Provider } from '../store/types.js';
 import { nowIso } from '../util.js';
 import { detectCodingDesktop } from '../injector.js';
+import { readOfficialCodexIdentity, codexCoexistBaseUrl, CODEX_COEXIST_BASE_PATH } from '../gateway/coexist.js';
 import { applyPlan, restorePlan, jsonObject, planned, plannedJson, readText, patchToml, patchEnv, redactConfig, digest, type PlannedFile } from './configFiles.js';
 
 export interface ConnectContext {
@@ -15,6 +17,8 @@ export interface ConnectContext {
   token?: string;
   previousBackup?: string;
   expectedRevision?: string;
+  authMode?: 'api' | 'coexist';
+  modelCatalogPath?: string;
 }
 export interface ConnectResult { ok: boolean; path?: string; backup?: string; message: string; restartRequired?: boolean; extraFiles?: string[] }
 export interface ConnectPreview { ok: boolean; message: string; files: PlannedFile[]; warnings: string[]; requiresRestart: boolean; revision?: string; manual?: { baseUrl: string; apiKey: string; model: string } }
@@ -75,8 +79,15 @@ function validate(ctx: ConnectContext, adapter: AgentAdapter): void {
   if (ctx.mode !== 'gateway' && ctx.mode !== 'direct') throw new Error('不支持的接入模式');
   if (!ctx.model?.trim()) throw new Error('请选择模型');
   if (!ctx.provider.enabled) throw new Error('请先启用供应商');
+  const officialChoice = ctx.authMode === 'coexist' && ctx.provider.id === 'official';
+  if (ctx.authMode === 'coexist') {
+    if (!['codex-cli', 'chatgpt-desktop'].includes(adapter.id) || ctx.mode !== 'gateway') throw new Error('官方账号共存需要通过本地网关连接 ChatGPT / Codex');
+    const identity = readOfficialCodexIdentity();
+    if (!identity.available) throw new Error(identity.message);
+    if (!ctx.modelCatalogPath) throw new Error('缺少本地共存模型目录');
+  }
   const providerHost = new URL(ctx.provider.baseUrl).hostname;
-  if (!ctx.provider.apiKeys.some(k => k.enabled && k.key) && !['localhost', '127.0.0.1', '[::1]'].includes(providerHost)) throw new Error('请先填写并启用供应商 API Key');
+  if (!officialChoice && !ctx.provider.apiKeys.some(k => k.enabled && k.key) && !['localhost', '127.0.0.1', '[::1]'].includes(providerHost)) throw new Error('请先填写并启用供应商 API Key');
   if (!ctx.provider.models.some(m => m.id === ctx.model)) throw new Error('此模型不在所选供应商的模型列表中');
   if (ctx.mode === 'direct' && ctx.provider.format !== adapter.protocol) throw new Error('直连模式要求供应商与客户端协议一致；请选择本地网关接入');
   for (const [role, model] of Object.entries(ctx.modelMap || {})) {
@@ -143,14 +154,48 @@ const claudeCode = makeAdapter({
 });
 function codexPlan(ctx: ConnectContext): PlannedFile[] {
   const file = codexConfig(), ep = connectionParameters(ctx, 'openai-responses');
-  let text = patchToml(readText(file), '', { model: ep.model, model_provider: 'aurora' });
-  text = patchToml(text, 'model_providers.aurora', { name: '云桥 AI', base_url: ep.baseUrl, wire_api: 'responses', experimental_bearer_token: ep.apiKey, env_key: null, requires_openai_auth: false, stream_idle_timeout_ms: 300000 });
+  const before = readText(file);
+  let current: any;
+  try { current = parseToml(before.replace(/^\uFEFF/, '')); }
+  catch { throw new Error('原 Codex 配置不是有效的 TOML，已停止修改；请在原客户端检查配置。'); }
+  const coexist = ctx.authMode === 'coexist';
+  if (coexist) {
+    const profile = typeof current.profile === 'string' ? current.profiles?.[current.profile] : undefined;
+    if ([current.model_providers?.openai, profile?.model_providers?.openai].some(value => value && typeof value === 'object' && Object.keys(value).some(key => key !== 'name'))) {
+      throw new Error('当前配置重定义了内置 openai 供应商。请先在原客户端移除该覆盖或改名为独立供应商，再开启官方账号共存；也可继续使用 API 模式。');
+    }
+    if (!process.env.AURORA_CLIENT_HOME && process.env.OPENAI_BASE_URL) throw new Error('当前进程存在 OPENAI_BASE_URL 环境覆盖，请先清除该变量并重启云桥，再启用共存模式。');
+  }
+  const selection = { model: ep.model, model_provider: coexist ? 'openai' : 'aurora' };
+  const endpoint = codexCoexistBaseUrl(Number(new URL(ctx.gatewayUrl).port) || 80);
+  const ownEndpoint = (value: unknown) => { try { const url = new URL(String(value)); return ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) && url.pathname.replace(/\/$/, '') === CODEX_COEXIST_BASE_PATH; } catch { return false; } };
+  const routing: Record<string, string | null> = { ...selection };
+  if (coexist) {
+    routing.openai_base_url = endpoint;
+    routing.model_catalog_json = ctx.modelCatalogPath!;
+    if (current.forced_login_method === 'api') routing.forced_login_method = null;
+  } else {
+    if (ownEndpoint(current.openai_base_url)) routing.openai_base_url = null;
+    if (current.model_catalog_json === ctx.modelCatalogPath) routing.model_catalog_json = null;
+  }
+  let text = patchToml(before, '', routing);
+  if (typeof current.profile === 'string') {
+    if (!current.profiles?.[current.profile] || typeof current.profiles[current.profile] !== 'object') throw new Error('当前 Codex profile 不存在，请先检查原客户端配置');
+    const profile = current.profiles[current.profile];
+    const values: Record<string, string | null> = { ...selection };
+    // These transport/catalog fields belong at the root; legacy profile schemas reject them.
+    if (profile.openai_base_url !== undefined && (coexist || ownEndpoint(profile.openai_base_url))) values.openai_base_url = null;
+    if (profile.model_catalog_json !== undefined && (coexist || profile.model_catalog_json === ctx.modelCatalogPath)) values.model_catalog_json = null;
+    if (coexist && profile.forced_login_method === 'api') values.forced_login_method = null;
+    text = patchToml(text, `profiles.${JSON.stringify(current.profile)}`, values);
+  }
+  if (!coexist) text = patchToml(text, 'model_providers.aurora', { name: '云桥 AI', base_url: ep.baseUrl, wire_api: 'responses', experimental_bearer_token: ep.apiKey, env_key: null, requires_openai_auth: false, stream_idle_timeout_ms: 300000 });
   return [planned(file, text)];
 }
 const codexCli = makeAdapter({
   id: 'codex-cli', name: 'Codex CLI', vendor: 'OpenAI', category: 'cli', support: 'automatic', protocol: 'openai-responses', description: 'OpenAI 终端编程助手，使用 Responses 协议。',
   supportNote: '配置独立的 aurora provider，保留账号登录态和其他 TOML 配置。', docsUrl: 'https://developers.openai.com/codex/config-reference', command: 'codex', paths: () => [codexConfig()], hint: '完全退出后重新运行 codex', plan: codexPlan,
-  warnings: ['Codex CLI 与 Codex 桌面共享用户级配置；当前 profile 或项目配置可能覆盖此设置。'],
+  warnings: ['Codex CLI 与 Codex 桌面共享用户级配置；当前 profile 或项目配置可能覆盖此设置。', '部分新版 CLI 已停用 config.toml 内的旧 profile 表，改用 --profile 名称和独立配置文件；请先确认原配置可由当前 CLI 正常读取，云桥不会自动迁移这些文件。'],
 });
 const codexDesktop = makeAdapter({
   id: 'chatgpt-desktop', name: 'ChatGPT 桌面版', vendor: 'OpenAI', category: 'desktop', support: 'automatic', protocol: 'openai-responses', description: '统一识别 ChatGPT、ChatGPT Beta 与原 Codex 桌面版，按已安装版本的实际能力接入。',

@@ -8,6 +8,7 @@ import { build } from 'esbuild';
 
 const workspace = path.resolve(import.meta.dirname, '..');
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aurora-history-repair-test-'));
+const originalClientHome = process.env.AURORA_CLIENT_HOME;
 let count = 0;
 function check(label, fn) { fn(); count++; console.log(`PASS ${label}`); }
 const write = (file, text) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, text); };
@@ -20,8 +21,8 @@ const text = (id, provider = 'old', extra = {}) => [
 ].join('\r\n') + '\r\n';
 try {
   const bundle = path.join(root, 'api.cjs');
-  await build({ entryPoints: [path.join(workspace, 'src/core/historyRepair.ts')], outfile: bundle, bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent' });
-  const { createHistoryRepairService } = createRequire(import.meta.url)(bundle);
+  await build({ stdin: { contents: "export * from './src/core/historyRepair.ts'; export * from './src/core/sessions.ts';", resolveDir: workspace, loader: 'ts' }, outfile: bundle, bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent' });
+  const { createHistoryRepairService, runHistoryRepairAction, scanSessions } = createRequire(import.meta.url)(bundle);
   function fixture(name) {
     const home = path.join(root, name, '.codex'); fs.mkdirSync(home, { recursive: true });
     write(path.join(home, 'config.toml'), 'model_provider = "aurora"\n[model_providers.aurora]\nname = "Aurora"\nbase_url = "http://127.0.0.1:3425/v1"\n');
@@ -89,8 +90,94 @@ try {
   check('New sqlite directory layouts are discovered by schema', () => { assert(alternatePlan.ok, alternatePlan.message); assert(alternatePlan.dbPath.endsWith('codex-vnext.db')); assert(alternateResult.ok, alternateResult.message); assert.equal(JSON.parse(read(migrated.file).split('\r\n')[0]).payload.model_provider, 'aurora'); });
   const selectedArchive = await alternate.service.preview({ scope: 'archived' });
   check('Empty scopes are reported honestly without creating backups', () => assert.equal(selectedArchive.summary.selected, 0));
+
+  const regions = fixture('provider-regions');
+  const configFile = path.join(regions.home, 'config.toml');
+  const config = `\uFEFFprofile = "工作区"\nmodel_provider = "aurora"\n[model_providers.aurora]\nname = "Aurora"\n[model_providers."国内.中转"]\nname = "国内模型"\n[model_providers.codex_plus_managed]\nname = "Internal"\n[model_providers]\nbroken = "not a provider table"\n[profiles."工作区"]\nmodel_provider = "profile.relay"\n[profiles."工作区".model_providers."profile.relay"]\nname = "工作供应商"\n[profiles.inactive.model_providers.hidden]\nname = "不可选"\n`;
+  write(configFile, config);
+  const oldActive = regions.add(20, { provider: 'retired-provider', catalog: true });
+  const oldArchived = regions.add(21, { provider: 'retired-provider', archived: true });
+  const otherRegion = regions.add(22, { provider: 'other-provider', content: text(uid(22), 'retired-provider') });
+  const orphan = regions.add(23, { provider: 'retired-provider', orphan: true });
+  regions.db.prepare('UPDATE local_thread_catalog SET model_provider=? WHERE host_id=? AND thread_id=?').run('retired-provider', 'local-machine', oldActive.id);
+  const inventory = await regions.service.providers();
+  check('Provider inventory parses active-profile TOML and keeps retired native source regions', () => {
+    assert(inventory.ok, inventory.message); assert.equal(inventory.currentProvider, 'profile.relay');
+    assert.deepEqual(new Set(inventory.targets.map(t => t.id)), new Set(['openai', 'aurora', '国内.中转', 'profile.relay']));
+    assert.equal(inventory.targets[0].id, 'profile.relay'); assert.equal(inventory.targets[0].name, '工作供应商');
+    assert.deepEqual(inventory.sources.find(s => s.id === 'retired-provider'), { id: 'retired-provider', count: 2, active: 1, archived: 1 });
+    assert(inventory.warnings.some(w => w.includes('元数据'))); assert(inventory.warnings.some(w => w.includes('没有唯一')));
+    assert.equal(read(configFile), config); assert(!fs.existsSync(path.join(regions.home, '.aurora-history-repair')));
+  });
+  const selectedRegion = await regions.service.preview({ sourceProvider: 'retired-provider', targetProvider: '国内.中转' });
+  check('Source filtering uses canonical native provider rather than stale rollout metadata', () => {
+    assert(selectedRegion.ok, selectedRegion.message); assert.deepEqual(new Set(selectedRegion.items.map(i => i.id)), new Set([oldActive.id, oldArchived.id]));
+    assert(selectedRegion.items.every(i => i.beforeProvider === 'retired-provider' && i.targetProvider === '国内.中转'));
+    assert.equal(selectedRegion.summary.repairable, 2); assert.equal(selectedRegion.options.sourceProvider, 'retired-provider');
+  });
+  const archivedRegion = await regions.service.preview({ sourceProvider: 'retired-provider', targetProvider: '国内.中转', scope: 'archived' });
+  check('Native source regions compose with archive scope and explicit selection', () => { assert.deepEqual(archivedRegion.items.map(i => i.id), [oldArchived.id]); });
+  const movedRegion = await regions.service.apply({ ...selectedRegion.options, revision: selectedRegion.revision });
+  check('Cross-provider migration updates only selected regions and preserves remote rows and original files', () => {
+    assert(movedRegion.ok, movedRegion.message);
+    for (const session of [oldActive, oldArchived]) { assert(fs.existsSync(session.file)); assert.equal(JSON.parse(read(session.file).split('\r\n')[0]).payload.model_provider, '国内.中转'); assert.equal(regions.db.prepare('SELECT model_provider FROM threads WHERE id=?').get(session.id).model_provider, '国内.中转'); }
+    assert.equal(regions.db.prepare('SELECT model_provider FROM local_thread_catalog WHERE host_id=? AND thread_id=?').get('local-machine', oldActive.id).model_provider, '国内.中转');
+    assert.equal(regions.db.prepare('SELECT model_provider FROM local_thread_catalog WHERE host_id=? AND thread_id=?').get('remote-machine', oldActive.id).model_provider, 'remote-provider');
+    assert.equal(read(otherRegion.file), otherRegion.source); assert.equal(read(orphan.file), orphan.source); assert.equal(read(configFile), config);
+  });
+  process.env.AURORA_CLIENT_HOME = path.dirname(regions.home);
+  const listed = scanSessions(), routedInventory = await runHistoryRepairAction('codex.repair.providers', {});
+  check('History list and provider discovery action expose native provider regions and archive status', () => {
+    assert(routedInventory.ok, routedInventory.message); assert.equal(routedInventory.sources.find(s => s.id === '国内.中转').count, 2);
+    assert.equal(listed.find(s => s.id === oldActive.id).modelProvider, '国内.中转'); assert.equal(listed.find(s => s.id === oldActive.id).archived, false);
+    assert.equal(listed.find(s => s.id === oldArchived.id).archived, true); assert.equal(listed.find(s => s.id === otherRegion.id).modelProvider, 'other-provider');
+    assert.equal(listed.find(s => s.id === orphan.id).modelProvider, 'retired-provider');
+  });
+  const moveRestorePreview = await regions.service.restorePreview({ backupId: movedRegion.backupId });
+  const moveRestored = await regions.service.restore({ backupId: movedRegion.backupId, revision: moveRestorePreview.revision });
+  check('Region migration restores original metadata and native region without switching live provider', () => { assert(moveRestored.ok, moveRestored.message); assert.equal(read(oldActive.file), oldActive.source); assert.equal(read(oldArchived.file), oldArchived.source); assert.equal(read(configFile), config); });
+  regions.db.prepare('UPDATE local_thread_catalog SET model_provider=? WHERE host_id=? AND thread_id=?').run('third-region', 'local-machine', oldActive.id);
+  const catalogConflict = await regions.service.preview({ sourceProvider: 'retired-provider', targetProvider: '国内.中转', ids: [oldActive.id] });
+  check('An unrelated local catalog region blocks targeted migration', () => { assert.equal(catalogConflict.items[0].status, 'blocked'); assert(catalogConflict.items[0].reason.includes('索引冲突')); });
+  regions.db.prepare('UPDATE local_thread_catalog SET model_provider=? WHERE host_id=? AND thread_id=?').run('retired-provider', 'local-machine', oldActive.id);
+  for (const invalid of ['codex_plus_managed', 'broken', 'hidden', 'unknown']) {
+    const invalidPreview = await regions.service.preview({ sourceProvider: 'retired-provider', targetProvider: invalid });
+    check(`Unresolvable or internal target ${invalid} is rejected`, () => assert.equal(invalidPreview.ok, false));
+  }
+  write(configFile, 'model_provider = "aurora"\nsecret = "fixture-config-secret" trailing-invalid');
+  const malformedInventory = await regions.service.providers(), malformedPreview = await regions.service.preview({ targetProvider: 'openai' });
+  check('Malformed TOML refuses even builtin targets without disclosing source credentials', () => { assert.equal(malformedInventory.ok, false); assert.equal(malformedPreview.ok, false); assert(!JSON.stringify([malformedInventory, malformedPreview]).includes('fixture-config-secret')); });
+  write(configFile, config);
+  const duplicateDb = new DatabaseSync(path.join(regions.home, 'state_6.sqlite'));
+  duplicateDb.exec('CREATE TABLE threads(id TEXT PRIMARY KEY,model_provider TEXT,archived INTEGER)'); duplicateDb.prepare('INSERT INTO threads VALUES(?,?,?)').run(oldActive.id, 'retired-provider', 0); duplicateDb.close();
+  const ambiguousInventory = await regions.service.providers(), ambiguousPreview = await regions.service.preview({ sourceProvider: 'retired-provider', targetProvider: '国内.中转', ids: [oldActive.id] });
+  check('Duplicate canonical identities are excluded from counts and blocked for migration', () => { assert.equal(ambiguousInventory.sources.find(s => s.id === 'retired-provider').count, 1); assert(ambiguousInventory.warnings.some(w => w.includes('重复'))); assert.equal(ambiguousPreview.items[0].status, 'blocked'); });
+  regions.db.close();
+
+  const failed = fixture('migration-rollback'), failedSession = failed.add(30, { catalog: true });
+  failed.db.exec("CREATE TRIGGER deny_migration BEFORE UPDATE OF model_provider ON local_thread_catalog WHEN NEW.model_provider='aurora' BEGIN SELECT RAISE(FAIL, 'fixture database failure'); END;");
+  const failedPreview = await failed.service.preview({ sourceProvider: 'old', targetProvider: 'aurora' });
+  const failedApply = await failed.service.apply({ ...failedPreview.options, revision: failedPreview.revision });
+  check('SQLite update failure after file rewrite rolls back metadata and canonical/local rows together', () => { assert.equal(failedApply.ok, false); assert.equal(failedApply.rolledBack, true); assert.equal(read(failedSession.file), failedSession.source); assert.equal(failed.db.prepare('SELECT model_provider FROM threads WHERE id=?').get(failedSession.id).model_provider, 'old'); assert.equal(failed.db.prepare('SELECT model_provider FROM local_thread_catalog WHERE host_id=? AND thread_id=?').get('local-machine', failedSession.id).model_provider, 'old'); assert(fs.existsSync(path.join(failedApply.backup, 'manifest.json'))); });
+  failed.db.close();
+
+  const split = fixture('split-native-catalog'), splitSession = split.add(31);
+  split.db.exec('DROP TABLE local_thread_catalog; DROP TABLE local_thread_catalog_hosts;');
+  const catalogDirectory = path.join(split.home, 'sqlite'); fs.mkdirSync(catalogDirectory);
+  const catalogDb = new DatabaseSync(path.join(catalogDirectory, 'desktop-catalog.db'));
+  catalogDb.exec("PRAGMA journal_mode=WAL; CREATE TABLE local_thread_catalog_hosts(host_id TEXT PRIMARY KEY,host_kind TEXT); INSERT INTO local_thread_catalog_hosts VALUES('desktop','local'),('remote','remote'); CREATE TABLE local_thread_catalog(host_id TEXT,thread_id TEXT,model_provider TEXT,PRIMARY KEY(host_id,thread_id));");
+  catalogDb.prepare('INSERT INTO local_thread_catalog VALUES(?,?,?)').run('desktop', splitSession.id, 'old'); catalogDb.prepare('INSERT INTO local_thread_catalog VALUES(?,?,?)').run('remote', splitSession.id, 'remote');
+  const splitPreview = await split.service.preview({ sourceProvider: 'old', targetProvider: 'aurora' }), splitApplied = await split.service.apply({ ...splitPreview.options, revision: splitPreview.revision });
+  check('Split native and desktop catalog databases migrate in the same backed-up batch', () => { assert(splitApplied.ok, splitApplied.message); assert.equal(split.db.prepare('SELECT model_provider FROM threads WHERE id=?').get(splitSession.id).model_provider, 'aurora'); assert.equal(catalogDb.prepare('SELECT model_provider FROM local_thread_catalog WHERE host_id=?').get('desktop').model_provider, 'aurora'); assert.equal(catalogDb.prepare('SELECT model_provider FROM local_thread_catalog WHERE host_id=?').get('remote').model_provider, 'remote'); assert.equal(JSON.parse(read(path.join(splitApplied.backup, 'manifest.json'))).databases.length, 2); });
+  const splitRestorePreview = await split.service.restorePreview({ backupId: splitApplied.backupId }), splitRestored = await split.service.restore({ backupId: splitApplied.backupId, revision: splitRestorePreview.revision });
+  check('Split-database restore recovers both original providers and byte-exact source', () => { assert(splitRestored.ok, splitRestored.message); assert.equal(read(splitSession.file), splitSession.source); assert.equal(split.db.prepare('SELECT model_provider FROM threads WHERE id=?').get(splitSession.id).model_provider, 'old'); assert.equal(catalogDb.prepare('SELECT model_provider FROM local_thread_catalog WHERE host_id=?').get('desktop').model_provider, 'old'); });
+  catalogDb.exec("CREATE TRIGGER deny_split BEFORE UPDATE OF model_provider ON local_thread_catalog WHEN NEW.model_provider='aurora' BEGIN SELECT RAISE(FAIL,'split fault'); END;");
+  const splitFailedPreview = await split.service.preview({ sourceProvider: 'old', targetProvider: 'aurora' }), splitFailed = await split.service.apply({ ...splitFailedPreview.options, revision: splitFailedPreview.revision });
+  check('Failure in a separate catalog database rolls back all databases and source metadata', () => { assert.equal(splitFailed.ok, false); assert.equal(splitFailed.rolledBack, true); assert.equal(read(splitSession.file), splitSession.source); assert.equal(split.db.prepare('SELECT model_provider FROM threads WHERE id=?').get(splitSession.id).model_provider, 'old'); assert.equal(catalogDb.prepare('SELECT model_provider FROM local_thread_catalog WHERE host_id=?').get('desktop').model_provider, 'old'); });
+  catalogDb.close(); split.db.close();
   console.log(`\n${count} batch history repair integration checks passed.`);
 } finally {
+  if (originalClientHome === undefined) delete process.env.AURORA_CLIENT_HOME; else process.env.AURORA_CLIENT_HOME = originalClientHome;
   const resolved = path.resolve(root);
   if (resolved.startsWith(path.join(os.tmpdir(), 'aurora-history-repair-test-'))) fs.rmSync(resolved, { recursive: true, force: true });
 }

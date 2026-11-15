@@ -2,11 +2,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DesktopCdp, desktopInfo, openDesktopConnection } from '../injector.js';
 import type { AuroraStore } from '../store/index.js';
-import { BUILTINS, BUNDLED, effectiveEntry, loadState, saveState, manifest, validateConfig, type ExtensionState } from './catalog.js';
-import { resourceRoot, loadIndex, installNative, installedPlugins, nativeKey, nativeRequest, nativeInstallStatus } from './market.js';
+import { BUILTINS, BUNDLED, effectiveEntry, loadState, saveState, manifest, validatePackageConfig, type ExtensionState } from './catalog.js';
+import { resourceRoot, loadIndex, managedIndex, refreshIndex, installNative, installedPlugins, nativeKey, nativeRequest, nativeInstallStatus, packagePresent } from './market.js';
 import { enhanceUsageSource, threadUsage } from './usage.js';
 import { activeRequests } from '../gateway/liveUsage.js';
-import { readTomlValue } from '../codex.js';
+import { extensionClientConfig } from './clientConfig.js';
 import { dreamThemeSource } from './theme.js';
 import { augmentSessionRenderer, sessionRoute } from './sessions.js';
 import { prepareNativeModules } from './nativeModules.js';
@@ -14,12 +14,12 @@ import { desktopModelCatalog, modelCatalogFingerprint } from './models.js';
 import { captureNativeClient } from './nativeCapture.js';
 import { generateSuggestions, stepwiseSettings } from './stepwise.js';
 import { DictationBridge, dictationConfiguration } from './dictation.js';
+import { extensionOperation, extensionOperationBusy } from './operations.js';
 const SETTING_IDS:Record<string,string> = { 'plugin-market-unlock':'PluginMarketplaceUnlock','model-whitelist-unlock':'ModelWhitelistUnlock','session-delete':'SessionDelete','side-chat-save':'SideChatSave','markdown-export':'MarkdownExport','thread-id-badge':'ThreadIdBadge','conversation-view':'ConversationView','thread-scroll-restore':'ThreadScrollRestore','history-turn-recovery':'HistoryTurnRecovery','native-fast-unlock':'NativeFastUnlock','native-predictions':'NativePredictions','pet-real-mouse':'PetRealMouseLook','activity-overlay-right':'ActivityOverlayRight','stepwise':'StepwiseEnabled','answer-outline':'AnswerOutlineEnabled','capacity-auto-retry':'CapacityAutoRetry','turn-rewind':'TurnRewind','paste-fix':'PasteFix','offline-auto-review':'OfflineAutoReview','statsig-overrides':'StatsigOverrides','reported-usage-compaction':'ReportedUsageCompaction','dream-skin':'DreamSkinEnabled' };
 export function backendSettings(store:AuroraStore,state:ExtensionState):Record<string,any>{
   const settings:Record<string,any>={enhancementsEnabled:true,providerSyncEnabled:false,codexAppVersion:state.connection.lastVersion||'',codexAppNativeMenuPlacement:true,codexAppSessionDeleteSkipConfirm:false,codexAppCapacityAutoRetryMaxAttempts:3,codexAppCapacityAutoRetryIntervalSeconds:5,codexAppDreamSkinPaused:false,codexAppDreamSkinThemeConfig:{},codexAppDreamSkinImagePath:'',weixinDesktopSync:[],...state.settings};
   for(const [id,key]of Object.entries(SETTING_IDS))settings[`codexApp${key}`]=!BUILTINS.find(x=>x.id===id)?.unsupported&&effectiveEntry(state,`builtin:${id}`).enabled;
-  const profile=readTomlValue('profile');const provider=profile?readTomlValue(`profiles.${profile}.model_provider`):readTomlValue('model_provider');
-  const custom=!!provider&&!['openai','amazon-bedrock','amazonBedrock'].includes(provider)&&!!readTomlValue(`model_providers.${provider}.base_url`);
+  let custom=false;try{custom=extensionClientConfig().customApi;}catch(error){settings.nativeLocalApiConfigurationError=(error as Error).message;}
   settings.nativeFastLocalApiConfigured=custom;settings.nativePredictionsLocalApiConfigured=custom;
   settings.modelCatalogFingerprint=modelCatalogFingerprint(store);
   settings.dictation=dictationConfiguration(store).status;
@@ -54,15 +54,15 @@ export class ExtensionRuntime{
   private dictation:DictationBridge;
   private nativeSource='';
   private stopCapture?:()=>Promise<void>;
-  private historyTimer?:NodeJS.Timeout;private historyBusy=false;private historyError='';
+  private historyTimer?:NodeJS.Timeout;private historyBusy=false;private historyError='';private historyGeneration=0;private reloadTimer?:NodeJS.Timeout;
   private petCdp?:DesktopCdp;private cursorTimer?:NodeJS.Timeout;private cursorBusy=false;private cursorError='';private cursorGeneration=0;
   cdp?:DesktopCdp;private bridge='';private lastError='';private nativeErrors:Array<{id:string;message:string}>=[];private nativeRequested:string[]=[];private diagnostics:Array<{time:string,event:string,message:string}>=[];
   constructor(private store:AuroraStore){this.dictation=new DictationBridge(store);}
   async status():Promise<RuntimeStatus>{
     const cdp=this.cdp;if(!cdp?.connected)return{connected:false,applied:[],errors:this.lastError?[{id:'runtime',message:this.lastError}]:[]};
     try{const result=await cdp.evaluate(`({ready:!!window.__auroraExtensionReady,error:window.__auroraExtensionError||'',scripts:Object.values(window.__codexPlusUserScripts?.scripts||{}).map(s=>({key:s.key,status:s.status,error:s.error||''})),builtins:window.codexPlus?.builtins?.()||[],nativeInstall:window.__auroraNativeInstallResult,nativeCompiled:window.__codexPlusNativeFastCompiled==='v1'})`);
-      const errors=[...this.nativeErrors,...result.scripts.filter((s:any)=>s.status==='failed').map((s:any)=>({id:s.key,message:s.error}))];if(this.historyError)errors.push({id:'builtin:history-turn-recovery',message:this.historyError});if(this.cursorError)errors.push({id:'builtin:pet-real-mouse',message:this.cursorError});if(result.error)errors.push({id:'runtime',message:result.error});if(this.nativeRequested.length&&!this.nativeErrors.length&&!result.nativeCompiled)for(const id of this.nativeRequested)errors.push({id,message:'原生模块未完成加载：'+String(result.nativeInstall?.diagnostics?.reason||result.nativeInstall?.reason||'等待兼容模块')});
-      return{connected:true,targetTitle:cdp.target.title,targetUrl:cdp.target.url,applied:[...result.scripts.filter((s:any)=>s.status==='loaded').map((s:any)=>s.key),...result.builtins.filter((b:any)=>b.active&&!errors.some(e=>e.id===`builtin:${b.id}`)).map((b:any)=>`builtin:${b.id}`)],errors};
+      const errors=[...this.nativeErrors,...result.scripts.filter((s:any)=>s.status==='failed').map((s:any)=>({id:s.key,message:s.error}))];if(this.historyError)errors.push({id:'builtin:history-turn-recovery',message:this.historyError});if(this.cursorError)errors.push({id:'builtin:pet-real-mouse',message:this.cursorError});if(result.error||this.lastError)errors.push({id:'runtime',message:result.error||this.lastError});if(!result.ready&&!errors.some(e=>e.id==='runtime'))errors.push({id:'runtime',message:'桌面扩展尚未完成加载'});if(this.nativeRequested.length&&!this.nativeErrors.length&&!result.nativeCompiled)for(const id of this.nativeRequested)errors.push({id,message:'原生模块未完成加载：'+String(result.nativeInstall?.diagnostics?.reason||result.nativeInstall?.reason||'等待兼容模块')});
+      return{connected:true,targetTitle:cdp.target.title,targetUrl:cdp.target.url,applied:result.ready&&!errors.some(e=>e.id==='runtime')?[...result.scripts.filter((s:any)=>s.status==='loaded').map((s:any)=>s.key),...result.builtins.filter((b:any)=>b.active&&!errors.some(e=>e.id===`builtin:${b.id}`)).map((b:any)=>`builtin:${b.id}`)]:[],errors};
     }catch(e){return{connected:cdp.connected,targetTitle:cdp.target.title,targetUrl:cdp.target.url,applied:[],errors:[{id:'runtime',message:(e as Error).message}]};}
   }
   async connect(payload:any):Promise<any>{
@@ -70,40 +70,44 @@ export class ExtensionRuntime{
     if(info.versionChanged&&!payload.acknowledgeVersion)throw new Error(`客户端已从 ${info.lastVersion} 更新到 ${info.version}，请勾选确认版本变化后重新连接`);
     if(this.cdp?.connected)await this.disconnect();
     try{const opened=await openDesktopConnection({...state.connection,launch:payload.launch===true});this.cdp=opened.cdp;this.bridge=await this.cdp.setBridge((route,p)=>this.route(route,p));state.connection.lastVersion=info.version;saveState(this.store,state);this.lastError='';await this.apply();return{ok:true,message:'已连接兼容桌面，扩展按实际加载结果显示',launched:opened.launched,runtime:await this.status()};}
-    catch(e){this.lastError=(e as Error).message;await this.cdp?.dispose(false);this.cdp=undefined;throw e;}
+    catch(e){await this.disconnect().catch(()=>{});this.lastError=(e as Error).message;throw e;}
   }
   async apply():Promise<void>{
-    if(!this.cdp?.connected)return;this.stopHistory();await this.stopCapture?.();this.stopCapture=undefined;await this.stopCursor();const state=loadState(this.store),plan=await prepareNativeModules(this.cdp,backendSettings(this.store,state));this.nativeErrors=plan.errors;this.nativeRequested=plan.requested;
+    if(!this.cdp?.connected)return;try{this.dictation.cancelAll();this.stopHistory();await this.stopCapture?.();this.stopCapture=undefined;await this.stopCursor();const state=loadState(this.store),plan=await prepareNativeModules(this.cdp,backendSettings(this.store,state));this.nativeErrors=plan.errors;this.nativeRequested=plan.requested;
     this.nativeSource=plan.source;const effective=structuredClone(state);for(const error of plan.errors)effective.entries[error.id]={...effectiveEntry(state,error.id),enabled:false};
     const source=buildRuntimeSource(this.store,effective,this.bridge,plan.source);await this.cdp.replaceScripts(source,true);
-    for(let i=0;i<40;i++){await new Promise(r=>setTimeout(r,250));const ready=await this.cdp.evaluate('!!window.__auroraExtensionReady || !!window.__auroraExtensionError').catch(()=>false);if(ready){if(!this.stopCapture)this.stopCapture=captureNativeClient(this.cdp);if(effectiveEntry(state,'builtin:pet-real-mouse').enabled)this.startCursor(state.connection.port);if(effectiveEntry(state,'builtin:history-turn-recovery').enabled)this.startHistory();return;}}
+    for(let i=0;i<40;i++){await new Promise(r=>setTimeout(r,250));const result=await this.cdp.evaluate('({ready:!!window.__auroraExtensionReady,error:window.__auroraExtensionError||""})').catch(()=>null);if(result?.error)throw new Error(`桌面扩展加载失败：${result.error}`);if(result?.ready){this.lastError='';if(!this.stopCapture)this.stopCapture=captureNativeClient(this.cdp);if(effectiveEntry(state,'builtin:pet-real-mouse').enabled)this.startCursor(state.connection.port);if(effectiveEntry(state,'builtin:history-turn-recovery').enabled)this.startHistory();return;}}
     throw new Error('桌面扩展加载超时；请在兼容桌面版本打开主窗口后重试');
+    }catch(e){this.lastError=(e as Error).message;throw e;}
   }
   private startHistory():void{
-    const tick=async()=>{if(this.historyBusy||!this.cdp?.connected)return;this.historyBusy=true;try{const result=await this.cdp.evaluate('window.__codexPlusHistoryTurnRecoveryRuntime?.run(crypto.randomUUID())');this.historyError=result?.status==='unavailable'?`此客户端暂不支持原生历史分页：${result.reason}`:'';}catch(e){this.historyError=(e as Error).message;}finally{this.historyBusy=false;}};this.historyTimer=setInterval(()=>void tick(),15000);this.historyTimer.unref?.();void tick();
+    const generation=++this.historyGeneration;
+    const tick=async()=>{if(generation!==this.historyGeneration||this.historyBusy||!this.cdp?.connected)return;this.historyBusy=true;try{const result=await this.cdp.evaluate('window.__codexPlusHistoryTurnRecoveryRuntime?.run(crypto.randomUUID())');if(generation===this.historyGeneration)this.historyError=result?.status==='unavailable'?`此客户端暂不支持原生历史分页：${result.reason}`:'';}catch(e){if(generation===this.historyGeneration)this.historyError=(e as Error).message;}finally{if(generation===this.historyGeneration)this.historyBusy=false;}};this.historyTimer=setInterval(()=>void tick(),15000);this.historyTimer.unref?.();void tick();
   }
-  private stopHistory():void{if(this.historyTimer)clearInterval(this.historyTimer);this.historyTimer=undefined;this.historyError='';}
+  private stopHistory():void{this.historyGeneration++;if(this.historyTimer)clearInterval(this.historyTimer);this.historyTimer=undefined;this.historyBusy=false;this.historyError='';}
   private startCursor(port:number):void{
     const generation=++this.cursorGeneration;
     const tick=async()=>{if(generation!==this.cursorGeneration||this.cursorBusy||!this.cdp?.connected)return;this.cursorBusy=true;try{
       const electron=await import('electron');if(generation!==this.cursorGeneration)return;const screen=electron.screen;if(!screen?.getCursorScreenPoint)throw new Error('系统光标同步需要云桥 Windows/macOS 桌面进程');
       if(!this.petCdp?.connected){const connected=await DesktopCdp.connect(port,'avatar');if(generation!==this.cursorGeneration){connected.close();return;}this.petCdp=connected;await this.petCdp.replaceScripts(`(()=>{const start=()=>{${script('pet-real-mouse-inject.js')}};if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start,{once:true});else start();})();`,false);}
-      const point=screen.getCursorScreenPoint();const accepted=await this.petCdp.evaluate(`window.__codexPlusPetRealMouseLook?.updateScreenPoint(${JSON.stringify(point)})===true`);if(!accepted)throw new Error('原生桌宠尚未准备好');this.cursorError='';
-    }catch(e){if(generation===this.cursorGeneration)this.cursorError=`等待原生桌宠窗口：${(e as Error).message}`;}finally{this.cursorBusy=false;}};
+      if(generation!==this.cursorGeneration)return;const point=screen.getCursorScreenPoint();const accepted=await this.petCdp.evaluate(`window.__codexPlusPetRealMouseLook?.updateScreenPoint(${JSON.stringify(point)})===true`);if(!accepted)throw new Error('原生桌宠尚未准备好');if(generation===this.cursorGeneration)this.cursorError='';
+    }catch(e){if(generation===this.cursorGeneration)this.cursorError=`等待原生桌宠窗口：${(e as Error).message}`;}finally{if(generation===this.cursorGeneration)this.cursorBusy=false;}};
     this.cursorTimer=setInterval(()=>void tick(),2000);this.cursorTimer.unref?.();void tick();
   }
-  private async stopCursor():Promise<void>{this.cursorGeneration++;if(this.cursorTimer)clearInterval(this.cursorTimer);this.cursorTimer=undefined;this.cursorError='';await this.petCdp?.evaluate('window.__codexPlusPetRealMouseLook?.stop()').catch(()=>{});await this.petCdp?.dispose(false);this.petCdp=undefined;}
-  async disconnect():Promise<void>{this.dictation.cancelAll();this.stopHistory();await this.stopCapture?.();this.stopCapture=undefined;await this.stopCursor();await this.cdp?.dispose(true);this.cdp=undefined;}
+  private async stopCursor():Promise<void>{this.cursorGeneration++;this.cursorBusy=false;if(this.cursorTimer)clearInterval(this.cursorTimer);this.cursorTimer=undefined;this.cursorError='';await this.petCdp?.evaluate('window.__codexPlusPetRealMouseLook?.stop()').catch(()=>{});await this.petCdp?.dispose(false);this.petCdp=undefined;}
+  private scheduleApply():void{if(this.reloadTimer)clearTimeout(this.reloadTimer);this.reloadTimer=setTimeout(()=>{this.reloadTimer=undefined;if(extensionOperationBusy(this.store)){this.scheduleApply();return;}void extensionOperation(this.store,()=>this.apply()).catch(e=>{this.lastError=(e as Error).message;});},100);this.reloadTimer.unref?.();}
+  async disconnect():Promise<void>{if(this.reloadTimer)clearTimeout(this.reloadTimer);this.reloadTimer=undefined;this.dictation.cancelAll();this.stopHistory();await this.stopCapture?.();this.stopCapture=undefined;await this.stopCursor();const cdp=this.cdp;this.cdp=undefined;await cdp?.dispose(true);this.lastError='';}
   async route(route:string,payload:any):Promise<any>{
-    const state=loadState(this.store);
     const dictationResult=await this.dictation.route(route,payload);if(dictationResult!==null)return dictationResult;
+    const state=loadState(this.store);
     if(route==='/settings/get'||route==='/settings/public')return backendSettings(this.store,state);
     if(route==='/codex-model-catalog'||route==='/model-catalog/public')return desktopModelCatalog(this.store);
-    if(route==='/settings/set'){
+    if(route==='/settings/set')return extensionOperation(this.store,async()=>{
       const allowed=Object.fromEntries(Object.entries(SETTING_IDS).map(([id,key])=>[`codexApp${key}`,id]));
       for(const[key,value]of Object.entries(payload)){const id=allowed[key];if(id){const def=BUILTINS.find(b=>b.id===id)!;if(def.unsupported&&value)throw new Error(def.unsupported);if(typeof value!=='boolean')throw new Error('设置值必须是开关');state.entries[`builtin:${id}`]={...effectiveEntry(state,`builtin:${id}`),enabled:value};}else if(['codexAppConversationViewMaxWidth','codexAppCapacityAutoRetryMaxAttempts','codexAppCapacityAutoRetryIntervalSeconds'].includes(key)&&typeof value==='number'&&value>=0&&value<=4000)state.settings[key]=value;else throw new Error(`云桥尚未开放此上游设置：${key}`);}
-      saveState(this.store,state);return backendSettings(this.store,state);
-    }
+      if(payload.codexAppModelWhitelistUnlock===true&&desktopModelCatalog(this.store).status!=='ok')throw new Error('请先在客户端页为 ChatGPT 桌面版应用供应商配置');
+      saveState(this.store,state);this.scheduleApply();return backendSettings(this.store,state);
+    });
     if(route==='/settings/catalog')return {status:'ok',groups:[],items:[]};
     if(route==='/backend/status')return {status:'ok',version:'2.6.9 / Aurora',build:'aurora-0.6',available:true};
     if(route==='/stepwise/settings'){const info=stepwiseSettings(this.store);return{status:info.status,settings:info.settings};}
@@ -139,20 +143,20 @@ export class ExtensionRuntime{
     if(route==='/whale/media'){const dir=path.join(resourceRoot(),'assets','inject','upstream','whale-widget'),assets:Record<string,string>={};for(const f of fs.readdirSync(dir))if(mime[path.extname(f)])assets[f]=dataUrl(path.join(dir,f));return{status:'ok',image:assets['DSniang1.png'],assets};}
     if(['/whale/full','/whale/history','/whale/session'].includes(route))return{status:'unavailable',balance:null,usage:null,message:'此供应商未提供余额/大肥鱼统计接口；实时用量请查看用量状态栏'};
     if(route==='/plugin-market/native')return nativeRequest(this.store,payload);
-    if(route==='/plugin-market/list'){const source=payload.source==='public'?'public':'full',index=loadIndex(this.store,source),installed=installedPlugins(this.store);return{status:'ok',...index,source,plugins:index.plugins.map(p=>({...p,installed:!!installed[nativeKey(source,p.id)],enabled:installed[nativeKey(source,p.id)]?.enabled||false}))};}
+    if(route==='/plugin-market/list'){const source=payload.source==='public'?'public':'full',index=managedIndex(this.store,source,payload.refresh===true?await refreshIndex(this.store,source):loadIndex(this.store,source)),installed=installedPlugins(this.store);return{status:'ok',...index,source,plugins:index.plugins.map(p=>{const saved=installed[nativeKey(source,p.id)];return{...p,installed:!!saved,installedVersion:saved?.version,updateAvailable:!p.catalogMissing&&!!saved&&(saved.tree!==p.tree||!packagePresent(this.store,saved)),enabled:saved?.enabled||false};})};}
     if(route==='/plugin-market/install'){const source=payload.source==='public'?'public':'full';await installNative(this.store,source,String(payload.id));return nativeInstallStatus(this.store,source,String(payload.id));}
     if(route==='/plugin-market/install-status'){const source=payload.source==='public'?'public':'full';return nativeInstallStatus(this.store,source,String(payload.id));}
-    if(route==='/user-scripts/set-config'){
-      const key=String(payload.key||''),id=key.slice(8);if(!key.startsWith('bundled:')||!BUNDLED.includes(id))throw new Error('此配置页仅支持已安装的随附扩展');const m=manifest(id),entry=effectiveEntry(state,key);entry.config={...entry.config,...validateConfig(m.config||{},payload.values)};state.entries[key]=entry;saveState(this.store,state);
+    if(route==='/user-scripts/set-config')return extensionOperation(this.store,async()=>{
+      const key=String(payload.key||''),id=key.slice(8);if(!key.startsWith('bundled:')||!BUNDLED.includes(id))throw new Error('此配置页仅支持已安装的随附扩展');const entry=effectiveEntry(state,key);if(!entry.installed)throw new Error('请先安装扩展');entry.config={...entry.config,...validatePackageConfig(id,payload.values)};state.entries[key]=entry;saveState(this.store,state);
       if(this.cdp?.connected)await this.cdp.updateDocumentSource(buildRuntimeSource(this.store,state,this.bridge,this.nativeSource));return{status:'ok',config:entry.config};
-    }
+    });
     if(route==='/user-scripts/readme'){
       const id=String(payload.key||'').replace(/^bundled:/,'');if(!BUNDLED.includes(id))throw new Error('未知随附扩展');const root=path.join(resourceRoot(),'materialized','extensions',id),file=['README.zh-CN.md','README.md'].map(f=>path.join(root,f)).find(f=>fs.existsSync(f));return{status:'ok',markdown:file?fs.readFileSync(file,'utf8').slice(0,512*1024):manifest(id).description,assets:bundledAssets(root),truncated:file?fs.statSync(file).size>512*1024:false};
     }
     if(route==='/user-scripts/set-script-enabled'||route==='/user-scripts/delete'){
       const {runExtensionAction}=await import('./index.js');await runExtensionAction({store:this.store},route==='/user-scripts/delete'?'extension.remove':'extension.toggle',{id:payload.key,enabled:payload.enabled});return this.route('/user-scripts/list',{});
     }
-    if(route==='/user-scripts/reload'){const timer=setTimeout(()=>void this.apply().catch(e=>{this.lastError=(e as Error).message;}),80);timer.unref?.();return this.route('/user-scripts/list',{});}
+    if(route==='/user-scripts/reload'){this.scheduleApply();return this.route('/user-scripts/list',{});}
     if(route==='/user-scripts/list'){
       const runtime=await this.status(),applied=new Set(runtime.applied),errors=new Map(runtime.errors.map(e=>[e.id,e.message]));
       return{status:'ok',scripts:BUNDLED.filter(id=>effectiveEntry(state,`bundled:${id}`).installed).map(id=>{const key=`bundled:${id}`,m=manifest(id),entry=effectiveEntry(state,key);return{key,name:m.name,source:'bundled',enabled:entry.enabled,status:errors.has(key)?'failed':applied.has(key)?'loaded':entry.enabled?'pending':'disabled',error:errors.get(key)||'',package:{...m,configSchema:m.config,config:entry.config}};}),builtins:BUILTINS.map(b=>({...b,key:`builtin:${b.id}`,...effectiveEntry(state,`builtin:${b.id}`)}))};

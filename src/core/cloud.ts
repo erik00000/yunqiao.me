@@ -1,12 +1,10 @@
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import https from 'node:https';
 import http from 'node:http';
 import { createHash } from 'node:crypto';
 import { URL } from 'node:url';
 import type { AuroraStore, Provider, ProviderModel } from './store/index.js';
 import { newId, nowIso } from './util.js';
+import { GITHUB_RELEASE_API, GITHUB_RELEASE_PAGE, OFFICIAL_SITE_ORIGIN, OFFICIAL_UPDATE_URL, RELEASE_REPOSITORY } from './releaseSources.js';
 
 /**
  * 云端目录 + 更新检查 + 官方账号导入。
@@ -50,7 +48,7 @@ function webUrl(value: unknown, label: string): string {
   return url.href.replace(/\/$/, '');
 }
 
-function getJson<T = any>(urlStr: string, timeoutMs = 12000, headers: Record<string, string> = {}, redirects = 0): Promise<T> {
+function getJson<T = any>(urlStr: string, timeoutMs = 12000, headers: Record<string, string> = {}, redirects = 0, deadline = Date.now() + timeoutMs): Promise<T> {
   return new Promise((resolve, reject) => {
     let u: URL;
     try {
@@ -58,24 +56,34 @@ function getJson<T = any>(urlStr: string, timeoutMs = 12000, headers: Record<str
     } catch {
       return reject(new Error('远端地址格式不正确，仅支持 HTTP / HTTPS'));
     }
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return reject(new Error('请求超时'));
     const lib = u.protocol === 'https:' ? https : http;
+    let settled = false;
+    let deadlineTimer: NodeJS.Timeout | undefined;
+    const finish = (error?: Error, value?: T) => {
+      if (settled) return; settled = true;
+      if (deadlineTimer) clearTimeout(deadlineTimer);
+      if (error) reject(error); else resolve(value as T);
+    };
     const req = lib.get(
       {
         hostname: u.hostname,
         port: u.port || (u.protocol === 'https:' ? 443 : 80),
         path: u.pathname + u.search,
         headers: { accept: 'application/json', 'user-agent': 'yunqiao/0.1', ...headers },
-        timeout: timeoutMs,
+        timeout: remaining,
       },
       (res) => {
+        res.on('error', error => finish(error));
+        res.on('aborted', () => finish(new Error('远端响应中断')));
         if ([301, 302, 303, 307, 308].includes(res.statusCode ?? 0) && res.headers.location) {
           res.resume();
-          const next = new URL(res.headers.location, u);
-          if (redirects >= 3 || (u.protocol === 'https:' && next.protocol !== 'https:')) {
-            reject(new Error('远端重定向次数过多或降级到不安全连接'));
-            return;
-          }
-          getJson<T>(next.href, timeoutMs, {}, redirects + 1).then(resolve, reject);
+          try {
+            const next = new URL(res.headers.location, u);
+            if (redirects >= 3 || (u.protocol === 'https:' && next.protocol !== 'https:')) throw new Error('远端重定向次数过多或降级到不安全连接');
+            getJson<T>(next.href, timeoutMs, {}, redirects + 1, deadline).then(value => finish(undefined, value), error => finish(error));
+          } catch { finish(new Error('远端重定向地址无效、次数过多或连接不安全')); }
           return;
         }
         let buf = '';
@@ -89,21 +97,23 @@ function getJson<T = any>(urlStr: string, timeoutMs = 12000, headers: Record<str
           }
           buf += c;
         });
-        res.on('error', reject);
         res.on('end', () => {
           if ((res.statusCode ?? 0) < 200 || (res.statusCode ?? 0) >= 300) {
-            return reject(new Error(`目录服务返回 HTTP ${res.statusCode}`));
+            return finish(new Error(`目录服务返回 HTTP ${res.statusCode}`));
           }
           try {
-            resolve(JSON.parse(buf) as T);
+            finish(undefined, JSON.parse(buf) as T);
           } catch {
-            reject(new Error('远端返回的不是有效 JSON'));
+            finish(new Error('远端返回的不是有效 JSON'));
           }
         });
       },
     );
+    // Socket inactivity alone cannot bound a peer that keeps sending tiny chunks.
+    deadlineTimer = setTimeout(() => { req.destroy(new Error('请求超时')); finish(new Error('请求超时')); }, remaining);
+    deadlineTimer.unref?.();
     req.on('timeout', () => req.destroy(new Error('请求超时')));
-    req.on('error', reject);
+    req.on('error', error => finish(error));
   });
 }
 
@@ -159,7 +169,8 @@ export async function fetchCloudCatalog(url: string, store?: AuroraStore): Promi
   try {
     const catalog = validateCloudCatalog(await getJson(endpoint));
     const result: CloudCatalog = { ...catalog, source: 'remote', fetchedAt: nowIso() };
-    store?.writeExtra(cacheName, result);
+    try { store?.writeExtra(cacheName, result); }
+    catch { result.warning = '官方目录已更新，但本地缓存保存失败；本次可正常使用，重启后将重新获取。'; }
     return result;
   } catch (error) {
     const cached = store?.readExtra<CloudCatalog | null>(cacheName, null);
@@ -237,168 +248,131 @@ export interface UpdateInfo {
   url: string;
   publishedAt?: string;
   current: string;
+  source: 'github' | 'website';
+  fallbackUrl: string;
+  releaseUrl: string;
+  assetName?: string;
 }
 
-function cmpVersion(a: string, b: string): number {
-  const pa = String(a).replace(/^v/, '').split(/[.-]/).map((x) => parseInt(x, 10) || 0);
-  const pb = String(b).replace(/^v/, '').split(/[.-]/).map((x) => parseInt(x, 10) || 0);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
-    if (d !== 0) return d > 0 ? 1 : -1;
+export type UpdatePlatform = 'win' | 'mac' | 'linux' | 'ios';
+export type UpdateArch = 'x64' | 'arm64' | 'ia32';
+export interface UpdateTarget { platform?: UpdatePlatform; arch?: UpdateArch }
+export interface UpdateCheckOptions extends UpdateTarget { source?: 'website'; minimumVersion?: string }
+type JsonRequest = (url: string) => Promise<any>;
+
+function releaseVersion(value: unknown, stable = false): { text: string; core: number[]; pre: string[] } {
+  if (typeof value !== 'string' || value.length > 100 || value.trim() !== value) throw new Error('版本号格式无效');
+  const match = /^v?((0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)$/.exec(value);
+  if (!match || (stable && match[5])) throw new Error('更新源未提供有效的正式版本');
+  const core = [match[2], match[3], match[4]].map(Number), pre = match[5]?.split('.') || [];
+  if (core.some(n => !Number.isSafeInteger(n)) || pre.some(p => /^\d+$/.test(p) && (p.length > 1 && p.startsWith('0')))) throw new Error('版本号格式无效');
+  return { text: match[1], core, pre };
+}
+
+export function compareReleaseVersions(a: string, b: string): number {
+  const left = releaseVersion(a), right = releaseVersion(b);
+  for (let i = 0; i < 3; i++) if (left.core[i] !== right.core[i]) return left.core[i] > right.core[i] ? 1 : -1;
+  if (!left.pre.length || !right.pre.length) return left.pre.length ? -1 : right.pre.length ? 1 : 0;
+  for (let i = 0; i < Math.max(left.pre.length, right.pre.length); i++) {
+    const x = left.pre[i], y = right.pre[i]; if (x === y) continue;
+    if (x === undefined || y === undefined) return x === undefined ? -1 : 1;
+    const xn = /^\d+$/.test(x), yn = /^\d+$/.test(y);
+    if (xn !== yn) return xn ? -1 : 1;
+    if (xn && x.length !== y.length) return x.length > y.length ? 1 : -1;
+    return x > y ? 1 : -1;
   }
   return 0;
 }
 
-export async function checkUpdate(url: string, current: string): Promise<UpdateInfo> {
-  const platform = process.platform === 'win32' ? 'win' : process.platform === 'darwin' ? 'mac' : 'linux';
-  const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
-  const full = `${url}${url.includes('?') ? '&' : '?'}platform=${platform}&arch=${arch}&current=${encodeURIComponent(current)}`;
-  const r = await getJson<any>(full);
-  const latest = String(r?.version ?? '0.0.0');
-  return {
-    version: latest,
-    notes: String(r?.notes ?? ''),
-    mandatory: !!r?.mandatory,
-    hasUpdate: !!r?.hasUpdate || cmpVersion(latest, current) > 0,
-    url: String(r?.url ?? ''),
-    publishedAt: r?.publishedAt,
-    current,
-  };
+function updateTarget(target: UpdateTarget): Required<UpdateTarget> {
+  const platform = target.platform || ({ win32: 'win', darwin: 'mac', linux: 'linux' } as const)[process.platform as 'win32' | 'darwin' | 'linux'];
+  const arch = target.arch || (platform === 'ios' ? 'arm64' : process.arch);
+  if (!['win', 'mac', 'linux', 'ios'].includes(platform) || !['x64', 'arm64', 'ia32'].includes(arch) || (platform === 'ios' && arch !== 'arm64')) throw new Error('当前平台或处理器架构暂不支持客户端更新');
+  return { platform, arch } as Required<UpdateTarget>;
 }
 
-/* ------------------------------ 官方账号 ------------------------------ */
-
-export interface LocalAccount {
-  id: string;
-  kind: 'claude' | 'chatgpt' | 'copilot';
-  label: string;
-  source: string;
-  email?: string;
-  plan?: string;
-  /** Login secrets are never exposed by scanning. */
-  authKind?: 'api-key' | 'oauth';
-  importable?: boolean;
-  baseUrl?: string;
-  format: 'anthropic' | 'openai-responses' | 'openai-chat';
-  found: boolean;
-  note?: string;
+function secureUpdateUrl(value: unknown): URL {
+  if (typeof value !== 'string' || value.length > 2048 || /[\x00-\x20\\]/.test(value)) throw new Error('更新下载地址无效');
+  let url: URL; try { url = new URL(value); } catch { throw new Error('更新下载地址无效'); }
+  if (url.protocol !== 'https:' || url.username || url.password || url.hash || url.port) throw new Error('更新下载地址必须使用 HTTPS 且不能含凭据');
+  return url;
 }
 
-function readJson(p: string): any {
+function githubReleasePage(value: unknown, tag: string): string {
+  const url = secureUpdateUrl(value);
+  if (url.hostname !== 'github.com' || url.search || decodeURIComponent(url.pathname) !== `/${RELEASE_REPOSITORY}/releases/tag/${tag}`) throw new Error('GitHub 发布页面不属于云桥仓库');
+  return url.href;
+}
+
+/** Match only actual builder output; source archives, blockmaps and unsigned iOS ZIPs are not installers. */
+function clientAssetRank(name: string, version: string, target: Required<UpdateTarget>): number {
+  const escaped = version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const prefix = `(?:YunQiaoAI|Aurora)-${escaped}-`;
+  if (target.platform === 'win') {
+    const m = new RegExp(`^${prefix}win-${target.arch}-(setup|portable)\\.exe$`, 'i').exec(name);
+    return m ? (m[1].toLowerCase() === 'setup' ? 0 : 1) : -1;
+  }
+  if (target.platform === 'mac') {
+    const m = new RegExp(`^${prefix}mac-(${target.arch}|universal)\\.(dmg|pkg)$`, 'i').exec(name);
+    return m ? (m[1] === 'universal' ? 2 : 0) + (m[2].toLowerCase() === 'pkg' ? 1 : 0) : -1;
+  }
+  if (target.platform === 'linux') return new RegExp(`^${prefix}linux-${target.arch}\\.AppImage$`, 'i').test(name) ? 0 : -1;
+  return -1;
+}
+
+function githubAssetUrl(value: unknown, tag: string, name: string): string {
+  const url = secureUpdateUrl(value);
+  if (url.hostname !== 'github.com' || url.search || decodeURIComponent(url.pathname) !== `/${RELEASE_REPOSITORY}/releases/download/${tag}/${name}`) throw new Error('GitHub 安装包不属于此正式发布');
+  return url.href;
+}
+
+function publishedAt(value: unknown): string | undefined { return typeof value === 'string' && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : undefined; }
+function result(current: string, version: string, url: string, source: UpdateInfo['source'], notes: unknown, date: unknown, releaseUrl: string, assetName?: string, mandatory = false): UpdateInfo {
+  const hasUpdate = compareReleaseVersions(version, current) > 0;
+  return { current, version, notes: typeof notes === 'string' ? notes.slice(0, 50000) : '', mandatory: hasUpdate && mandatory, hasUpdate, url: hasUpdate ? url : '', source, fallbackUrl: source === 'website' && hasUpdate ? url : '', releaseUrl, assetName, publishedAt: publishedAt(date) };
+}
+
+export function githubUpdate(data: any, current: string, target: Required<UpdateTarget>): UpdateInfo {
+  if (!data || data.draft !== false || data.prerelease !== false || !Array.isArray(data.assets) || data.assets.length > 1000) throw new Error('GitHub 未提供正式发布信息');
+  const version = releaseVersion(data.tag_name, true).text, releaseUrl = githubReleasePage(data.html_url, data.tag_name);
+  const candidates = data.assets.flatMap((asset: any) => {
+    if (!asset || typeof asset.name !== 'string' || asset.state !== 'uploaded' || !Number.isSafeInteger(asset.size) || asset.size <= 0) return [];
+    const rank = clientAssetRank(asset.name, version, target); if (rank < 0) return [];
+    try { return [{ rank, name: asset.name, url: githubAssetUrl(asset.browser_download_url, data.tag_name, asset.name) }]; } catch { return []; }
+  }).sort((a: any, b: any) => a.rank - b.rank || a.name.localeCompare(b.name));
+  if (!candidates.length) throw new Error('GitHub 正式发布暂未提供当前平台的客户端安装包');
+  const selected = candidates[0]; return result(current, version, selected.url, 'github', data.body, data.published_at, releaseUrl, selected.name);
+}
+
+export function websiteUpdate(data: any, current: string, target: Required<UpdateTarget>): UpdateInfo {
+  if (!data || typeof data !== 'object' || Array.isArray(data) || data.prerelease === true || data.draft === true) throw new Error('官网更新信息无效');
+  const version = releaseVersion(data.version, true).text;
+  if ((data.platform !== undefined && data.platform !== target.platform) || (data.arch !== undefined && data.arch !== target.arch)) throw new Error('官网安装包的平台或架构不匹配');
+  const url = secureUpdateUrl(data.url); let assetName: string | undefined;
+  if (target.platform === 'ios') {
+    if (!((url.hostname === 'apps.apple.com' && /\/id\d+(?:\/)?$/.test(url.pathname)) || (url.hostname === 'testflight.apple.com' && /^\/join\/[a-zA-Z0-9]+\/?$/.test(url.pathname)))) throw new Error('当前 iOS 客户端尚无 App Store 或 TestFlight 安装入口');
+  } else {
+    assetName = decodeURIComponent(url.pathname.split('/').at(-1) || '');
+    if (clientAssetRank(assetName, version, target) < 0) throw new Error('官网未提供匹配版本及平台的客户端安装包');
+    if (url.hostname === 'github.com') {
+      const segments = decodeURIComponent(url.pathname).split('/'); const tag = segments.at(-2) || '';
+      if (releaseVersion(tag, true).text !== version) throw new Error('官网安装包版本不匹配');
+      githubAssetUrl(url.href, tag, assetName);
+    } else if (url.origin !== OFFICIAL_SITE_ORIGIN || url.search || !url.pathname.startsWith('/releases/')) throw new Error('官网安装包地址不属于官方发布源');
+  }
+  return result(current, version, url.href, 'website', data.notes, data.publishedAt, GITHUB_RELEASE_PAGE, assetName, data.mandatory === true);
+}
+
+export async function checkUpdate(current: string, target: UpdateCheckOptions = {}, request: JsonRequest = getJson): Promise<UpdateInfo> {
+  const normalized = releaseVersion(current).text, selected = updateTarget(target);
+  if (target.source !== undefined && target.source !== 'website') throw new Error('未知更新来源');
+  const minimum = target.minimumVersion === undefined ? undefined : releaseVersion(target.minimumVersion, true).text;
+  if (target.source !== 'website') try { return githubUpdate(await request(GITHUB_RELEASE_API), normalized, selected); } catch { /* Network, rate limits, malformed metadata or missing platform assets use the official fallback. */ }
+  const endpoint = new URL(OFFICIAL_UPDATE_URL); endpoint.searchParams.set('platform', selected.platform); endpoint.searchParams.set('arch', selected.arch); endpoint.searchParams.set('current', normalized);
   try {
-    return JSON.parse(fs.readFileSync(p, 'utf8'));
-  } catch {
-    return null;
-  }
-}
-
-function home(...p: string[]): string {
-  return path.join(os.homedir(), ...p);
-}
-
-/** 扫描本机各客户端已有的官方登录态（只读，不上传） */
-export function scanLocalAccounts(): LocalAccount[] {
-  const out: LocalAccount[] = [];
-
-  // Claude Code：~/.claude/.credentials.json（或 macOS keychain，这里只读文件）
-  const claudePaths = [
-    process.env.CLAUDE_CONFIG_DIR ? path.join(process.env.CLAUDE_CONFIG_DIR, '.credentials.json') : '',
-    home('.claude', '.credentials.json'),
-  ].filter(Boolean);
-  for (const p of claudePaths) {
-    const j = readJson(p);
-    if (!j) continue;
-    const oauth = j.claudeAiOauth ?? j;
-    const token = oauth.accessToken ?? oauth.access_token;
-    if (!token) continue;
-    out.push({
-      id: 'claude',
-      kind: 'claude',
-      label: 'Claude 官方订阅',
-      source: p,
-      email: oauth.email ?? j.email,
-      plan: oauth.subscriptionType ?? oauth.plan,
-      authKind: 'oauth',
-      importable: false,
-      baseUrl: 'https://api.anthropic.com',
-      format: 'anthropic',
-      found: true,
-      note: '已检测到 Claude Code 登录态。订阅登录由官方客户端管理，不能当作通用 API Key 导入。',
-    });
-    break;
-  }
-
-  // Codex / ChatGPT：~/.codex/auth.json
-  const codexAuth = readJson(process.env.CODEX_HOME ? path.join(process.env.CODEX_HOME, 'auth.json') : home('.codex', 'auth.json'));
-  if (codexAuth) {
-    const token =
-      codexAuth.tokens?.access_token ?? codexAuth.access_token ?? codexAuth.OPENAI_API_KEY ?? '';
-    if (token) {
-      out.push({
-        id: 'chatgpt',
-        kind: 'chatgpt',
-        label: codexAuth.OPENAI_API_KEY ? 'OpenAI API（Codex 配置）' : 'ChatGPT 订阅（Codex 登录态）',
-        source: (process.env.CODEX_HOME ?? home('.codex')) + '/auth.json',
-        email: codexAuth.tokens?.account_id ?? codexAuth.account_id,
-        plan: codexAuth.tokens?.plan_type ?? codexAuth.plan_type,
-        authKind: codexAuth.OPENAI_API_KEY ? 'api-key' : 'oauth',
-        importable: !!codexAuth.OPENAI_API_KEY,
-        baseUrl: codexAuth.OPENAI_API_KEY ? 'https://api.openai.com/v1' : 'https://chatgpt.com/backend-api/codex',
-        format: 'openai-responses',
-        found: true,
-        note: codexAuth.OPENAI_API_KEY ? '已检测到明确配置的 OpenAI API Key，可导入后手动确认 API 地址和模型。' : '已检测到 Codex OAuth 登录。订阅额度与 API 额度分开，保持官方客户端登录即可。',
-      });
-    }
-  }
-
-  // GitHub Copilot：~/.config/github-copilot/hosts.json 或 apps.json
-  for (const p of [
-    path.join(process.env.APPDATA ?? home('AppData', 'Roaming'), 'github-copilot', 'hosts.json'),
-    home('.config', 'github-copilot', 'hosts.json'),
-  ]) {
-    const j = readJson(p);
-    if (!j) continue;
-    const first = Object.entries(j)[0] as [string, any] | undefined;
-    if (!first) continue;
-    const [, v] = first;
-    if (v?.oauth_token) {
-      out.push({
-        id: 'copilot',
-        kind: 'copilot',
-        label: 'GitHub Copilot 订阅',
-        source: p,
-        email: first[0],
-        authKind: 'oauth',
-        importable: false,
-        baseUrl: 'https://api.githubcopilot.com',
-        format: 'openai-chat',
-        found: true,
-        note: '已检测到 GitHub Copilot 登录态。令牌交换与续期由官方插件管理，不导入网关。',
-      });
-      break;
-    }
-  }
-
-  return out;
-}
-
-/** Only an explicitly stored API key can be imported; subscription OAuth is not an API key. */
-export function importAccountAsProvider(store: AuroraStore, acc: LocalAccount): Provider {
-  const account = scanLocalAccounts().find((item) => item.id === acc?.id);
-  if (!account?.importable || account.kind !== 'chatgpt') {
-    throw new Error('这是官方订阅登录态，不能作为通用 API Key 使用。请在对应客户端登录，或从厂商开放平台创建 API Key。');
-  }
-  const authPath = process.env.CODEX_HOME ? path.join(process.env.CODEX_HOME, 'auth.json') : home('.codex', 'auth.json');
-  const apiKey = readJson(authPath)?.OPENAI_API_KEY;
-  if (typeof apiKey !== 'string' || !apiKey.trim()) throw new Error('本机配置中没有可导入的 OpenAI API Key');
-  const previous = store.listProviders().find((p) => p.presetId === 'imported-openai-api');
-  return store.saveProvider({
-    ...(previous ?? {}),
-    name: account.label, presetId: 'imported-openai-api', format: 'openai-responses',
-    baseUrl: previous?.baseUrl ?? 'https://api.openai.com/v1',
-    apiKeys: [{ id: previous?.apiKeys[0]?.id ?? newId('key_', 6), label: '本机 API Key', key: apiKey, enabled: true, weight: 1 }],
-    models: previous?.models ?? [], enabled: true, priority: 10, official: true,
-    icon: '◍', color: '#10a37f',
-    notes: `从本机 Codex API 配置导入。请同步模型列表并测试连接。\n导入时间：${nowIso()}`,
-  });
+    const info = websiteUpdate(await request(endpoint.href), normalized, selected);
+    if (minimum && compareReleaseVersions(info.version, minimum) < 0) throw new Error(`官网备用包尚未同步到 ${minimum}，请使用 GitHub 下载或稍后重试`);
+    if (target.source === 'website' && compareReleaseVersions(info.version, normalized) < 0) throw new Error('官网备用包版本低于当前客户端，已阻止下载');
+    return info;
+  } catch (error) { throw new Error(`${target.source === 'website' ? '官网备用检查未完成' : 'GitHub 暂不可用或缺少匹配安装包；官网备用检查未完成'}：${(error as Error).message}`); }
 }

@@ -25,6 +25,8 @@ import { Masker } from '../plugins/masking.js';
 import { dayKey, estimateTokens, newId, nowIso, SseParser, trimToWindow } from '../util.js';
 import type { UsageRecord } from '../store/types.js';
 import { allowedHost, allowedOrigin, validGatewayToken, REMOTE_ACTIONS, redactRemoteResult } from './security.js';
+import { CODEX_COEXIST_BASE_PATH, authorizeCodexCoexistRequest, codexCoexistEndpoint, getCoexistCatalog,
+  prepareCodexCoexistRequest, readCodexCoexistBody, CodexCoexistError, type CodexCoexistPlan } from './coexist.js';
 
 export interface GatewayStatus {
   running: boolean;
@@ -44,6 +46,8 @@ export interface GatewayDeps {
   uiDir?: string;
   /** 与桌面端共用的动作层，供 /api/rpc 使用 */
   actions?: (action: string, payload: any) => Promise<any>;
+  /** Injectable transport for isolated official-channel tests; never read from settings or RPC. */
+  officialTransport?: typeof openUpstream;
 }
 
 const CORS = {
@@ -86,6 +90,15 @@ export class GatewayServer {
           /* noop */
         }
       });
+    });
+    server.on('upgrade', (req, socket) => {
+      const endpoint = codexCoexistEndpoint(req.url || '');
+      const auth = endpoint === 'responses' ? authorizeCodexCoexistRequest(req, this.deps.store) : null;
+      const status = !auth ? 404 : !auth.ok ? auth.status : 426;
+      const message = !auth ? '未知的升级接口' : !auth.ok ? auth.message : '共存网关使用 HTTP Responses，请回退到 HTTP';
+      const body = JSON.stringify({ error: { type: 'upgrade_unavailable', message } });
+      socket.on('error', () => {});
+      socket.end(`HTTP/1.1 ${status} ${status === 426 ? 'Upgrade Required' : status === 404 ? 'Not Found' : 'Forbidden'}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\nCache-Control: no-store\r\n\r\n${body}`);
     });
     server.keepAliveTimeout = 120_000;
     server.headersTimeout = 300_000;
@@ -131,6 +144,11 @@ export class GatewayServer {
       res.setHeader('vary', 'Origin');
     }
     res.setHeader('cache-control', 'no-store');
+
+    if (path === CODEX_COEXIST_BASE_PATH || path.startsWith(CODEX_COEXIST_BASE_PATH + '/')) {
+      await this.handleCodexCoexist(req, res, path);
+      return;
+    }
 
     if (req.method === 'OPTIONS') {
       res.writeHead(204, CORS);
@@ -310,6 +328,97 @@ export class GatewayServer {
     }
   }
 
+  private async handleCodexCoexist(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
+    const fail = (status: number, message: string) => {
+      if (res.headersSent || res.destroyed) return;
+      res.writeHead(status, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: { type: 'codex_coexist_error', message } }));
+    };
+    const auth = authorizeCodexCoexistRequest(req, this.deps.store);
+    if (!auth.ok) { fail(auth.status, auth.message); return; }
+    const endpoint = codexCoexistEndpoint(path);
+    if (endpoint === 'models' && req.method === 'GET') {
+      const catalog = getCoexistCatalog(this.deps.store);
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ...catalog.nativeCatalog, object: 'list', data: catalog.models.map(model => ({
+        id: model.id, object: 'model', owned_by: model.providerName, display_name: model.displayName,
+      })) }));
+      return;
+    }
+    if (endpoint === 'responses' && req.method === 'GET') { fail(426, '共存网关使用 HTTP Responses；请让客户端回退到 HTTP'); return; }
+    if (req.method !== 'POST' || endpoint === 'models') { fail(405, '此共存接口不支持该请求方法'); return; }
+    try {
+      const body = await readCodexCoexistBody(req);
+      const plan = prepareCodexCoexistRequest(auth.authorization, this.deps.store, path, body, req.headers);
+      if (plan.kind === 'gateway') {
+        // The generic proxy must never see the native OAuth/account/cookie headers.
+        req.headers = { ...plan.headers, 'x-aurora-agent': 'Codex / ChatGPT 桌面版' };
+        req.rawHeaders = Object.entries(req.headers).flatMap(([key, value]) => [key, String(value)]);
+        await this.proxy('openai-responses', plan.body, req, res, plan.path);
+      } else {
+        await this.proxyOfficialCodex(plan, body as Record<string, any>, req, res);
+      }
+    } catch (error) {
+      fail(error instanceof CodexCoexistError ? error.status : 502,
+        error instanceof CodexCoexistError ? error.message : '共存请求未能完成，请检查客户端登录及本地网关状态');
+    }
+  }
+
+  private async proxyOfficialCodex(plan: Extract<CodexCoexistPlan, { kind: 'official' }>, body: Record<string, any>,
+    req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const store = this.deps.store, settings = store.getSettings(), startedAt = Date.now(), requestId = newId('resp_', 24);
+    const rawThreadId = req.headers['x-codex-thread-id'] || req.headers['x-thread-id'] || req.headers['thread-id'] || body.metadata?.thread_id;
+    const threadId = typeof rawThreadId === 'string' && /^[a-zA-Z0-9_-]{1,160}$/.test(rawThreadId) ? rawThreadId : undefined;
+    const controller = new AbortController(), cancel = () => controller.abort();
+    res.once('close', cancel);
+    const agent = 'Codex / ChatGPT 桌面版', providerName = 'ChatGPT 官方账号';
+    trackRequest(store, { id: requestId, threadId, agent, phase: 'connecting', model: body.model,
+      providerName, startedAtMs: startedAt, attempts: 1, autoRetries: 0 });
+    const cand = { model: plan.model, providerModel: { id: plan.model },
+      provider: { id: 'official', name: providerName, format: 'openai-responses', apiKeys: [] } };
+    let recorded = false;
+    try {
+      const ir = parseClientRequest('openai-responses', body);
+      // The URL comes exclusively from the fixed-host plan. openUpstream never follows redirects.
+      const upstream = await (this.deps.officialTransport || openUpstream)(plan.url, {
+        method: 'POST', headers: plan.headers, body: plan.body, proxy: settings.proxy || undefined,
+        timeoutMs: settings.requestTimeoutMs, firstByteTimeoutMs: settings.firstByteTimeoutMs, signal: controller.signal,
+      });
+      if (upstream.status < 200 || upstream.status >= 300) {
+        (upstream.stream as any).destroy?.();
+        const status = upstream.status >= 400 ? upstream.status : 502;
+        throw new CodexCoexistError(status, upstream.status === 401
+          ? '官方登录已失效，请在官方客户端刷新或重新登录；未向第三方供应商重试'
+          : `官方服务返回 HTTP ${upstream.status}；未向第三方供应商重试`);
+      }
+      this.status.requests++;
+      res.setHeader('x-aurora-provider', encodeURIComponent(providerName));
+      res.setHeader('x-aurora-model', encodeURIComponent(plan.model));
+      res.setHeader('x-aurora-route', encodeURIComponent('官方账号直达官方 Responses'));
+      if (ir.stream) await this.pipeStream(upstream.stream, upstream.headers, 'openai-responses', ir, cand,
+        requestId, res, startedAt, 1, agent, new Masker(false), true, [plan.headers.authorization.slice(7)]);
+      else await this.pipeJson(upstream.stream, 'openai-responses', ir, cand, requestId, res, startedAt, 1, agent, new Masker(false), true);
+      recorded = true;
+    } catch (error) {
+      this.status.errors++;
+      const status = controller.signal.aborted ? 499 : error instanceof CodexCoexistError ? error.status : 502;
+      const message = controller.signal.aborted ? '客户端已取消官方请求' : error instanceof CodexCoexistError ? error.message : '官方请求连接失败，请检查网络和官方客户端登录';
+      this.status.lastError = message;
+      if (!res.headersSent && !res.destroyed) {
+        res.writeHead(status, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: { type: 'official_upstream_error', message } }));
+      } else if (!res.destroyed) res.end();
+      this.record({ ts: nowIso(), agent, providerId: 'official', providerName, model: plan.model, requestModel: body.model,
+        protocol: 'openai-responses', stream: !!body.stream, status, error: message, inputTokens: 0, outputTokens: 0,
+        cacheRead: 0, cacheWrite: 0, cacheReadKnown: false, cacheWriteKnown: false, cost: 0, latencyMs: Date.now() - startedAt,
+        attempts: 1, requestId });
+      recorded = true;
+    } finally {
+      res.off('close', cancel);
+      if (!recorded) finishRequest(store, requestId);
+    }
+  }
+
   private detectProtocol(path: string): ProtocolName | null {
     if (path.endsWith('/v1/messages') || path === '/messages') return 'anthropic';
     if (path.endsWith('/chat/completions')) return 'openai-chat';
@@ -368,6 +477,8 @@ export class GatewayServer {
     const requestId = newId(proto === 'anthropic' ? 'msg_' : proto === 'openai-responses' ? 'resp_' : 'chatcmpl-', 24);
     const store = this.deps.store;
     const settings = store.getSettings();
+    const controller = new AbortController();
+    res.once('close', () => controller.abort());
 
     let ir: IRRequest;
     try {
@@ -439,6 +550,7 @@ export class GatewayServer {
     const maxAttempts = Math.min(resolved.candidates.length, 1 + Math.max(0, resolved.retries ?? settings.maxRetries));
 
     for (const cand of resolved.candidates.slice(0, maxAttempts)) {
+      if (controller.signal.aborted || res.destroyed) { finishRequest(store, requestId); return; }
       attempt++;
       updateRequest(store, requestId, { attempts: attempt, autoRetries: attempt - 1, phase: attempt > 1 ? 'retrying' : 'connecting', model: cand.model, providerName: cand.provider.name });
       const supportsImages = cand.providerModel.capabilities?.vision ?? true;
@@ -469,6 +581,7 @@ export class GatewayServer {
           proxy: cand.provider.proxy || settings.proxy || undefined,
           timeoutMs: settings.requestTimeoutMs,
           firstByteTimeoutMs: settings.firstByteTimeoutMs,
+          signal: controller.signal,
         });
 
         if (upstream.status < 200 || upstream.status >= 300) {
@@ -499,6 +612,7 @@ export class GatewayServer {
         }
         return;
       } catch (e: any) {
+        if (controller.signal.aborted || res.destroyed) { finishRequest(store, requestId); return; }
         lastErr = { status: 0, message: this.redactError(String(e?.message ?? e)) };
         continue;
       }
@@ -624,6 +738,7 @@ export class GatewayServer {
     agent: string,
     masker: Masker,
     native = false,
+    extraSecrets: string[] = [],
   ): Promise<void> {
     if (!String(headers['content-type'] ?? '').toLowerCase().includes('text/event-stream')) {
       throw new Error('上游没有返回 SSE 流，请检查供应商协议和流式支持');
@@ -671,6 +786,21 @@ export class GatewayServer {
     const processChunk = (chunk: string) => {
       if (native) write(chunk);
       for (const evt of parser.push(chunk)) {
+        if (cand.provider.format === 'openai-responses') {
+          try {
+            const json = JSON.parse(evt.data), raw = json.response?.usage || json.usage;
+            const count = (value: unknown) => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
+            if (raw && typeof raw === 'object') {
+              const input = count(raw.input_tokens), output = count(raw.output_tokens), cached = count(raw.input_tokens_details?.cached_tokens), written = count(raw.cache_creation_input_tokens);
+              if (input !== undefined) { usage.inputTokens = input; reportedInput = true; }
+              if (output !== undefined) usage.outputTokens = output;
+              if (cached !== undefined) usage.cacheReadTokens = cached;
+              if (written !== undefined) usage.cacheWriteTokens = written;
+              updateRequest(this.deps.store, requestId, { inputTokens: reportedInput ? usage.inputTokens : undefined,
+                outputTokens: output, cacheRead: usage.cacheReadTokens, cacheWrite: usage.cacheWriteTokens });
+            }
+          } catch { /* usage observation must not alter opaque upstream events */ }
+        }
         if (decoder.isDone(evt.data)) { terminal = true; continue; }
         const events = decoder.decode(evt);
         if (!events) continue;
@@ -685,7 +815,7 @@ export class GatewayServer {
             updateRequest(this.deps.store, requestId, { estimatedOutputTokens: Math.ceil(outputCharacters / 4) });
           }
           if (e.type === 'stop') { terminal = true; flushChannels(); }
-          if (e.type === 'error') { terminal = true; streamError = this.redactError(e.message); e = { ...e, message: streamError }; }
+          if (e.type === 'error') { terminal = true; streamError = this.redactError(e.message, extraSecrets); e = { ...e, message: streamError }; }
           if (native) continue;
           if (e.type === 'block_stop') flushChannels(e.index);
           if (e.type === 'text_delta' || e.type === 'thinking_delta' || e.type === 'tool_delta') {
@@ -719,7 +849,7 @@ export class GatewayServer {
         resolve();
       });
     }).catch((e) => {
-      streamError = this.redactError(String(e?.message ?? e));
+      streamError = this.redactError(String(e?.message ?? e), extraSecrets);
       write(encoder.push({ type: 'error', message: streamError }));
     });
 
@@ -770,9 +900,9 @@ export class GatewayServer {
     this.deps.onRequest?.(rec);
   }
 
-  private redactError(text: string): string {
+  private redactError(text: string, extraSecrets: string[] = []): string {
     let result = text;
-    const secrets = [this.deps.store.getSettings().gatewayToken, ...this.deps.store.listProviders().flatMap((p) => p.apiKeys.map((k) => k.key))];
+    const secrets = [...extraSecrets, this.deps.store.getSettings().gatewayToken, ...this.deps.store.listProviders().flatMap((p) => p.apiKeys.map((k) => k.key))];
     for (const key of secrets) if (key && key.length >= 4) result = result.split(key).join('[已隐藏密钥]');
     return result.slice(0, 2000);
   }

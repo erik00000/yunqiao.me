@@ -3,7 +3,7 @@ Requires: pip install playwright; npm run build. No real client configuration is
 """
 from pathlib import Path
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, expect
 import json
 import sqlite3
 import os
@@ -180,7 +180,7 @@ def main():
             }''', server.server_port)
             assert rollback['failed'] and rollback['running'] and rollback['originalPort'] == rollback['savedPort'] == rollback['actualPort'], rollback
             passed('Occupied port rolls back settings and restores the actual listener')
-            page.get_by_role('button', name='云端与更新', exact=True).click()
+            page.get_by_role('button', name='版本更新', exact=True).click()
             page.screenshot(animations="disabled", path=str(ROOT / 'docs/images/settings-v0.6.png'))
             for name, title in [('模型管理', '模型'), ('路由分组', '路由分组'), ('运行概览', '仪表盘'), ('我的供应商', '我的供应商'), ('本地账号', '本地账号'), ('用量与账单', '用量')]:
                 page.locator('nav').get_by_role('button', name=name, exact=False).click()
@@ -198,7 +198,7 @@ def main():
             assert page.get_by_role('switch').count() > 0
             switch = page.get_by_role('switch').first
             switch.click()
-            page.wait_for_function('document.querySelector("button[role=switch]")?.getAttribute("aria-checked") === "true"')
+            expect(switch).to_have_attribute('aria-checked', 'true')
             plugins = page.evaluate('async () => (await window.aurora.invoke("state.get")).plugins')
             assert any(p['enabled'] and p.get('builtin') for p in plugins)
             switch.click()

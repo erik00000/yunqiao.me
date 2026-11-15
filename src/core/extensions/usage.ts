@@ -5,12 +5,14 @@ const known = new Map<string, {file:string;at:number}>();
 function roots():string[]{ const dir=process.env.AURORA_CLIENT_HOME?path.join(process.env.AURORA_CLIENT_HOME,'.codex'):process.env.CODEX_HOME||path.join(os.homedir(),'.codex');return [path.join(dir,'sessions'),path.join(dir,'archived_sessions')]; }
 export function resolveRollout(sessionId:string):string|null{
   const id=String(sessionId||'').replace(/^local:/,'');if(!/^[a-zA-Z0-9_-]{8,150}$/.test(id))throw new Error('会话 ID 无效');
-  const cached=known.get(id);if(cached&&Date.now()-cached.at<30000&&fs.existsSync(cached.file))return cached.file;
+  const searchRoots=roots(),key=JSON.stringify([searchRoots,id]);
+  const matches=(file:string):boolean=>{let fd:number|undefined;try{const stat=fs.lstatSync(file);if(!stat.isFile()||stat.isSymbolicLink())return false;fd=fs.openSync(file,'r');const buf=Buffer.alloc(32768),n=fs.readSync(fd,buf,0,buf.length,0);return buf.subarray(0,n).toString('utf8').split('\n').some(line=>{try{const row=JSON.parse(line);return row.type==='session_meta'&&row.payload?.id===id;}catch{return false;}});}catch{return false;}finally{if(fd!==undefined)fs.closeSync(fd);}};
+  const cached=known.get(key);if(cached&&Date.now()-cached.at<30000&&matches(cached.file))return cached.file;known.delete(key);
   let visited=0;let found:string|null=null;
-  function walk(dir:string,depth:number){if(found||depth>7||visited>10000)return;let entries:fs.Dirent[];try{entries=fs.readdirSync(dir,{withFileTypes:true});}catch{return;}
-    for(const e of entries){visited++;if(e.isSymbolicLink())continue;const file=path.join(dir,e.name);if(e.isDirectory())walk(file,depth+1);else if(e.isFile()&&e.name.endsWith('.jsonl')&&e.name.includes(id)){const fd=fs.openSync(file,'r');try{const buf=Buffer.alloc(32768);const n=fs.readSync(fd,buf,0,buf.length,0);for(const line of buf.subarray(0,n).toString('utf8').split('\n'))try{const row=JSON.parse(line);if(row.type==='session_meta'&&row.payload?.id===id){found=file;break;}}catch{}}finally{fs.closeSync(fd);} }if(found)return;}
+  function walk(dir:string,depth:number){if(found||depth>7||visited>=10000)return;let entries:fs.Dirent[];try{if(fs.lstatSync(dir).isSymbolicLink())return;entries=fs.readdirSync(dir,{withFileTypes:true});}catch{return;}
+    for(const e of entries){if(found||visited>=10000)return;visited++;if(e.isSymbolicLink())continue;const file=path.join(dir,e.name);if(e.isDirectory())walk(file,depth+1);else if(e.isFile()&&e.name.endsWith('.jsonl')&&e.name.includes(id)&&matches(file))found=file;}
   }
-  roots().forEach(root=>walk(root,0));if(found)known.set(id,{file:found,at:Date.now()});return found;
+  searchRoots.forEach(root=>walk(root,0));if(found){if(known.size>=500)known.delete(known.keys().next().value!);known.set(key,{file:found,at:Date.now()});}return found;
 }
 const numeric=(v:any):number|null=>typeof v==='number'&&Number.isFinite(v)&&v>=0?v:null;
 export function parseUsageLines(text:string):any[]{

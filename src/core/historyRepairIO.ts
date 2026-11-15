@@ -82,3 +82,24 @@ export function discoverHistoryDbs(ctx: HistoryContext): string[] {
   if (out.length > 40) throw new Error('当前目录数据库过多，请检查 CODEX_SQLITE_HOME 配置');
   return out.sort();
 }
+
+/** Read-only native provider regions for history filtering; duplicate canonical identities stay ambiguous. */
+export function nativeSessionRegions(ctx: HistoryContext = historyContext()): Map<string, { modelProvider?: string; archived?: boolean }> {
+  const regions = new Map<string, { modelProvider?: string; archived?: boolean }>(), seen = new Set<string>();
+  for (const file of discoverHistoryDbs(ctx)) {
+    const db = openHistoryDb(file, true);
+    try {
+      const columns = tableColumns(db, 'threads');
+      if (!columns.has('id') || !columns.has('model_provider')) continue;
+      const rows = db.prepare(`SELECT id,model_provider${columns.has('archived') ? ',archived' : ''} FROM threads LIMIT 50001`).all();
+      if (rows.length > 50000) throw new Error('原生会话索引过大，未加载区域筛选');
+      for (const row of rows) {
+        if (typeof row.id !== 'string') continue;
+        if (seen.has(row.id)) { regions.set(row.id, {}); continue; }
+        seen.add(row.id);
+        regions.set(row.id, { modelProvider: typeof row.model_provider === 'string' && row.model_provider ? row.model_provider : undefined, archived: columns.has('archived') ? !!row.archived : undefined });
+      }
+    } finally { db.close(); }
+  }
+  return regions;
+}

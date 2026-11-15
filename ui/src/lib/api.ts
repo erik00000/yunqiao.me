@@ -20,6 +20,7 @@ export interface ApiKey {
   id: string;
   label: string;
   key: string;
+  hasKey?: boolean;
   enabled: boolean;
   weight: number;
   cooldownUntil?: string;
@@ -128,20 +129,49 @@ export interface UpdateInfo {
   current: string;
   publishedAt?: string;
   message?: string;
+  source?: 'github' | 'website';
+  releaseUrl?: string;
+  assetName?: string;
 }
 
 export interface LocalAccount {
   id: string;
-  kind: 'claude' | 'chatgpt' | 'copilot';
+  kind: 'claude' | 'chatgpt' | 'copilot' | 'gemini';
   label: string;
   source: string;
+  clientId?: string;
+  clientName?: string;
   email?: string;
   plan?: string;
-  token?: string;
+  authKind?: 'api-key' | 'oauth';
+  importable?: boolean;
+  credentialStatus?: 'present' | 'expired' | 'record-only' | 'unknown';
+  expiresAt?: string;
   baseUrl?: string;
   format: ProtocolName;
   found: boolean;
   note?: string;
+}
+
+export interface LocalClientSource {
+  id: string;
+  clientId: string;
+  label: string;
+  path: string;
+  status: 'imported' | 'updated' | 'unchanged' | 'linked' | 'modified' | 'ignored' | 'missing-key' | 'unsupported' | 'missing-file';
+  providerId?: string;
+  message?: string;
+  canRestore?: boolean;
+}
+
+export interface LocalClientsSnapshot {
+  ok: boolean;
+  checkedAt: string;
+  sources: LocalClientSource[];
+  accounts: LocalAccount[];
+  added: number;
+  updated: number;
+  warnings: string[];
 }
 
 export interface PluginRecord {
@@ -174,6 +204,8 @@ export interface AgentCatalogItem {
 
 export interface AgentState {
   id: string;
+  authMode?: 'api' | 'coexist';
+  mode?: 'gateway' | 'direct';
   connected: boolean;
   providerId?: string;
   model?: string;
@@ -210,11 +242,20 @@ export interface GatewayStatus {
 }
 
 export interface AppState {
+  build?: { id: string; builtAt: string; revision: string; channel: 'local' | 'release' };
   settings: Settings;
   providers: Provider[];
+  localClients?: LocalClientsSnapshot;
+  codexCoexist?: {
+    identity: { available: boolean; status: string; message: string; expiresAt?: string };
+    models: Array<{ id: string; upstreamModel: string; providerId: string; providerName: string; displayName: string; official: boolean; contextWindow?: number }>;
+    officialModelCount: number;
+    warnings: string[];
+  };
   groups: RoutingGroup[];
   agents: Record<string, AgentState>;
   plugins: PluginRecord[];
+  middlewareStatus?: Record<string, { status: 'ok' | 'error' | 'blocked'; checkedAt: string; message?: string }>;
   presets: Preset[];
   catalog?: { source: 'remote' | 'cache' | 'builtin'; version: number; fetchedAt?: string; warning?: string; syncing?: boolean };
   builtinMiddleware: Array<{ id: string; name: string; description: string; defaultOptions: any }>;
@@ -273,6 +314,8 @@ export interface SessionSummary {
   tokens: number;
   cost: number;
   model?: string;
+  modelProvider?: string;
+  archived?: boolean;
   updatedAt: string;
   createdAt: string;
   sizeBytes: number;

@@ -87,6 +87,9 @@ def main():
     assert asar.is_file(), 'Packaged app.asar is missing'
     package = json.loads(read_asar(asar, 'package.json'))
     assert package['version'] == args.version, f"Refusing old artifact {package['version']}; expected {args.version}"
+    built_main = ROOT / 'dist/main/main.cjs'
+    assert built_main.is_file(), 'Build the current source before packaged acceptance'
+    assert read_asar(asar, 'dist/main/main.cjs') == built_main.read_bytes(), 'Packaged main process differs from the current build'
     assert package['license'] == 'AGPL-3.0-only'
     assert b'GNU AFFERO GENERAL PUBLIC LICENSE' in read_asar(asar, 'LICENSE')
     assert b'Facebook, Inc.' in read_asar(asar, 'THIRD_PARTY_NOTICES.md')
@@ -117,6 +120,7 @@ def main():
     (data / 'settings.json').write_text(json.dumps({
         'theme': 'light', 'gatewayHost': '127.0.0.1', 'gatewayPort': port,
         'autoStartGateway': True, 'autoCheckUpdate': False, 'closeToTray': False,
+        'autoSyncModels': False, 'updateUrl': 'https://ai.haowucm.cn/pub.php?action=update',
         'catalogUrl': f'http://127.0.0.1:{catalog.server_port}/catalog',
     }), encoding='utf-8')
     environment = dict(os.environ, AURORA_HOME=str(data), YUNQIAO_HOME=str(data), AURORA_CLIENT_HOME=str(clients),
@@ -180,10 +184,39 @@ def main():
 
             images = ROOT / 'docs/images'
             images.mkdir(exist_ok=True)
+            page.get_by_role('button', name='系统设置', exact=True).click()
+            page.get_by_role('button', name='版本更新', exact=True).click()
+            expect(page.get_by_role('button', name='检查更新', exact=True)).to_be_visible()
+            expect(page.get_by_label('远端目录地址', exact=True)).to_have_count(0)
+            expect(page.get_by_text('供应商目录', exact=True)).to_have_count(0)
+            expect(page.get_by_text('更新接口地址', exact=True)).to_have_count(0)
+            settings = page.evaluate("async () => (await window.aurora.invoke('state.get')).settings")
+            assert settings['autoSyncModels'] is True
+            assert settings['updateUrl'] == 'https://api.github.com/repos/jxb412/aurora/releases/latest'
+            page.screenshot(path=str(images / 'settings-v0.6.png'), animations='disabled', style='.toast-wrap{visibility:hidden!important}')
+            checks.append('Packaged settings hide catalog controls and migrate legacy preferences to automatic sync and GitHub releases')
+            build = page.evaluate("async () => (await window.aurora.invoke('state.get')).build")
+            assert build and build['id'] and build['builtAt'], 'Actual package must identify its build, not only its version number'
+            if build['channel'] == 'local':
+                expect(page.get_by_text('本地调试版', exact=False)).to_be_visible()
+            page.get_by_role('button', name='数据与关于', exact=True).click()
+            expect(page.get_by_role('link', name='项目源码 ↗', exact=True)).to_have_attribute('href', 'https://github.com/jxb412/aurora')
+            checks.append('The packaged build is identifiable and source links do not depend on an unpublished release tag')
+            page.locator('nav').get_by_role('button', name='历史会话', exact=True).click()
+            page.get_by_role('button', name='批量修复历史 / 区域迁移', exact=True).click()
+            dialog = page.get_by_role('dialog', name='历史会话 · 批量修复', exact=True)
+            expect(dialog.get_by_label('目标供应商标识', exact=True)).to_be_enabled()
+            regions = page.evaluate("async () => await window.aurora.invoke('codex.repair.providers')")
+            assert regions['ok'] and any(item['id'] == 'openai' for item in regions['targets'])
+            dialog.get_by_role('button', name='关闭', exact=True).click()
+            checks.append('The actual EXE exposes history region selection and native provider discovery through IPC')
+
             page.locator('nav').get_by_role('button', name='插件中心', exact=True).click()
             page.get_by_role('heading', name='ChatGPT 桌面版插件', exact=True).wait_for(timeout=15000)
             page.get_by_role('button', name='官方拓展包 5', exact=True).click()
             expect(page.locator('.extension-card')).to_have_count(5)
+            expect(page.get_by_text('云桥桌面扩展', exact=True)).to_be_visible()
+            assert 'CODEX++' not in page.locator('main').inner_text().upper()
             assert page.get_by_role('alert').count() == 0
             page.screenshot(path=str(images / 'plugins-v0.6.png'), animations='disabled', style='.toast-wrap{visibility:hidden!important}')
             checks.append('Packaged plugin page renders the five bundled packages without errors')
@@ -205,9 +238,10 @@ def main():
                 'version': args.version, 'passed': True, 'count': len(checks), 'checks': checks,
                 'executable': str(executable.relative_to(ROOT)) if executable.is_relative_to(ROOT) else str(executable),
                 'exeSha256': sha256(executable), 'asarSha256': sha256(asar),
+                'build': build,
                 'resourceFilesVerified': len(manifest), 'profile': 'isolated temporary app, gateway and client directories',
                 'membershipPublicConfigWarning': membership_warning,
-                'screenshots': ['docs/images/plugins-v0.6.png', 'docs/images/membership-v0.6.png'],
+                'screenshots': ['docs/images/settings-v0.6.png', 'docs/images/plugins-v0.6.png', 'docs/images/membership-v0.6.png'],
             }
             (ROOT / f'docs/PACKAGED-VALIDATION-{args.version}.json').write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
             print(json.dumps(report, ensure_ascii=True), flush=True)

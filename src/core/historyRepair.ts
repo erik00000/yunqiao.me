@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
+import { parse as parseToml } from 'smol-toml';
 import { atomicWrite } from './agents/configFiles.js';
 import { acquireHistoryLock, assertClientsStopped, checkedFile, discoverHistoryDbs, fileHash, historyContext, inside, openHistoryDb, repairRoot, saveJournal, sqlIdentifier, tableColumns, valueHash, type HistoryContext, type SqlDb } from './historyRepairIO.js';
 
@@ -20,20 +21,40 @@ const MAX_FILES = 10000;
 const MAX_LINE = 32 * 1024 * 1024;
 const serialize = (value: any): Cell => typeof value === 'bigint' ? Number(value) : value === undefined ? null : value;
 function schemaHash(db: SqlDb): string { return valueHash(db.prepare("SELECT name, sql FROM sqlite_master WHERE type IN ('table','index','trigger') ORDER BY type,name").all()); }
-function readProvider(ctx: HistoryContext): { current: string; available: Set<string>; hash: string } {
+const providerIdentity = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 200 && value.trim() === value && !/[\u0000-\u001f\u007f]/.test(value);
+const recordObject = (value: any): value is Record<string, any> => !!value && typeof value === 'object' && !Array.isArray(value);
+function readProvider(ctx: HistoryContext): { current: string; available: Set<string>; targets: Array<{ id: string; name: string; current: boolean }>; hash: string } {
   const file = path.join(ctx.home, 'config.toml');
-  const text = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
-  const current = /^\s*model_provider\s*=\s*["']([^"']+)["']/m.exec(text.split(/^\s*\[/m)[0])?.[1] || 'openai';
-  const available = new Set<string>(['openai']);
-  for (const match of text.matchAll(/^\s*\[model_providers\.(?:"([^"\n]+)"|'([^'\n]+)'|([A-Za-z0-9_-]+))\]\s*(?:#.*)?$/gm)) available.add(match[1] || match[2] || match[3]);
-  return { current, available, hash: valueHash(text) };
+  if (!fs.existsSync(file)) throw new Error('未找到当前客户端 config.toml，不能确认迁移目标');
+  checkedFile(ctx.home, file);
+  if (fs.statSync(file).size > 4 * 1024 * 1024) throw new Error('客户端 config.toml 过大，未读取迁移目标');
+  const text = fs.readFileSync(file, 'utf8');
+  let config: any;
+  try { config = parseToml(text.replace(/^\uFEFF/, '')); }
+  catch { throw new Error('客户端 config.toml 不是有效的 TOML，请先在原客户端检查配置'); }
+  let profile: Record<string, any> = {};
+  if (config.profile !== undefined) {
+    if (typeof config.profile !== 'string' || !recordObject(config.profiles?.[config.profile])) throw new Error('当前客户端选择的 profile 无效，不能确认迁移目标');
+    profile = config.profiles[config.profile];
+  }
+  if ([config.model_providers, profile.model_providers].some(value => value !== undefined && !recordObject(value))) throw new Error('客户端 model_providers 不是有效的供应商表');
+  const current = profile.model_provider ?? config.model_provider ?? 'openai';
+  if (!providerIdentity(current)) throw new Error('当前客户端 model_provider 标识无效');
+  const providers: Record<string, any> = { ...(config.model_providers || {}), ...(profile.model_providers || {}) };
+  const targets = [{ id: 'openai', name: typeof providers.openai?.name === 'string' ? providers.openai.name : 'OpenAI / ChatGPT', current: current === 'openai' }];
+  for (const [id, provider] of Object.entries(providers)) {
+    if (id !== 'openai' && id !== 'codex_plus_managed' && providerIdentity(id) && recordObject(provider)) targets.push({ id, name: typeof provider.name === 'string' ? provider.name : id, current: id === current });
+  }
+  targets.sort((a, b) => Number(b.current) - Number(a.current) || a.id.localeCompare(b.id));
+  return { current, available: new Set(targets.map(target => target.id)), targets, hash: valueHash(text) };
 }
 function normalizeOptions(ctx: HistoryContext, input: HistoryRepairOptions = {}): { options: Options; config: ReturnType<typeof readProvider> } {
+  if (input.targetProvider !== undefined && typeof input.targetProvider !== 'string') throw new Error('目标供应商标识无效');
   const config = readProvider(ctx), target = input.targetProvider?.trim() || config.current;
-  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/.test(target) || !config.available.has(target)) throw new Error('目标供应商必须是在当前客户端 config.toml 中配置的 provider 标识');
+  if (!providerIdentity(target) || !config.available.has(target)) throw new Error('目标供应商必须是在当前客户端 config.toml 中配置的 provider 标识');
   const scope = input.scope || 'all'; if (!['active', 'archived', 'all'].includes(scope)) throw new Error('会话范围无效');
   if (input.ids && (!Array.isArray(input.ids) || input.ids.length > MAX_FILES || input.ids.some(id => typeof id !== 'string' || !UUID.test(id)))) throw new Error('所选会话 ID 无效');
-  if (input.sourceProvider !== undefined && typeof input.sourceProvider !== 'string') throw new Error('来源供应商筛选无效');
+  if (input.sourceProvider !== undefined && !providerIdentity(input.sourceProvider)) throw new Error('来源供应商筛选无效');
   return { config, options: { targetProvider: target, scope, ids: input.ids ? [...new Set(input.ids)].sort() : undefined, sourceProvider: input.sourceProvider, fixPaths: input.fixPaths !== false } };
 }
 function walkFiles(dir: string, out: string[] = [], depth = 0): string[] {
@@ -66,7 +87,8 @@ function parseLine(line: Buffer): { record: any; ending: string; bom: string } |
   if (ending) text = text.slice(0, -ending.length);
   if (!text.trim()) return null;
   if (text.includes('\uFFFD')) throw new Error('会话记录包含无效 UTF-8 文本');
-  return { record: JSON.parse(text), ending, bom };
+  try { return { record: JSON.parse(text), ending, bom }; }
+  catch { throw new Error('会话记录不是完整有效的 JSON，未自动改写'); }
 }
 function rewritten(line: Buffer, parsed: ReturnType<typeof parseLine>, target: string): Buffer {
   if (!parsed || parsed.record?.type !== 'session_meta' || parsed.record.payload?.model_provider === target) return line;
@@ -113,7 +135,7 @@ function readIndexes(ctx: HistoryContext): { indexes: Map<string, IndexRow[]>; s
         if (!tables.includes(table)) continue;
         const columns = tableColumns(db, table), idColumn = table === 'threads' ? 'id' : 'thread_id';
         if (!columns.has(idColumn) || !columns.has('model_provider')) { warnings.push(`${path.basename(dbPath)} 的 ${table} 结构未知，未自动修改`); continue; }
-        const fields = [idColumn, 'model_provider', 'rollout_path', 'cwd', 'archived', 'title', 'display_title', 'host_id', 'source_kind', 'thread_source'].filter(field => columns.has(field));
+        const fields = [idColumn, 'model_provider', 'rollout_path', 'cwd', 'archived', 'title', 'display_title', 'host_id', 'source', 'source_kind', 'thread_source'].filter(field => columns.has(field));
         let where = '', params: Cell[] = [];
         if (table === 'local_thread_catalog' && columns.has('host_id')) {
           const hosts = tableColumns(db, 'local_thread_catalog_hosts');
@@ -128,13 +150,46 @@ function readIndexes(ctx: HistoryContext): { indexes: Map<string, IndexRow[]>; s
           const id = row[idColumn]; if (typeof id !== 'string' || !UUID.test(id)) continue;
           const keys: Record<string, Cell> = { [idColumn]: id }; if (table === 'local_thread_catalog' && columns.has('host_id')) keys.host_id = row.host_id;
           const values = Object.fromEntries(['model_provider', 'rollout_path', 'cwd'].filter(k => columns.has(k)).map(k => [k, serialize(row[k])]));
-          const indexed: IndexRow = { dbPath, table, keys, values, title: row.title || row.display_title || id, archived: !!row.archived, source: row.source_kind || row.thread_source || '' };
+          const indexed: IndexRow = { dbPath, table, keys, values, title: row.title || row.display_title || id, archived: !!row.archived, source: row.source || row.source_kind || row.thread_source || '' };
           indexes.set(id, [...(indexes.get(id) || []), indexed]);
         }
       }
     } finally { db.close(); }
   }
   return { indexes, schemas, warnings };
+}
+
+/** Only native threads determine the visible provider region; rollout metadata is supporting evidence. */
+async function providerInventory(ctx: HistoryContext) {
+  const config = readProvider(ctx), { indexes, warnings } = readIndexes(ctx);
+  const sources = new Map<string, { id: string; count: number; active: number; archived: number }>();
+  let ambiguous = 0, missingProvider = 0, metadataMismatch = 0, unindexed = 0;
+  const canonical = new Map<string, IndexRow>();
+  for (const [id, rows] of indexes) {
+    const native = rows.filter(row => row.table === 'threads');
+    if (native.length !== 1) { if (native.length > 1) ambiguous++; continue; }
+    const row = native[0], provider = row.values.model_provider;
+    if (!providerIdentity(provider)) { missingProvider++; continue; }
+    canonical.set(id, row);
+    const source = sources.get(provider) || { id: provider, count: 0, active: 0, archived: 0 };
+    source.count++; source[row.archived ? 'archived' : 'active']++;
+    sources.set(provider, source);
+  }
+  const paths = [...walkFiles(path.join(ctx.home, 'sessions')), ...walkFiles(path.join(ctx.home, 'archived_sessions'))];
+  if (paths.length > MAX_FILES) throw new Error('会话超过 10000 个文件，未完成区域扫描');
+  const mismatched = new Set<string>(), orphaned = new Set<string>();
+  for (const file of paths) {
+    checkedFile(ctx.home, file);
+    const source = await inspectFile(file, config.current, false), row = canonical.get(source.id);
+    if (!row) orphaned.add(source.id);
+    else if (source.providers.some(provider => provider !== row.values.model_provider)) mismatched.add(source.id);
+  }
+  metadataMismatch = mismatched.size; unindexed = orphaned.size;
+  if (ambiguous) warnings.push(`${ambiguous} 个会话在多个原生 threads 索引中重复，未计入可选区域，迁移时需要先处理冲突。`);
+  if (missingProvider) warnings.push(`${missingProvider} 个原生会话缺少有效供应商标识，可使用全部来源修复检查。`);
+  if (metadataMismatch) warnings.push(`${metadataMismatch} 个会话的日志元数据与原生索引归属不同；区域计数和来源筛选以原生 threads 索引为准。`);
+  if (unindexed) warnings.push(`${unindexed} 个日志会话没有唯一有效的原生 threads 归属，未计入区域；预览会说明不能迁移的原因。`);
+  return { ok: true, currentProvider: config.current, targets: config.targets, sources: [...sources.values()].sort((a, b) => a.id.localeCompare(b.id)), warnings };
 }
 function itemSummary(items: HistoryRepairItem[], files: SourceFile[], rows: RowState[], scanned: number): Summary {
   const ready = new Set(items.filter(i => i.status === 'ready').map(i => i.id));
@@ -156,17 +211,18 @@ async function buildPlan(ctx: HistoryContext, input: HistoryRepairOptions): Prom
   const items: HistoryRepairItem[] = [], files: SourceFile[] = [], rows: RowState[] = [];
   for (const id of ids) {
     if (selected && !selected.has(id)) continue;
-    const sources = byId.get(id) || [], indexRows = indexes.get(id) || [];
-    const archived = sources[0]?.archived ?? indexRows[0]?.archived ?? false;
+    const sources = byId.get(id) || [], indexRows = indexes.get(id) || [], canonical = indexRows.filter(row => row.table === 'threads');
+    const archived = canonical[0]?.archived ?? sources[0]?.archived ?? indexRows[0]?.archived ?? false;
     if (options.scope !== 'all' && (options.scope === 'archived') !== archived) continue;
-    const providers = [...new Set([...sources.flatMap(s => s.providers), ...indexRows.map(r => String(r.values.model_provider ?? '(missing)'))])];
-    if (options.sourceProvider !== undefined && !providers.includes(options.sourceProvider)) continue;
-    const item: HistoryRepairItem = { id, title: indexRows[0]?.title || id, path: sources[0]?.path || String(indexRows[0]?.values.rollout_path || ''), paths: sources.map(s => s.path), archived, beforeProvider: [...new Set(indexRows.map(r => String(r.values.model_provider ?? '(missing)')))].join(', '), metadataProvider: [...new Set(sources.flatMap(s => s.providers))].join(', '), targetProvider: options.targetProvider, changes: [], status: 'unchanged', encrypted: sources.some(s => s.encrypted) };
+    if (options.sourceProvider !== undefined && !canonical.some(row => row.values.model_provider === options.sourceProvider)) continue;
+    const item: HistoryRepairItem = { id, title: canonical[0]?.title || indexRows[0]?.title || id, path: sources[0]?.path || String(indexRows[0]?.values.rollout_path || ''), paths: sources.map(s => s.path), archived, beforeProvider: [...new Set(canonical.map(r => String(r.values.model_provider ?? '(missing)')))].join(', '), metadataProvider: [...new Set(sources.flatMap(s => s.providers))].join(', '), targetProvider: options.targetProvider, changes: [], status: 'unchanged', encrypted: sources.some(s => s.encrypted) };
     if (!sources.length) { item.status = 'blocked'; item.reason = '没有找到包含同一原生 ID 的会话原文件；未猜测补建索引或内容'; }
     else if (sources.some(s => s.invalid)) { item.status = 'blocked'; item.reason = sources.find(s => s.invalid)?.invalid; }
     else if (sources.some(s => s.subagent) || indexRows.some(r => /subagent|sub_agent/i.test(r.source || ''))) { item.status = 'blocked'; item.reason = '子智能体会话保留原归属，避免改变父子任务关系'; }
-    else if (sources.some(s => s.archived !== archived)) { item.status = 'blocked'; item.reason = '相同会话 ID 同时存在活动与归档目录，需要手动核查'; }
+    else if (sources.some(s => s.archived !== sources[0].archived)) { item.status = 'blocked'; item.reason = '相同会话 ID 同时存在活动与归档目录，需要手动核查'; }
     else if (!indexRows.some(r => r.table === 'threads')) { item.status = 'blocked'; item.reason = '缺少原生 threads 行；仅有日志不足以安全重建所有必填索引字段'; }
+    else if (canonical.length !== 1) { item.status = 'blocked'; item.reason = '同一会话存在多个原生 threads 行，无法确认唯一归属'; }
+    else if (options.sourceProvider !== undefined && indexRows.some(row => row.table === 'local_thread_catalog' && row.values.model_provider !== options.sourceProvider && row.values.model_provider !== options.targetProvider)) { item.status = 'blocked'; item.reason = '本机目录归属既不属于原供应商也不属于目标供应商，需要先核查索引冲突'; }
     const rowChanges: RowState[] = [];
     if (item.status !== 'blocked') {
       for (const row of indexRows) {
@@ -188,6 +244,7 @@ async function buildPlan(ctx: HistoryContext, input: HistoryRepairOptions): Prom
     item.changes = [...new Set(item.changes)]; items.push(item);
   }
   if (items.some(i => i.encrypted)) warnings.push('部分会话包含 encrypted_content。修复保留这些内容原样，跨账号或供应商能否续聊仍取决于原客户端和原始身份。');
+  if (options.sourceProvider !== undefined) warnings.push('来源筛选以原生 threads 索引为准。迁移同步日志与本机目录归属，不移动会话文件，也不更改当前客户端的模型或供应商配置。');
   warnings.push('本操作同步供应商归属与可确认的文件路径，不修改聊天正文、账号凭据、任务执行状态，也不自动恢复被删除的任务。');
   const dbPaths = Object.keys(schemas);
   const summary = itemSummary(items, files, rows, ids.length);
@@ -218,7 +275,9 @@ function currentRow(db: SqlDb, row: RowState): Record<string, Cell> | undefined 
 }
 function writeRow(db: SqlDb, row: RowState, values: Record<string, Cell>): void {
   const fields = Object.keys(values), keys = Object.keys(row.keys);
-  const result = db.prepare(`UPDATE ${sqlIdentifier(row.table)} SET ${fields.map(k => `${sqlIdentifier(k)} = ?`).join(',')} WHERE ${keys.map(k => `${sqlIdentifier(k)} IS ?`).join(' AND ')}`).run(...fields.map(k => values[k]), ...keys.map(k => row.keys[k]));
+  const expected = valueHash(values) === valueHash(row.after) ? row.before : row.after;
+  if (valueHash(currentRow(db, row)) === valueHash(values)) return;
+  const result = db.prepare(`UPDATE ${sqlIdentifier(row.table)} SET ${fields.map(k => `${sqlIdentifier(k)} = ?`).join(',')} WHERE ${[...keys, ...fields].map(k => `${sqlIdentifier(k)} IS ?`).join(' AND ')}`).run(...fields.map(k => values[k]), ...keys.map(k => row.keys[k]), ...fields.map(k => expected[k]));
   if (Number(result.changes) !== 1) throw new Error('会话索引行数量发生变化，已停止写入');
 }
 async function stageSource(source: SourceFile, original: string, staged: string, target: string): Promise<void> {
@@ -298,6 +357,7 @@ export function createHistoryRepairService(ctx: HistoryContext = historyContext(
     return { ok: true, backups: list.sort((a, b) => b.createdAt.localeCompare(a.createdAt)) };
   }
   return {
+    async providers() { try { return await providerInventory(ctx); } catch (error) { return { ok: false, message: String((error as Error).message), currentProvider: '', targets: [], sources: [], warnings: [] }; } },
     async preview(input: HistoryRepairOptions = {}) { try { return publicPlan(await buildPlan(ctx, input)); } catch (error) { return { ok: false, message: String((error as Error).message), items: [], warnings: [] }; } },
     backups,
     async apply(input: HistoryRepairOptions & { revision: string }) {
@@ -361,6 +421,7 @@ export function createHistoryRepairService(ctx: HistoryContext = historyContext(
 export async function runHistoryRepairAction(action: string, payload: any): Promise<any | null> {
   const service = createHistoryRepairService();
   switch (action) {
+    case 'codex.repair.providers': return service.providers();
     case 'codex.repair.preview': return service.preview(payload);
     case 'codex.repair.apply': return service.apply(payload);
     case 'codex.repair.backups': return service.backups();

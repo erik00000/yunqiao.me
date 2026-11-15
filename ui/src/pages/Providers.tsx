@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import PresetPicker from '../components/PresetPicker';
+import { LocalIdentityCard, LocalScanDetails, localTime, useLocalClientScan } from '../components/LocalClients';
 import type { PageProps } from '../App';
 import { Btn, Empty, Field, Ico, Modal, Toggle, useToast } from '../components/ui';
 import {
@@ -25,43 +26,68 @@ const EMPTY_PROVIDER = (): Partial<Provider> => ({
   rateMultiplier: 1,
 });
 
-export default function Providers({ state, reload }: PageProps) {
+export default function Providers({ state, reload, go }: PageProps) {
   const toast = useToast();
+  const scan = useLocalClientScan(reload);
+  const snapshot = state.localClients;
   const [editing, setEditing] = useState<Partial<Provider> | null>(null);
   const [query, setQuery] = useState('');
   const [testing, setTesting] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<Record<string, any>>({});
+  const [modelSyncErrors, setModelSyncErrors] = useState<Record<string, string>>({});
   const [presetQuery, setPresetQuery] = useState('');
-  const [cloud, setCloud] = useState<{ open: boolean; loading: boolean; data: any; picked: Set<string> }>({
+  const cloudRequest = useRef(0);
+  const [cloud, setCloud] = useState<{ open: boolean; loading: boolean; importing: boolean; error: string; data: any; picked: Set<string> }>({
     open: false,
     loading: false,
+    importing: false,
+    error: '',
     data: null,
     picked: new Set(),
   });
 
   useEffect(() => { if (window.location.hash.includes('cloud')) openCloud(); }, []);
 
-  async function openCloud() {
-    setCloud((c) => ({ ...c, open: true, loading: true }));
+  function openCloud() { setCloud(c => ({ ...c, open: true, error: '', picked: new Set() })); }
+  function closeCloud() {
+    if (cloud.importing) return;
+    cloudRequest.current++;
+    setCloud(c => ({ ...c, open: false, loading: false }));
+  }
+  async function loadCloud(refresh = false) {
+    const request = ++cloudRequest.current;
+    setCloud((c) => ({ ...c, loading: true, error: '' }));
     try {
-      const r = await call('cloud.catalog', {});
+      const r = await call('cloud.catalog', { refresh });
+      if (request !== cloudRequest.current) return;
       if (!r.ok) throw new Error(r.message ?? '拉取失败');
-      setCloud({ open: true, loading: false, data: r, picked: new Set() });
+      setCloud(c => ({ ...c, loading: false, data: r, picked: new Set([...c.picked].filter(key => r.providers.some((p: any) => p.key === key))) }));
+      if (refresh) await reload();
     } catch (e: any) {
-      toast.push('云端目录拉取失败：' + e.message, 'bad');
-      setCloud((c) => ({ ...c, loading: false }));
+      if (request === cloudRequest.current) setCloud((c) => ({ ...c, loading: false, error: '云端目录拉取失败：' + e.message }));
     }
   }
+  useEffect(() => {
+    if (cloud.open) void loadCloud();
+    return () => { cloudRequest.current++; };
+  }, [cloud.open, state.catalog?.version, state.catalog?.fetchedAt, state.catalog?.source, state.catalog?.syncing, state.catalog?.warning]);
 
   async function importPicked() {
+    if (cloud.importing || cloud.loading) return;
     const data = cloud.data;
     if (!data) return;
     const items = data.providers.filter((p: any) => cloud.picked.has(p.key));
     if (!items.length) return toast.push('先选几个供应商', 'bad');
-    const r = await call('cloud.import', { providers: items });
-    await reload();
-    setCloud((c) => ({ ...c, open: false }));
-    toast.push(`导入完成：新增 ${r.added} 家，合并 ${r.merged} 家`, 'ok');
+    setCloud(c => ({ ...c, importing: true, error: '' }));
+    try {
+      const r = await call('cloud.import', { providers: items });
+      if (!r.ok) throw new Error(r.message || '导入失败，请重试');
+      await reload();
+      cloudRequest.current++;
+      setCloud((c) => ({ ...c, open: false }));
+      toast.push(`导入完成：新增 ${r.added} 家，合并 ${r.merged} 家`, 'ok');
+    } catch (e: any) { setCloud(c => ({ ...c, error: e.message || '导入失败，请重试' })); }
+    finally { setCloud(c => ({ ...c, importing: false })); }
   }
 
   const list = useMemo(() => {
@@ -74,6 +100,8 @@ export default function Providers({ state, reload }: PageProps) {
         p.models.some((m) => m.id.toLowerCase().includes(q)),
     );
   }, [state.providers, query]);
+
+  const identities = (snapshot?.accounts || []).filter(account => account.authKind === 'oauth' && (!query.trim() || `${account.label} ${account.kind} ${account.email || ''}`.toLowerCase().includes(query.trim().toLowerCase())));
 
   const presets = useMemo(() => {
     const q = presetQuery.trim().toLowerCase();
@@ -101,17 +129,19 @@ export default function Providers({ state, reload }: PageProps) {
     await reload();
     toast.push('供应商已保存', 'ok');
     setEditing(null);
+    setModelSyncErrors(errors => ({ ...errors, [saved.id]: '' }));
     // 有 Key 就顺手把模型列表拉回来，省得手动点
-    const hasKey = (saved.apiKeys ?? []).some((k: any) => k.key);
-    if (saved?.id && hasKey && state.settings.autoSyncModels) {
+    const hasKey = (saved.apiKeys ?? []).some((k: ApiKey) => k.enabled !== false && (k.key || k.hasKey));
+    if (saved?.id && hasKey) {
       try {
         const r = await call('provider.models', { providerId: saved.id });
-        if (r.ok && r.added > 0) {
+        if (!r.ok) throw new Error(r.message || '无法读取模型列表，请稍后重试');
+        if (r.added > 0) {
           await reload();
           toast.push(`已自动同步 ${r.added} 个模型`, 'ok');
         }
-      } catch {
-        /* 拉不到就算了，不影响保存 */
+      } catch (e: any) {
+        setModelSyncErrors(errors => ({ ...errors, [saved.id]: `供应商已保存，但模型同步失败：${e.message || '请稍后重试'}` }));
       }
     }
     } catch (e: any) { toast.push(e.message || '保存失败', 'bad'); }
@@ -130,19 +160,21 @@ export default function Providers({ state, reload }: PageProps) {
 
   return (
     <>
-      <div className="page-head">
+      <div className="page-head provider-page-head">
         <div>
           <h1>我的供应商</h1>
-          <p>管理 API 地址、密钥与可用模型。同一家厂商可以添加多个供应商配置。</p>
+          <p>已有客户端的 API 配置会自动发现。官方登录单独保留，供应商可继续编辑与切换。</p>
         </div>
         <div className="actions">
           <input
             className="input"
             style={{ width: 190 }}
-            placeholder="搜索名称 / 模型 / 地址"
+            placeholder="搜索供应商 / 模型 / 账号"
+            aria-label="搜索供应商或本地账号"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
+          <Btn disabled={!window.aurora || !!scan.busy} onClick={scan.scan}><Ico name="refresh" size={13} />{scan.busy ? '扫描中…' : '重新扫描本机'}</Btn>
           <Btn disabled={!window.aurora} onClick={openCloud}>
             <Ico name="cloud" size={13} /> 云端目录
           </Btn>
@@ -152,12 +184,15 @@ export default function Providers({ state, reload }: PageProps) {
         </div>
       </div>
 
+      {scan.error && <div className="notice warning" role="alert">{scan.error}</div>}
+      {identities.length > 0 && <section className="local-identities"><div className="section-heading"><h2>本机官方账号</h2><span>由对应客户端保管登录凭据</span></div><div className="grid cols-3">{identities.map(account => <LocalIdentityCard key={account.id} kind={account.kind} account={account} compact onManage={() => go('agents')} />)}</div></section>}
+      <div className="section-heading"><h2>API 供应商 <span className="chip">{list.length}</span></h2><span>最近扫描：{localTime(snapshot?.checkedAt)}</span></div>
       {list.length === 0 ? (
         <div className="card">
           <Empty
             icon="🔌"
-            title="还没有供应商"
-            hint="点右上角「添加供应商」，从预设里挑一家（DeepSeek、Kimi、GLM、OpenAI、Claude、Gemini…），填 Key 就能用。"
+            title={query ? '没有匹配的供应商' : '还没有 API 供应商'}
+            hint={query ? '试试供应商名称、模型 ID 或接口地址。' : '重新扫描已有客户端配置，或从右上角添加供应商。官方账号会独立保留在本地账号中。'}
           />
         </div>
       ) : (
@@ -189,10 +224,11 @@ export default function Providers({ state, reload }: PageProps) {
                 />
               </div>
 
+              {!!snapshot?.sources.some(source => source.providerId === p.id) && <div className="provider-origin"><Ico name="download" size={13} /><span>自动发现</span>{snapshot.sources.filter(source => source.providerId === p.id).map(source => <span key={source.id} className="chip" title={`${source.label}\n${source.path}`}>{source.label}</span>)}</div>}
               <div className="row wrap" style={{ gap: 6 }}>
                 <span className="chip">{PROTOCOL_TEXT[p.format]}</span>
                 <span className="chip">{p.models.length} 个模型</span>
-                <span className="chip">{p.apiKeys.filter((k) => k.key || (k as any).hasKey).length} 个 Key</span>
+                <span className="chip">{p.apiKeys.filter((k) => k.key || k.hasKey).length} 个 Key</span>
                 {p.rateMultiplier && p.rateMultiplier !== 1 && <span className="chip">×{p.rateMultiplier}</span>}
               </div>
 
@@ -211,6 +247,10 @@ export default function Providers({ state, reload }: PageProps) {
                   {testResult[p.id].message}
                 </div>
               )}
+              {modelSyncErrors[p.id] && <div className="notice warning" role="alert" style={{ display: 'block', overflowWrap: 'anywhere' }}>
+                <p>{modelSyncErrors[p.id]}</p>
+                {window.aurora ? <button className="text-button" onClick={() => setEditing(p)}>手动添加模型</button> : <p>可在电脑桌面端编辑供应商，手动添加模型。</p>}
+              </div>}
 
               <div className="row" style={{ marginTop: 'auto' }}>
                 <Btn size="sm" disabled={testing === p.id} onClick={() => test(p)}>
@@ -220,12 +260,15 @@ export default function Providers({ state, reload }: PageProps) {
                 <Btn
                   size="sm"
                   onClick={async () => {
-                    const r = await call('provider.models', { providerId: p.id });
-                    await reload();
-                    toast.push(
-                      r.ok ? `已同步模型，新增 ${r.added ?? 0} 个` : r.message ?? '同步失败',
-                      r.ok ? 'ok' : 'bad',
-                    );
+                    try {
+                      const r = await call('provider.models', { providerId: p.id });
+                      if (!r.ok) throw new Error(r.message || '同步失败，请稍后重试');
+                      await reload();
+                      setModelSyncErrors(errors => ({ ...errors, [p.id]: '' }));
+                      toast.push(`已同步模型，新增 ${r.added ?? 0} 个`, 'ok');
+                    } catch (e: any) {
+                      setModelSyncErrors(errors => ({ ...errors, [p.id]: `模型同步失败：${e.message || '请稍后重试'}` }));
+                    }
                   }}
                 >
                   <Ico name="refresh" size={12} /> 同步模型
@@ -252,6 +295,7 @@ export default function Providers({ state, reload }: PageProps) {
         </div>
       )}
 
+      <LocalScanDetails snapshot={snapshot} busy={scan.busy} onRestore={scan.restore} />
       {editing && (
         <ProviderEditor
           value={editing}
@@ -270,15 +314,16 @@ export default function Providers({ state, reload }: PageProps) {
           title="云端目录"
           sub={
             cloud.data
-              ? `版本 v${cloud.data.version} · 更新于 ${cloud.data.updatedAt?.slice(0, 16).replace('T', ' ')} · 共 ${cloud.data.providers.length} 家`
+              ? `${cloud.data.source === 'remote' ? '官方目录' : cloud.data.source === 'cache' ? '本地缓存' : '离线预设'} · 版本 v${cloud.data.version} · 共 ${cloud.data.providers.length} 家`
               : '正在从云端拉取供应商列表…'
           }
-          onClose={() => setCloud((c) => ({ ...c, open: false }))}
+          onClose={closeCloud}
           width={880}
           foot={
             <>
               <Btn
                 variant="ghost"
+                disabled={cloud.loading || cloud.importing}
                 onClick={() =>
                   setCloud((c) => ({
                     ...c,
@@ -293,15 +338,19 @@ export default function Providers({ state, reload }: PageProps) {
                 {cloud.picked.size === (cloud.data?.providers?.length ?? 0) ? '取消全选' : '全选'}
               </Btn>
               <div style={{ flex: 1 }} />
-              <Btn variant="ghost" onClick={() => setCloud((c) => ({ ...c, open: false }))}>
+              <Btn disabled={cloud.loading || cloud.importing} onClick={() => loadCloud(true)}><Ico name="refresh" size={13} />刷新目录</Btn>
+              <Btn variant="ghost" disabled={cloud.importing} onClick={closeCloud}>
                 关闭
               </Btn>
-              <Btn variant="primary" disabled={cloud.loading || !cloud.picked.size} onClick={importPicked}>
-                导入选中的 {cloud.picked.size} 家
+              <Btn variant="primary" disabled={cloud.loading || cloud.importing || !cloud.picked.size} onClick={importPicked}>
+                {cloud.importing ? '正在导入…' : `导入选中的 ${cloud.picked.size} 家`}
               </Btn>
             </>
           }
         >
+          {cloud.error && <div className="notice warning" role="alert">{cloud.error}</div>}
+          {cloud.data?.warning && <div className="notice warning">{cloud.data.warning}</div>}
+          {cloud.data?.syncing && <p className="hint">正在后台更新官方目录…</p>}
           {cloud.loading && <div style={{ color: 'var(--muted)', padding: 24 }}>正在连接云端…</div>}
           {cloud.data && (
             <div className="cloud-grid">
@@ -312,6 +361,7 @@ export default function Providers({ state, reload }: PageProps) {
                     key={p.key}
                     className={`cloud-item ${on ? 'on' : ''}`}
                     onClick={() => {
+                      if (cloud.loading || cloud.importing) return;
                       const next = new Set(cloud.picked);
                       on ? next.delete(p.key) : next.add(p.key);
                       setCloud((c) => ({ ...c, picked: next }));

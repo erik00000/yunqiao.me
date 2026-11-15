@@ -1,26 +1,31 @@
 import { AuroraStore } from './store/index.js';
 import { catalogPresets, ensureCatalog, refreshCatalog } from './catalog.js';
 import { manageModels } from './modelManagement.js';
+import { getLocalClientsSnapshot, syncLocalClients, restoreIgnoredLocalSource } from './localClients.js';
 import { activeRequests } from './gateway/liveUsage.js';
+import path from 'node:path';
+import fs from 'node:fs';
+import { readText, atomicWrite, digest } from './agents/configFiles.js';
+import { getCoexistCatalog } from './gateway/coexist.js';
 import { runExtensionAction } from './extensions/index.js';
 import { AGENT_ADAPTERS, detectAll, detectReset, getAdapter, connectionParameters, exportEnvScript, configureDesktopPath, type ConnectContext } from './agents/adapters.js';
 import { scanSessions, readSession, resumeCommand, exportSessionMarkdown } from './sessions.js';
-import { BUILTIN_MIDDLEWARE, SAMPLE_PLUGIN } from './plugins/middleware.js';
+import { BUILTIN_MIDDLEWARE, SAMPLE_PLUGIN, getMiddlewareStatus } from './plugins/middleware.js';
 import { desktopInfo, launchAndInject, injectorStatus, BUILTIN_INJECT_SCRIPTS } from './injector.js';
 import { diagnoseSessions, repairSessions, listCodexAssets, toggleCodexAsset, readAgentsMd, writeAgentsMd, readCodexFlags, writeCodexFlag, CODEX_FLAGS } from './codex.js';
 import { openUpstream, readAll } from './gateway/upstream.js';
 import { buildUpstreamHttp, parseClientRequest } from './protocol/index.js';
 import type { GatewayStatus } from './gateway/server.js';
-import type { UsageRecord } from './store/types.js';
+import type { Provider, UsageRecord } from './store/types.js';
+import { buildInfo } from './buildInfo.js';
 import { runHistoryRepairAction } from './historyRepair.js';
 import { runSessionIndexRepairAction } from './sessionIndexRepair.js';
 import {
   checkUpdate,
   fetchCloudCatalog,
-  importAccountAsProvider,
   importCloudProviders,
-  scanLocalAccounts,
 } from './cloud.js';
+import { GITHUB_RELEASE_PAGE } from './releaseSources.js';
 
 /**
  * 与 Electron 无关的动作层：桌面端的 IPC 和网关的 /api/rpc 共用同一份实现，
@@ -36,6 +41,58 @@ export interface ActionDeps {
   platform?: string;
   version?: string;
   dataDir: string;
+  localClientWarnings?: string[];
+}
+
+interface ClientFileSnapshot { path: string; existed: boolean; content: string }
+interface ClientFileExpected { existed: boolean; hash: string }
+function snapshotClientFiles(paths: string[]): ClientFileSnapshot[] {
+  return paths.map(file => ({ path: file, content: readText(file), existed: fs.existsSync(file) }));
+}
+function expectedClientFiles(files: ClientFileSnapshot[]): Map<string, ClientFileExpected> {
+  return new Map(files.map(file => [file.path, { existed: file.existed, hash: digest(file.content) }]));
+}
+/** The adapter's manifest records the exact bytes it wrote, independently of later external edits. */
+function clientManifestExpected(backup: string | undefined, files: ClientFileSnapshot[], restoring = false): Map<string, ClientFileExpected> {
+  if (!backup || !files.length) throw new Error('缺少可核验的客户端备份');
+  const root = path.join(path.dirname(files[0].path), '.aurora-backups');
+  const within = (file: string) => { const rel = path.relative(root, file); return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel); };
+  if (!within(backup)) throw new Error('客户端备份路径无效');
+  const manifest = JSON.parse(readText(backup));
+  if (manifest.format !== 'aurora-client-backup-v1' || !Array.isArray(manifest.files)) throw new Error('客户端备份格式无效');
+  const expected = expectedClientFiles(files), seen = new Set<string>();
+  for (const entry of manifest.files) {
+    const file = files.find(item => path.resolve(item.path) === path.resolve(entry.path));
+    if (!file || seen.has(file.path) || !/^[a-f0-9]{64}$/.test(entry.installedHash)
+      || (entry.backup !== null && (typeof entry.backup !== 'string' || !within(entry.backup)))) throw new Error('客户端备份记录无效');
+    seen.add(file.path);
+    if (restoring) {
+      if (entry.backup !== null && !fs.existsSync(entry.backup)) throw new Error('客户端原始备份丢失');
+      expected.set(file.path, { existed: entry.backup !== null, hash: digest(entry.backup === null ? '' : readText(entry.backup)) });
+    } else expected.set(file.path, { existed: true, hash: entry.installedHash });
+  }
+  if (!restoring && seen.size !== files.length) throw new Error('客户端备份记录不完整');
+  return expected;
+}
+/** Never undo another application's edit while recovering a failed state commit. */
+function rollbackClientFiles(files: ClientFileSnapshot[], expected: Map<string, ClientFileExpected>): string[] {
+  const failed: string[] = [];
+  for (const file of [...files].reverse()) {
+    try {
+      const current = snapshotClientFiles([file.path])[0], currentHash = digest(current.content);
+      if (current.existed === file.existed && currentHash === digest(file.content)) continue;
+      const applied = expected.get(file.path);
+      if (!applied || current.existed !== applied.existed || currentHash !== applied.hash) { failed.push(file.path); continue; }
+      if (file.existed) atomicWrite(file.path, file.content);
+      else if (current.existed) fs.unlinkSync(file.path);
+    } catch { failed.push(file.path); }
+  }
+  return failed;
+}
+function clientStateFailure(files: ClientFileSnapshot[], expected: Map<string, ClientFileExpected>, backup?: string, reason = '无法保存客户端连接状态') {
+  const failed = rollbackClientFiles(files, expected);
+  detectReset();
+  return { ok: false, ...(backup ? { backup } : {}), message: `${reason}；${failed.length ? `部分配置无法自动回滚或已被其他程序修改，请手动检查：${failed.join('、')}` : '已恢复本次操作前的客户端配置'}${backup ? `；首次接入前备份保留：${backup}` : ''}` };
 }
 
 const settingsQueues = new WeakMap<AuroraStore, Promise<unknown>>();
@@ -159,7 +216,11 @@ export async function testProvider(deps: ActionDeps, payload: { providerId: stri
 
 export async function fetchProviderModels(deps: ActionDeps, payload: { providerId: string }) {
   const p = deps.store.getProvider(payload.providerId);
-  if (!p) return { ok: false, models: [] };
+  if (!p) return { ok: false, models: [], message: '供应商已不存在，请刷新列表' };
+  const connection = (provider: Provider) => JSON.stringify({ baseUrl: provider.baseUrl, format: provider.format,
+    headers: provider.headers, proxy: provider.proxy || deps.store.getSettings().proxy,
+    keys: provider.apiKeys.map(k => ({ key: k.key, enabled: k.enabled })) });
+  const startedConnection = connection(p), startedModels = new Set(p.models.map(m => m.id));
   const key = p.apiKeys.find((k) => k.enabled && k.key);
   const base = p.baseUrl.replace(/\/+$/, '');
   const urls = p.format === 'gemini'
@@ -182,29 +243,36 @@ export async function fetchProviderModels(deps: ActionDeps, payload: { providerI
       const json = JSON.parse(text);
       const list: any[] = json?.data ?? json?.models ?? [];
       if (!Array.isArray(list) || json.error) continue;
-      const models = list
-        .map((x: any) => ({
-          id: (x.id ?? x.name ?? '').replace(/^models\//, ''),
-          contextWindow: x.context_window ?? x.input_token_limit ?? x.inputTokenLimit,
-        }))
-        .filter((x: any) => x.id);
+      const models = list.slice(0, 10000).flatMap((x: any) => {
+        const rawId = x?.id ?? x?.name;
+        if (typeof rawId !== 'string') return [];
+        const id = rawId.replace(/^models\//, '').trim();
+        if (!id || id.length > 512 || /[\s\u0000-\u001f]/.test(id)) return [];
+        const context = x.context_window ?? x.input_token_limit ?? x.inputTokenLimit;
+        return [{ id, ...(Number.isSafeInteger(context) && context > 0 ? { contextWindow: context } : {}) }];
+      });
       if (models.length) {
-        const merged = [...p.models];
+        // A network response must not restore a deleted provider or overwrite edits made while it was loading.
+        const current = deps.store.getProvider(p.id);
+        if (!current) return { ok: false, models: [], message: '供应商已删除，本次同步结果已丢弃' };
+        if (connection(current) !== startedConnection) return { ok: false, models: current.models, message: '供应商连接配置已变化，请重新同步模型' };
+        const merged = [...current.models];
         for (const m of models) {
-          if (!merged.find((x) => x.id === m.id))
+          if (!merged.find((x) => x.id === m.id) && !(startedModels.has(m.id) && !current.models.some(x => x.id === m.id)))
             merged.push({
               id: m.id,
               contextWindow: m.contextWindow,
             });
         }
-        deps.store.saveProvider({ ...p, models: merged });
-        return { ok: true, models: merged, added: merged.length - p.models.length };
+        try { if (merged.length !== current.models.length) deps.store.saveProvider({ ...current, models: merged }); }
+        catch { return { ok: false, models: current.models, message: '模型已获取，但本地保存失败，请检查数据目录后重试' }; }
+        return { ok: true, models: merged, added: merged.length - current.models.length };
       }
     } catch {
       continue;
     }
   }
-  return { ok: false, models: p.models, message: '这家供应商没有公开的模型列表接口，请手动添加模型' };
+  return { ok: false, models: deps.store.getProvider(p.id)?.models || [], message: '这家供应商没有公开的模型列表接口，请手动添加模型' };
 }
 
 export function summarizeUsage(records: UsageRecord[]) {
@@ -274,14 +342,19 @@ export async function runAction(deps: ActionDeps, action: string, payload: any):
   switch (action) {
     case 'state.get': {
       const catalog = await ensureCatalog(store);
+      const { nativeCatalog: _native, ...codexCoexist } = getCoexistCatalog(store);
       const agents = store.listAgents();
       if (!agents['chatgpt-desktop'] && agents['codex-desktop']) store.saveAgent({ ...agents['codex-desktop'], id: 'chatgpt-desktop' });
+      const localClients = getLocalClientsSnapshot(store), localWarnings = deps.localClientWarnings || [];
       return {
         settings: store.getSettings(),
         providers: store.listProviders(),
+        localClients: { ...localClients, ok: localClients.ok && !localWarnings.length, warnings: [...localClients.warnings, ...localWarnings] },
+        codexCoexist,
         groups: store.listGroups(),
         agents: store.listAgents(),
         plugins: store.listPlugins(),
+        middlewareStatus: getMiddlewareStatus(store),
         presets: catalogPresets(store, catalog),
         catalog: { source: catalog.source, fetchedAt: catalog.fetchedAt, version: catalog.version, warning: catalog.warning, syncing: catalog.syncing },
         builtinMiddleware: BUILTIN_MIDDLEWARE.map((b) => ({
@@ -310,6 +383,7 @@ export async function runAction(deps: ActionDeps, action: string, payload: any):
         gatewayUrl: deps.gatewayUrl(),
         dataDir: deps.dataDir,
         version: deps.version ?? '0.1.0',
+        build: buildInfo,
         platform: deps.platform ?? process.platform,
         detected: detectAll(true),
         mode: deps.platform === 'web' ? 'web' : 'desktop',
@@ -334,6 +408,13 @@ export async function runAction(deps: ActionDeps, action: string, payload: any):
       return { ok: true };
 
     /* ---------- 云端 ---------- */
+    case 'localClients.scan':
+    case 'localClients.restore': {
+      if (deps.platform === 'web') return { ok: false, message: '请在电脑端检测与导入本地客户端配置' };
+      return action === 'localClients.restore'
+        ? restoreIgnoredLocalSource(store, String(payload.sourceId || ''), { gatewayUrl: deps.gatewayUrl() })
+        : syncLocalClients(store, { force: true, gatewayUrl: deps.gatewayUrl() });
+    }
     case 'cloud.catalog': {
       const data = payload.url && payload.url !== store.getSettings().catalogUrl
         ? await fetchCloudCatalog(payload.url, store)
@@ -346,19 +427,16 @@ export async function runAction(deps: ActionDeps, action: string, payload: any):
       return { ok: true, added: r.added, merged: r.merged, count: r.providers.length };
     }
     case 'update.check': {
-      const s = store.getSettings();
       try {
-        return { ok: true, ...(await checkUpdate(payload.url || s.updateUrl, payload.current ?? deps.version ?? '0.1.0')) };
+        return { ok: true, ...(await checkUpdate(deps.version ?? payload.current ?? '0.1.0', { platform: payload.platform, arch: payload.arch, source: payload.source, minimumVersion: payload.minimumVersion })) };
       } catch (e: any) {
-        return { ok: false, message: String(e?.message ?? e) };
+        return { ok: false, message: String(e?.message ?? e), fallbackUrl: '', releaseUrl: GITHUB_RELEASE_PAGE };
       }
     }
     case 'account.scan':
-      return { ok: true, accounts: scanLocalAccounts() };
+      return { ok: true, accounts: getLocalClientsSnapshot(store).accounts };
     case 'account.import': {
-      const acc = payload.account;
-      const p = importAccountAsProvider(store, acc);
-      return { ok: true, provider: p };
+      return { ok: false, message: '本机 API 配置已改为自动发现，请在“我的供应商”重新扫描。官方账号登录凭据不作为 API Key 导入。' };
     }
 
     /* ---------- Codex 增强 ---------- */
@@ -425,10 +503,20 @@ export async function runAction(deps: ActionDeps, action: string, payload: any):
       const adapter = getAdapter(String(payload.agentId || ''));
       if (!adapter) return { ok: false, message: '未知客户端' };
       if (adapter.support === 'unsupported') return { ok: false, message: adapter.supportNote, files: [], warnings: [] };
-      const provider = store.getProvider(String(payload.providerId || ''));
+      const sharedCodex = adapter.id === 'codex-cli' || adapter.id === 'chatgpt-desktop';
+      const authMode = payload.authMode || 'api';
+      if (!['api', 'coexist'].includes(authMode) || (authMode === 'coexist' && !sharedCodex)) return { ok: false, message: '此客户端不支持所选账号模式' };
+      if (action === 'agent.parameters' && authMode === 'coexist') return { ok: false, message: '共存模式请通过配置向导应用；官方登录由原客户端使用，不导出登录凭据。' };
+      const coexist = authMode === 'coexist' ? getCoexistCatalog(store) : undefined;
+      if (coexist && !coexist.officialModelCount) return { ok: false, message: coexist.warnings[0] || '请先在官方客户端登录并加载模型列表，再开启共存模式。' };
+      if (coexist && !['127.0.0.1', '0.0.0.0', '::'].includes(store.getSettings().gatewayHost)) return { ok: false, message: '共存模式需要本机网关。请在系统设置中选择“仅本机”或“局域网”监听范围。' };
+      const provider = sharedCodex && authMode === 'coexist' && payload.providerId === 'official' ? {
+        id: 'official', name: 'ChatGPT 官方账号', format: 'openai-responses' as const, baseUrl: 'https://chatgpt.com/backend-api/codex',
+        apiKeys: [], models: coexist!.models.filter(m => m.official).map(m => ({ id: m.upstreamModel, displayName: m.displayName, contextWindow: m.contextWindow })),
+        enabled: true, priority: 0, createdAt: '', updatedAt: '',
+      } : store.getProvider(String(payload.providerId || ''));
       if (!provider) return { ok: false, message: '请选择有效供应商' };
       if (payload.mode && !['gateway', 'direct'].includes(payload.mode)) return { ok: false, message: '不支持的接入模式' };
-      const sharedCodex = adapter.id === 'codex-cli' || adapter.id === 'chatgpt-desktop';
       const states = store.listAgents();
       const prior = states[adapter.id] || (sharedCodex ? states['codex-cli'] || states['chatgpt-desktop'] || states['codex-desktop'] : undefined);
       const context: ConnectContext = {
@@ -436,15 +524,37 @@ export async function runAction(deps: ActionDeps, action: string, payload: any):
         mode: payload.mode || 'gateway', gatewayUrl: deps.gatewayUrl(), token: store.getSettings().gatewayToken,
         previousBackup: prior?.connected || prior?.pendingReapply ? prior.backupPath : undefined,
         expectedRevision: payload.revision,
+        authMode, modelCatalogPath: path.join(store.dir, 'codex-model-catalog.json'),
       };
       const preview = adapter.preview(context);
       if (action === 'agent.preview' || !preview.ok) return preview;
       if (action === 'agent.parameters') return { ok: true, ...connectionParameters(context, adapter.protocol), script: exportEnvScript(context, adapter.protocol), note: adapter.supportNote };
       if (context.mode === 'gateway' && !deps.gatewayStatus().running) return { ok: false, message: '本地网关未运行，请先启动网关后再应用配置' };
+      if (context.expectedRevision && context.expectedRevision !== preview.revision) return { ok: false, message: '配置或连接参数在预览后已变化，请重新预览再应用' };
+      context.expectedRevision = preview.revision;
+      const catalogFile = context.modelCatalogPath!;
+      let clientBefore: ClientFileSnapshot[], catalogBefore: ClientFileSnapshot[];
+      try {
+        clientBefore = snapshotClientFiles(adapter.configPaths());
+        catalogBefore = coexist ? snapshotClientFiles([catalogFile]) : [];
+      } catch { return { ok: false, message: '无法安全读取本次操作前的配置，未应用连接。请检查客户端配置与云桥数据目录权限。' }; }
+      const catalogExpected = coexist ? new Map([[catalogFile, { existed: true, hash: digest(JSON.stringify(coexist.nativeCatalog, null, 2)) }]]) : new Map<string, ClientFileExpected>();
+      if (coexist) {
+        try { store.writeExtra('codex-model-catalog.json', coexist.nativeCatalog); }
+        catch { return clientStateFailure(catalogBefore, catalogExpected, prior?.backupPath, '无法保存共存模型目录'); }
+      }
       const result = adapter.connect(context);
+      if (coexist && !result.ok) {
+        const failed = rollbackClientFiles(catalogBefore, catalogExpected);
+        if (failed.length) return { ...result, message: `${result.message}；模型目录无法自动回滚或已被其他程序修改，请手动检查：${failed.join('、')}` };
+      }
       if (result.ok) {
         const ids = sharedCodex ? (['codex-cli', 'chatgpt-desktop', 'codex-desktop'] as const) : [adapter.id];
-        for (const id of ids) store.saveAgent({ id, connected: true, pendingReapply: false, providerId: provider.id, model: context.model, modelMap: context.modelMap, mode: context.mode, configPath: result.path, backupPath: result.backup });
+        let expected = new Map(catalogExpected);
+        try {
+          expected = new Map([...clientManifestExpected(result.backup, clientBefore), ...catalogExpected]);
+          store.saveAgents(ids.map(id => ({ id, connected: true, pendingReapply: false, providerId: provider.id, model: context.model, modelMap: context.modelMap, mode: context.mode, authMode, configPath: result.path, backupPath: result.backup })));
+        } catch { return clientStateFailure([...clientBefore, ...catalogBefore], expected, result.backup); }
       }
       return result;
     }
@@ -452,10 +562,17 @@ export async function runAction(deps: ActionDeps, action: string, payload: any):
       const adapter = getAdapter(String(payload.agentId || ''));
       if (!adapter) return { ok: false, message: '未知客户端' };
       const current = store.listAgents()[adapter.id];
+      if (!current?.backupPath) return adapter.disconnect();
+      let before: ClientFileSnapshot[], expected: Map<string, ClientFileExpected>;
+      try {
+        before = snapshotClientFiles(adapter.configPaths());
+        expected = clientManifestExpected(current.backupPath, before, true);
+      } catch { return { ok: false, message: '无法安全读取当前配置或原始备份，未断开连接。请检查客户端配置与备份目录权限。' }; }
       const result = adapter.disconnect(current?.backupPath);
       if (result.ok) {
         const ids = adapter.id === 'codex-cli' || adapter.id === 'chatgpt-desktop' ? (['codex-cli', 'chatgpt-desktop', 'codex-desktop'] as const) : [adapter.id];
-        for (const id of ids) store.saveAgent({ id, connected: false, pendingReapply: false, backupPath: undefined });
+        try { store.saveAgents(ids.map(id => ({ id, connected: false, pendingReapply: false, backupPath: undefined }))); }
+        catch { return clientStateFailure(before, expected, current.backupPath); }
       }
       return result;
     }

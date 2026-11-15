@@ -5,6 +5,8 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { AuroraStore, getStore, setDataDir } from '../core/store/index.js';
 import { memberAction } from './member.js';
+import { syncLocalClients } from '../core/localClients.js';
+import { getCoexistCatalog, isCodexCoexistConfigured } from '../core/gateway/coexist.js';
 import { GatewayServer, resetGateway } from '../core/gateway/server.js';
 import { runAction, type ActionDeps } from '../core/actions.js';
 import type { UsageRecord } from '../core/store/types.js';
@@ -18,12 +20,28 @@ let store: AuroraStore = getStore();
 let gatewayError = '';
 let quitting = false;
 let gatewayChange: Promise<void> | null = null;
+let clientScanTimer: ReturnType<typeof setInterval> | undefined;
+let localClientWarnings: string[] = [];
 const recent: UsageRecord[] = [];
 const uiFile = path.join(__dirname, '..', 'ui', 'index.html');
 
 function gatewayUrl() { const s = store.getSettings(); const host = s.gatewayHost === '0.0.0.0' || s.gatewayHost === '::' ? '127.0.0.1' : s.gatewayHost; return `http://${host.includes(':') ? `[${host}]` : host}:${s.gatewayPort}`; }
 function status() { return { ...(gateway?.getStatus() || { running: false, host: '127.0.0.1', port: store.getSettings().gatewayPort, requests: 0, errors: 0 }), ...(gatewayError ? { lastError: gatewayError } : {}) }; }
-function deps(): ActionDeps { return { store, dataDir: store.dir, gatewayStatus: status, gatewayUrl, restartGateway: ensureGateway, resetCooldowns: () => gateway?.router.resetCooldowns(), platform: process.platform, version: app.getVersion() }; }
+function refreshLocalClients(force = false) {
+  localClientWarnings = [];
+  try {
+    syncLocalClients(store, { force, gatewayUrl: gatewayUrl() });
+  } catch { localClientWarnings.push('自动读取本地配置未完成，请检查数据目录的空间和写入权限。当前显示上次扫描结果，可在“我的供应商”重试。'); }
+  try {
+    if (isCodexCoexistConfigured(store)) {
+      const catalog = getCoexistCatalog(store).nativeCatalog;
+      if (JSON.stringify(catalog) !== JSON.stringify(store.readExtra('codex-model-catalog.json', null))) store.writeExtra('codex-model-catalog.json', catalog);
+    }
+  } catch { localClientWarnings.push('共存模型目录更新未完成，请检查数据目录的空间和写入权限；上次目录仍保留。'); }
+  try { refreshTray(); } catch { /* Existing window can still display the actionable scan warning. */ }
+  if (win && !win.isDestroyed()) win.webContents.send('aurora:gateway', status());
+}
+function deps(): ActionDeps { return { store, dataDir: store.dir, gatewayStatus: status, gatewayUrl, restartGateway: ensureGateway, resetCooldowns: () => gateway?.router.resetCooldowns(), platform: process.platform, version: app.getVersion(), localClientWarnings }; }
 async function ensureGateway(): Promise<void> {
   const pending = gatewayChange || Promise.resolve();
   const change = pending.catch(() => {}).then(async () => {
@@ -66,6 +84,7 @@ function createWindow() {
   });
   win.on('close', event => { if (store.getSettings().closeToTray && !quitting) { event.preventDefault(); win?.hide(); } else if (!quitting) app.quit(); });
   win.on('closed', () => { win = null; });
+  win.on('focus', () => refreshLocalClients());
 }
 function showWindow() { if (!win) createWindow(); else { if (win.isMinimized()) win.restore(); win.show(); win.focus(); } }
 function createTray() {
@@ -85,7 +104,13 @@ function refreshTray() {
   ]));
 }
 async function trayConnect(agentId: string, providerId: string, model: string) {
-  try { const result = await runAction(deps(), 'agent.connect', { agentId, providerId, model, mode: 'gateway' }); if (!result?.ok) throw new Error(result?.message || '接入失败'); }
+  try {
+    const states = store.listAgents();
+    const previous = states[agentId] || (agentId === 'codex-cli' ? states['chatgpt-desktop'] || states['codex-desktop'] : undefined);
+    const authMode = previous?.connected || previous?.pendingReapply ? previous.authMode : 'api';
+    const result = await runAction(deps(), 'agent.connect', { agentId, providerId, model, mode: 'gateway', authMode });
+    if (!result?.ok) throw new Error(result?.message || '接入失败');
+  }
   catch (e: any) { dialog.showErrorBox('客户端配置失败', e.message); }
 }
 function applyLoginItem(enable: boolean) { try { app.setLoginItemSettings({ openAtLogin: enable, openAsHidden: false }); } catch {} }
@@ -95,6 +120,7 @@ async function handleAction(action: string, payload: any) {
   if (shared !== null) {
     if (action === 'settings.save') applyLoginItem(store.getSettings().launchAtLogin);
     if (['settings.save', 'provider.save', 'provider.delete', 'agent.connect', 'agent.disconnect'].includes(action)) refreshTray();
+    if (['localClients.scan', 'localClients.restore'].includes(action) && shared.ok) refreshLocalClients();
     return shared;
   }
   switch (action) {
@@ -119,9 +145,9 @@ async function handleAction(action: string, payload: any) {
       const confirm = await dialog.showMessageBox({ type: 'question', buttons: ['取消', '导入并替换'], defaultId: 0, cancelId: 0, message: '用备份中的配置替换当前配置？', detail: '当前配置会先备份到本地数据目录。' });
       if (confirm.response !== 1) return { ok: false };
       fs.writeFileSync(path.join(store.dir, `before-import-${Date.now()}.json`), JSON.stringify(store.exportAll(), null, 2), { mode: 0o600 });
-      store.importAll(data); await ensureGateway(); applyLoginItem(store.getSettings().launchAtLogin); return { ok: true, path: r.filePaths[0] };
+      store.importAll(data); refreshLocalClients(true); await ensureGateway(); applyLoginItem(store.getSettings().launchAtLogin); return { ok: true, path: r.filePaths[0] };
     }
-    case 'app.chooseDataDir': { const r = await dialog.showOpenDialog({ properties: ['openDirectory'] }); if (r.canceled || !r.filePaths[0]) return { ok: false }; setDataDir(r.filePaths[0]); store = getStore(); await ensureGateway(); return { ok: true, dir: store.dir }; }
+    case 'app.chooseDataDir': { const r = await dialog.showOpenDialog({ properties: ['openDirectory'] }); if (r.canceled || !r.filePaths[0]) return { ok: false }; setDataDir(r.filePaths[0]); store = getStore(); refreshLocalClients(true); await ensureGateway(); return { ok: true, dir: store.dir }; }
     case 'app.quit': app.quit(); return { ok: true };
     case 'window.minimize': win?.minimize(); return { ok: true };
     case 'window.maximize': if (win?.isMaximized()) win.unmaximize(); else win?.maximize(); return { ok: true };
@@ -149,10 +175,13 @@ else {
       try { if (!req || typeof req.action !== 'string') throw new Error('无效操作'); return await handleAction(req.action, req.payload || {}); } catch (e: any) { return { error: String(e.message || e) }; }
     });
     ipcMain.handle('aurora:recent', event => event.sender === win?.webContents && trustedFrame(event.senderFrame?.url) ? recent.slice(0, 100) : []);
+    refreshLocalClients(true);
     createWindow(); createTray(); if (store.getSettings().autoStartGateway) await ensureGateway().catch(() => {}); applyLoginItem(store.getSettings().launchAtLogin);
+    clientScanTimer = setInterval(() => refreshLocalClients(), 30_000);
+    clientScanTimer.unref();
     app.on('activate', showWindow);
   }).catch(e => { dialog.showErrorBox('云桥 AI 启动失败', e.message); app.quit(); });
 }
 app.on('before-quit', () => { quitting = true; });
 app.on('window-all-closed', () => { if (!store.getSettings().closeToTray && process.platform !== 'darwin') app.quit(); });
-app.on('will-quit', () => { void gateway?.stop(); tray?.destroy(); });
+app.on('will-quit', () => { if (clientScanTimer) clearInterval(clientScanTimer); void gateway?.stop(); tray?.destroy(); });

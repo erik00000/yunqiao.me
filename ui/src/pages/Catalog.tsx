@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { PageProps } from '../App';
 import { Btn, Empty, Ico, useToast } from '../components/ui';
 import { call, CloudCatalog, PROTOCOL_TEXT } from '../lib/api';
@@ -12,13 +12,24 @@ export default function Catalog({ state, reload, go }: PageProps) {
   const [region, setRegion] = useState('all');
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [importing, setImporting] = useState(false);
+  const catalogRequest = useRef(0);
   const toast = useToast();
   async function fetchCatalog(refresh = false) {
+    const request = ++catalogRequest.current;
     setLoading(true); setError('');
-    try { const r = await call<CloudCatalog>('cloud.catalog', { refresh }); if (!r.ok) throw new Error('目录暂不可用'); setData(r); if (refresh) await reload(); }
-    catch (e: any) { setError(e.message); } finally { setLoading(false); }
+    try {
+      const r = await call<CloudCatalog & { message?: string }>('cloud.catalog', { refresh });
+      if (request !== catalogRequest.current) return;
+      if (!r.ok) throw new Error(r.message || '目录暂不可用');
+      setData(r); setPicked(previous => new Set([...previous].filter(key => r.providers.some(p => p.key === key))));
+      if (refresh) await reload();
+    } catch (e: any) { if (request === catalogRequest.current) setError(e.message); }
+    finally { if (request === catalogRequest.current) setLoading(false); }
   }
-  useEffect(() => { fetchCatalog(); }, []);
+  useEffect(() => {
+    void fetchCatalog();
+    return () => { catalogRequest.current++; };
+  }, [state.catalog?.version, state.catalog?.fetchedAt, state.catalog?.source, state.catalog?.syncing, state.catalog?.warning]);
   const list = useMemo(() => (data?.providers || []).filter(p => (region === 'all' || p.region === region) && `${p.name} ${p.vendor} ${p.tags?.join(' ')} ${p.models?.map(m => m.id).join(' ')}`.toLowerCase().includes(query.toLowerCase())), [data, region, query]);
   async function importItems() {
     setImporting(true);

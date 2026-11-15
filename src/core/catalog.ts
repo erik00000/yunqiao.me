@@ -2,13 +2,18 @@ import { createHash } from 'node:crypto';
 import type { AuroraStore } from './store/index.js';
 import { PROVIDER_PRESETS, type ProviderPreset } from './presets/providers.js';
 import { fetchCloudCatalog, validateCloudCatalog, type CloudCatalog } from './cloud.js';
+import { OFFICIAL_CATALOG_URL } from './releaseSources.js';
 
 type CatalogSnapshot = Omit<CloudCatalog, 'source'> & { source: 'remote' | 'cache' | 'builtin'; syncing?: boolean };
 type Session = { endpoint: string; snapshot?: CatalogSnapshot; pending?: Promise<CatalogSnapshot>; attempted: boolean };
 const sessions = new WeakMap<AuroraStore, Session>();
 
 function session(store: AuroraStore): Session {
-  const endpoint = store.getSettings().catalogUrl;
+  let endpoint = OFFICIAL_CATALOG_URL;
+  try {
+    const candidate = new URL(store.getSettings().catalogUrl);
+    if (['https:', 'http:'].includes(candidate.protocol) && !candidate.username && !candidate.password && !candidate.hash) endpoint = candidate.href.replace(/\/$/, '');
+  } catch { /* Legacy hidden settings must not prevent startup; use the official directory. */ }
   let s = sessions.get(store);
   if (!s || s.endpoint !== endpoint) {
     s = { endpoint, attempted: false };

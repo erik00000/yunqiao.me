@@ -4,6 +4,14 @@ import { Btn, Empty, Field, Ico, Modal, Toggle, useToast } from '../components/u
 import { PluginRecord, call, isWebMode } from '../lib/api';
 import DesktopExtensions from './DesktopExtensions';
 
+function MiddlewareStatus({ enabled, result }: { enabled: boolean; result?: { status: 'ok' | 'error' | 'blocked'; checkedAt: string; message?: string } }) {
+  if (!enabled) return null;
+  if (!result) return <p className="hint middleware-status">等待请求验证</p>;
+  const date = new Date(result.checkedAt);
+  const label = { ok: '最近运行正常', error: '最近运行失败', blocked: '最近请求被拦截' }[result.status];
+  return <div className="middleware-status" style={{ marginTop: 10 }}><div className="row wrap"><span className={`chip ${result.status === 'ok' ? 'ok' : 'warn'}`}>{label}</span>{!Number.isNaN(date.valueOf()) && <time className="hint" dateTime={result.checkedAt}>最近验证：{date.toLocaleString('zh-CN')}</time>}</div>{result.message && <p className="hint" style={{ overflowWrap: 'anywhere' }}>{result.message}</p>}</div>;
+}
+
 export default function Plugins(props: PageProps) {
   const [tab, setTab] = useState<'desktop' | 'gateway'>('desktop');
   return <>
@@ -27,14 +35,14 @@ function GatewayPlugins({ state, reload, go }: PageProps) {
 
   async function mutate(key: string, action: string, payload: unknown, message?: string) {
     if (remote || busy) return;
-    setBusy(key);
+    setBusy(key); setError('');
     try {
       const result = await call(action, payload);
       if (result?.ok === false) throw new Error(result.message || '操作未完成');
       await reload();
       if (message) toast.push(message, 'ok');
       return true;
-    } catch (e: any) { toast.push(e.message || '操作未完成', 'bad'); return false; }
+    } catch (e: any) { const message = e.message || '操作未完成'; setError(message); toast.push(message, 'bad'); return false; }
     finally { setBusy(''); }
   }
   function edit(record: Partial<PluginRecord>) {
@@ -79,11 +87,12 @@ function GatewayPlugins({ state, reload, go }: PageProps) {
           <div className="card-title"><Ico name={b.id === 'model-map' ? 'route' : b.id === 'system-prompt' ? 'chat' : 'puzzle'} /><span>{b.name}</span><span className="sub"><span className="chip">内置</span></span></div>
           <p style={{ fontSize: 12, lineHeight: 1.8, color: 'var(--text-2)', minHeight: 44 }}>{b.description}</p>
           {b.id === 'token-budget' && <p className="hint" style={{ marginTop: 8 }}>裁剪会移除较早轮次；重要上下文请先保留摘要。</p>}
+          <MiddlewareStatus enabled={!!installed?.enabled} result={state.middlewareStatus?.[b.id]} />
           <div className="row" style={{ marginTop: 18 }}>
             <span className={`chip ${installed?.enabled ? 'ok' : ''}`}>{installed?.enabled ? '已启用' : '未启用'}</span>
             <div className="grow" />
             <Btn size="sm" disabled={remote || !!busy} onClick={() => edit(record)}>配置</Btn>
-            {!remote && <fieldset disabled={!!busy} style={{ border: 0, padding: 0, margin: 0 }}><Toggle title={`启用${b.name}`} on={!!installed?.enabled} onChange={v => { void mutate(b.id, 'plugin.save', { ...record, enabled: v }); }} /></fieldset>}
+            {!remote && <fieldset disabled={!!busy} style={{ border: 0, padding: 0, margin: 0 }}><Toggle title={`启用${b.name}`} on={!!installed?.enabled} onChange={v => { void mutate(b.id, 'plugin.save', installed ? { id: installed.id, enabled: v } : { ...record, enabled: v }); }} /></fieldset>}
           </div>
         </div>;
       })}
@@ -92,18 +101,18 @@ function GatewayPlugins({ state, reload, go }: PageProps) {
       <div className="card-title">自定义插件<span className="sub">新建插件默认停用，检查代码后再启用</span></div>
       {!custom.length ? <Empty icon="◇" title={search ? '没有匹配的自定义插件' : '把你的工作习惯，变成一个插件'} hint={search ? '换个关键词试试。' : '从可编辑模板开始，为请求添加自己的处理逻辑。'} /> : <div className="list">
         {custom.map(p => <div className="list-row" key={p.id}>
-          <div className="grow"><strong>{p.name}</strong><div style={{ color: 'var(--muted)', fontSize: 12, marginTop: 4 }}>{p.description || '本地 JavaScript 中间件'}</div></div>
-          {remote ? <span className={`chip ${p.enabled ? 'ok' : ''}`}>{p.enabled ? '已启用' : '已停用'}</span> : <fieldset disabled={!!busy} style={{ border: 0, padding: 0, margin: 0 }}><Toggle on={p.enabled} title={`启用${p.name}`} onChange={v => { void mutate(p.id, 'plugin.save', { ...p, enabled: v }); }} /></fieldset>}
+          <div className="grow"><strong>{p.name}</strong><div style={{ color: 'var(--muted)', fontSize: 12, marginTop: 4 }}>{p.description || '本地 JavaScript 中间件'}</div><MiddlewareStatus enabled={p.enabled} result={state.middlewareStatus?.[p.id]} /></div>
+          {remote ? <span className={`chip ${p.enabled ? 'ok' : ''}`}>{p.enabled ? '已启用' : '已停用'}</span> : <fieldset disabled={!!busy} style={{ border: 0, padding: 0, margin: 0 }}><Toggle on={p.enabled} title={`启用${p.name}`} onChange={v => { void mutate(p.id, 'plugin.save', { id: p.id, enabled: v }); }} /></fieldset>}
           <Btn size="sm" disabled={remote || !!busy} onClick={() => edit(p)}>编辑</Btn>
-          <Btn size="sm" variant="ghost" disabled={remote || !!busy} title={`删除${p.name}`} onClick={() => setDeleting(p)}><Ico name="trash" size={13} /></Btn>
+          <Btn size="sm" variant="ghost" disabled={remote || !!busy} title={`删除${p.name}`} onClick={() => { setError(''); setDeleting(p); }}><Ico name="trash" size={13} /></Btn>
         </div>)}
       </div>}
     </div>
     {editing && <Modal title={editing.builtin ? `${editing.name} · 配置` : '编辑自定义插件'} sub={editing.builtin ? '保存配置后，启用状态保持不变。' : '定义同步 function onRequest(ir, ctx)。参数通过 options 对象读取，返回 ir 或 { block: "原因" }。'} onClose={() => !busy && setEditing(null)} width={740} foot={<><Btn variant="ghost" disabled={!!busy} onClick={() => setEditing(null)}>取消</Btn><Btn variant="primary" disabled={!!busy} onClick={save}>{busy === 'save' ? '保存中…' : '保存配置'}</Btn></>}>
-      {!editing.builtin && <><Field label="名称"><input className="input" value={editing.name || ''} onChange={e => setEditing({ ...editing, name: e.target.value })} /></Field><Field label="说明"><input className="input" value={editing.description || ''} onChange={e => setEditing({ ...editing, description: e.target.value })} /></Field><Field label="JavaScript 代码" hint="插件处理的是模型请求内容，请只启用你信任的代码。"><textarea className="textarea mono" style={{ minHeight: 240 }} value={editing.code || ''} onChange={e => setEditing({ ...editing, code: e.target.value })} spellCheck={false} /></Field></>}
-      <Field label="参数（JSON 对象）"><textarea className="textarea mono" style={{ minHeight: editing.builtin ? 210 : 100 }} value={optionsText} onChange={e => setOptionsText(e.target.value)} spellCheck={false} /></Field>
+      {!editing.builtin && <><Field label="名称"><input className="input" aria-label="插件名称" disabled={!!busy} value={editing.name || ''} onChange={e => setEditing({ ...editing, name: e.target.value })} /></Field><Field label="说明"><input className="input" aria-label="插件说明" disabled={!!busy} value={editing.description || ''} onChange={e => setEditing({ ...editing, description: e.target.value })} /></Field><Field label="JavaScript 代码" hint="插件处理的是模型请求内容，请只启用你信任的代码。"><textarea className="textarea mono" aria-label="中间件代码" disabled={!!busy} style={{ minHeight: 240 }} value={editing.code || ''} onChange={e => setEditing({ ...editing, code: e.target.value })} spellCheck={false} /></Field></>}
+      <Field label="参数（JSON 对象）"><textarea className="textarea mono" aria-label="中间件参数" disabled={!!busy} style={{ minHeight: editing.builtin ? 210 : 100 }} value={optionsText} onChange={e => setOptionsText(e.target.value)} spellCheck={false} /></Field>
       {error && <div className="notice warning" role="alert">{error}</div>}
     </Modal>}
-    {deleting && <Modal title={`删除「${deleting.name}」？`} sub="该插件的代码与参数会从云桥移除，其他插件不受影响。" onClose={() => !busy && setDeleting(null)} foot={<><Btn disabled={!!busy} onClick={() => setDeleting(null)}>取消</Btn><Btn variant="danger" disabled={!!busy} onClick={async () => { if (await mutate('delete', 'plugin.delete', { id: deleting.id }, '插件已删除')) setDeleting(null); }}>删除插件</Btn></>}><p style={{ color: 'var(--muted)' }}>需要保留时，可以先停用或复制代码。</p></Modal>}
+    {deleting && <Modal title={`删除「${deleting.name}」？`} sub="该插件的代码与参数会从云桥移除，其他插件不受影响。" onClose={() => !busy && setDeleting(null)} foot={<><Btn disabled={!!busy} onClick={() => setDeleting(null)}>取消</Btn><Btn variant="danger" disabled={!!busy} onClick={async () => { if (await mutate('delete', 'plugin.delete', { id: deleting.id }, '插件已删除')) setDeleting(null); }}>删除插件</Btn></>}><p style={{ color: 'var(--muted)' }}>需要保留时，可以先停用或复制代码。</p>{error && <div className="notice warning" role="alert">{error}</div>}</Modal>}
   </>;
 }

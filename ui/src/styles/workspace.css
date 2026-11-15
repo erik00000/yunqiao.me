@@ -176,6 +176,8 @@ button:disabled { cursor: not-allowed; }
 .repair-start > svg { color: var(--accent); }
 .repair-start h3 { color: var(--text); font-size: 16px; font-weight: 600; }
 .repair-start p { font-size: 12px; }
+.history-regions { gap: 8px; margin-bottom: 16px; }
+.history-regions .chip { max-width: 100%; overflow-wrap: anywhere; white-space: normal; }
 .desktop-connection { display: flex; align-items: center; gap: 18px; border: 1px solid var(--stroke); border-radius: 12px; background: var(--panel); padding: 24px; margin-bottom: 18px; }
 .desktop-connection-icon { display: grid; place-items: center; width: 59px; height: 59px; color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--panel)); border-radius: 15px; flex: none; }
 .desktop-connection h2 { margin: 0; font-size: 17px; font-weight: 600; }
@@ -280,3 +282,29 @@ button:disabled { cursor: not-allowed; }
 .member-steps p { display: grid; grid-template-columns: 28px 1fr; column-gap: 12px; margin: 22px 0; }
 .member-steps p span { grid-row: span 2; background: var(--surface-2); border-radius: 50%; width: 28px; height: 28px; display: grid; place-items: center; color: var(--accent); }
 .member-steps p small { color: var(--muted); margin-top: 6px; line-height: 1.6; }
+
+.local-identities { margin-bottom: 25px; }
+.provider-page-head { flex-wrap: wrap; }
+.provider-page-head > div:first-child { flex: 1 1 280px; min-width: 0; }
+.provider-page-head .actions { flex-wrap: wrap; max-width: 100%; }
+.local-identity-card { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.local-identity-card .client-mark { color: var(--accent); background: var(--bg); }
+.local-identity-card .tag-list { margin-top: 7px; }
+.local-identity-card p { margin: 0; }
+.identity-account { color: var(--text-2); font-size: 12px; overflow-wrap: anywhere; }
+.identity-explanation { font-size: 12px; line-height: 1.8; color: var(--text-2); }
+.identity-source { display: flex; align-items: center; gap: 9px; font-size: 10px; color: var(--muted); }
+.identity-source > span { flex: none; }
+.identity-source code { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.identity-actions { margin-top: auto; padding-top: 4px; }
+.provider-origin { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--muted); font-size: 10px; }
+.provider-origin .chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.local-scan-details { margin: 20px 0; padding: 15px 18px; border: 1px solid var(--stroke); border-radius: 12px; background: var(--panel); }
+.local-scan-details > summary { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; cursor: pointer; color: var(--text-2); font-size: 12px; }
+.local-scan-details > summary::after { content: '展开'; margin-left: auto; color: var(--muted); font-size: 10px; }
+.local-scan-details[open] > summary { margin-bottom: 14px; }
+.local-scan-details[open] > summary::after { content: '收起'; }
+.local-source-row { gap: 12px; }
+.local-source-row .grow { min-width: 0; }
+.local-source-path { display: block; margin-top: 6px; color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
+@media(max-width: 700px) { .local-source-row { flex-wrap: wrap; } .local-source-row > .grow { flex-basis: 100%; } }

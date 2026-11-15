@@ -30,6 +30,6 @@ export class DictationBridge{
       const response=await fetch(config.provider.baseUrl.replace(/\/$/,'')+'/audio/transcriptions',{method:'POST',redirect:'error',signal:controller.signal,headers:{...config.provider.headers,Authorization:`Bearer ${config.key.key}`},body:form});
       if(!response.ok)throw new Error(`语音服务返回 HTTP ${response.status}，请核实此供应商是否支持 ASR 模型`);
       const result:any=await response.json();if(typeof result.text!=='string')throw new Error('语音服务没有返回 text 字段');return{status:'ok',text:result.text.slice(0,50000)};
-    }catch(e){if(controller.signal.aborted)return{status:'cancelled',message:'语音转写已取消或超时'};throw e;}finally{clearTimeout(timer);this.running.delete(id);}
+    }catch(e){if(controller.signal.aborted)return{status:'cancelled',message:'语音转写已取消或超时'};throw e;}finally{clearTimeout(timer);if(this.running.get(id)===controller)this.running.delete(id);}
   }
 }

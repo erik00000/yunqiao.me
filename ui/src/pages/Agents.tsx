@@ -21,12 +21,23 @@ export default function Agents({ state, reload, go }: PageProps) {
   const [selected, setSelected] = useState<AgentCatalogItem | null>(null);
   const [restoring, setRestoring] = useState<AgentCatalogItem | null>(null);
   const [busy, setBusy] = useState(false);
+  const [detectError, setDetectError] = useState('');
   const toast = useToast();
   const clients = useMemo(() => [...state.agentCatalog].sort((a, b) => (ORDER.indexOf(a.id) < 0 ? 99 : ORDER.indexOf(a.id)) - (ORDER.indexOf(b.id) < 0 ? 99 : ORDER.indexOf(b.id))).filter(a => (filter === 'all' || (filter === 'connected' ? state.agents[a.id]?.connected : a.category === filter)) && `${a.name} ${a.vendor} ${a.description}`.toLowerCase().includes(query.toLowerCase())), [state, filter, query]);
   const connected = Object.values(state.agents).filter(a => a.connected).length;
-  async function detect() { setBusy(true); try { await call('agent.detect'); await reload(); toast.push('本地客户端状态已更新', 'ok'); } catch (e: any) { toast.push(e.message, 'bad'); } finally { setBusy(false); } }
+  async function detect() {
+    setBusy(true); setDetectError('');
+    try {
+      const scanned = window.aurora ? await call('localClients.scan') : null;
+      await call('agent.detect'); await reload();
+      if (scanned?.ok === false) throw new Error(scanned.warnings?.join('；') || '部分本机配置未能读取，请检查扫描详情后重试。');
+      toast.push('本地客户端与已有供应商配置已更新', 'ok');
+    } catch (e: any) { setDetectError(e.message || '检测未完成，请重试'); }
+    finally { setBusy(false); }
+  }
   return <>
     <div className="page-head"><div><div className="eyebrow">YOUR AI, CONNECTED</div><h1>连接你的 AI 客户端<span className="heading-dot">.</span></h1><p>从你常用的工具开始，选择供应商与模型，剩下的交给云桥。</p></div><div className="actions"><Btn disabled={busy} onClick={detect}><Ico name="refresh" size={14} />{busy ? '正在检测…' : '检测本地客户端'}</Btn></div></div>
+    {detectError && <div className="notice warning" role="alert">{detectError}<Btn size="sm" onClick={() => go('providers')}>查看本机扫描详情</Btn></div>}
     {!state.providers.length && !!window.aurora && <div className="notice"><Ico name="bolt" /><span className="grow">第一次使用云桥？绑定平台会员，领取 $10 新客额度。</span><Btn size="sm" onClick={() => go('membership')}>领取新客额度 →</Btn></div>}
     <section className="connect-hero">
       <div className="hero-copy"><span className="hero-label"><span className="dot on" />一个工作空间，连接更多可能</span><h2>喜欢的客户端，<br />配上合适的模型。</h2><p>国内、国际、本地模型，统一管理。<br />从下面选择一个客户端，开始你的第一次连接。</p><div className="hero-facts"><span><Ico name="shield" size={14} />配置自动备份</span><span><Ico name="route" size={14} />多供应商切换</span><span><Ico name="chat" size={14} />本地会话管理</span></div></div>
@@ -54,10 +65,17 @@ export default function Agents({ state, reload, go }: PageProps) {
 
 function ConnectWizard({ agent, state, reload, onClose }: { agent: AgentCatalogItem; state: PageProps['state']; reload: PageProps['reload']; onClose: () => void }) {
   const previous = state.agents[agent.id];
+  const codex = ['codex-cli', 'chatgpt-desktop'].includes(agent.id);
+  const officialAvailable = codex && !!state.codexCoexist?.identity.available;
+  const officialModels = (state.codexCoexist?.models || []).filter(m => m.official).map(m => ({ id: m.upstreamModel, displayName: m.displayName, contextWindow: m.contextWindow }));
+  const officialProvider: Provider | undefined = officialAvailable ? { id: 'official', name: 'ChatGPT 官方账号', format: 'openai-responses', baseUrl: 'https://chatgpt.com/backend-api/codex', apiKeys: [], models: officialModels, enabled: officialModels.length > 0, priority: 0, createdAt: '', updatedAt: '' } : undefined;
+  const choices = [...(officialProvider ? [officialProvider] : []), ...state.providers];
   const [step, setStep] = useState(0);
-  const [providerId, setProviderId] = useState(previous?.providerId || state.providers.find(p => p.enabled)?.id || '');
+  const [providerId, setProviderId] = useState(previous?.providerId || choices.find(p => p.enabled)?.id || '');
+  const [authMode, setAuthMode] = useState<'api' | 'coexist'>(previous?.authMode || (officialAvailable && officialModels.length > 0 ? 'coexist' : 'api'));
   const [model, setModel] = useState(previous?.model || '');
-  const [creating, setCreating] = useState(!!window.aurora && !state.providers.some(p => p.enabled));
+  const [manualModel, setManualModel] = useState(false);
+  const [creating, setCreating] = useState(!!window.aurora && !choices.some(p => p.enabled));
   const presets = state.presets;
   const catalogStatus = state.catalog?.syncing ? '正在更新官方目录…' : state.catalog?.warning || `官方目录 · ${state.catalog?.source === 'remote' ? '已同步' : state.catalog?.source === 'cache' ? '本地缓存' : '离线预设'} · ${presets.length} 家`;
   const [draft, setDraft] = useState<Partial<Provider>>({ name: '', baseUrl: '', format: 'openai-chat', models: [] });
@@ -69,44 +87,62 @@ function ConnectWizard({ agent, state, reload, onClose }: { agent: AgentCatalogI
   const [test, setTest] = useState<any>(null);
   const [error, setError] = useState('');
   const toast = useToast();
-  const provider = state.providers.find(p => p.id === providerId);
-  const chosenModel = model || provider?.models[0]?.id || '';
-  const payload = { agentId: agent.id, providerId, model: chosenModel, mode: 'gateway' };
+  const provider = choices.find(p => p.id === providerId);
+  const chosenModel = manualModel ? model : model || provider?.models[0]?.id || '';
+  const payload = { agentId: agent.id, providerId, model: chosenModel, mode: 'gateway', authMode: providerId === 'official' ? 'coexist' : codex ? authMode : 'api' };
   async function run(task: () => Promise<void>) { setBusy(true); setError(''); try { await task(); } catch (e: any) { setError(e.message || String(e)); } finally { setBusy(false); } }
   async function saveNew() {
     if (!draft.name?.trim()) throw new Error('请填写供应商名称');
     try { const u = new URL(draft.baseUrl || ''); if (!['http:', 'https:'].includes(u.protocol)) throw new Error(); } catch { throw new Error('请填写有效的 http(s) API 地址'); }
     const models = modelIds.split(/[\s,，]+/).filter(Boolean).map(id => draft.models?.find(m => m.id === id) || { id });
     const saved = await call<Provider>('provider.save', { ...draft, models, enabled: true, apiKeys: [{ id: crypto.randomUUID(), label: '默认密钥', key: key.trim(), enabled: true, weight: 1 }], priority: 10 });
-    const discovered = !models.length ? await call('provider.models', { providerId: saved.id }) : null;
-    await reload(); setProviderId(saved.id); setModel(discovered?.models?.[0]?.id || saved.models[0]?.id || ''); setCreating(false); setStep(1);
-    if (discovered?.ok === false) setError('供应商已保存，暂未读到模型列表。请重试同步或手动输入模型 ID。');
+    // Keep the saved identity even if discovery or the subsequent state refresh fails.
+    setDraft(saved);
+    let discovered: any = null;
+    if (key.trim() || !models.length) {
+      try { discovered = await call('provider.models', { providerId: saved.id }); }
+      catch (e: any) { discovered = { ok: false, message: e.message || '模型同步失败' }; }
+    }
+    await reload(); setProviderId(saved.id); setModel(saved.models[0]?.id || discovered?.models?.[0]?.id || ''); setManualModel(false); setTest(null); setCreating(false); setStep(1);
+    if (discovered?.ok === false) setError(`供应商已保存，模型列表暂未同步：${discovered.message || '请稍后重试'}。可继续选择已有模型或手动输入模型 ID。`);
   }
-  async function prepare() { const r = await call('agent.preview', payload); if (!r.ok) throw new Error(r.message || '无法生成配置预览'); setPreview(r); setStep(2); }
+  async function prepare() {
+    if (providerId !== 'official' && provider && !provider.models.some(m => m.id === chosenModel)) {
+      if (!window.aurora) throw new Error('请在电脑端先保存此模型 ID');
+      await call('provider.save', { id: provider.id, models: [...provider.models, { id: chosenModel }] });
+      await reload();
+    }
+    const r = await call('agent.preview', payload); if (!r.ok) throw new Error(r.message || '无法生成配置预览'); setPreview(r); setStep(2);
+  }
   async function apply() { const r = await call('agent.connect', { ...payload, revision: preview?.revision }); if (!r.ok) throw new Error(r.message || '应用失败'); setResult(r); await reload(); toast.push('客户端配置已保存', 'ok'); }
   if (agent.support === 'unsupported') return <Modal title={agent.name} sub="客户端兼容性说明" onClose={onClose} foot={<><Btn onClick={onClose}>关闭</Btn>{agent.docsUrl && <Btn variant="primary" onClick={() => call('app.openExternal', { url: agent.docsUrl })}>打开官方说明 ↗</Btn>}</>}><div className="compatibility-info"><ClientMark id={agent.id} name={agent.name} /><h2>通过官方账号使用此客户端</h2><p>{agent.supportNote || agent.description}</p><p>如需自定义供应商，可选择支持自定义 API 的编程客户端或 API 工具。</p></div></Modal>;
   return <Modal title={`配置 ${agent.name}`} sub="选择供应商和模型，预览后再应用到客户端。" onClose={() => { if (!busy) onClose(); }} width={800} foot={<><Btn variant="ghost" disabled={busy} onClick={onClose}>{result ? '完成' : '取消'}</Btn>{!result && step > 0 && <Btn disabled={busy} onClick={() => { setStep(step - 1); setPreview(null); setError(''); }}>上一步</Btn>}{!result && step === 0 && <Btn variant="primary" disabled={busy || (!creating && !provider?.enabled)} onClick={() => run(async () => { if (creating) await saveNew(); else setStep(1); })}>{busy ? '保存中…' : creating ? '保存并选模型 →' : '下一步：选择模型 →'}</Btn>}{!result && step === 1 && <Btn variant="primary" disabled={busy || !chosenModel} onClick={() => run(prepare)}>{busy ? '生成预览…' : '预览配置 →'}</Btn>}{!result && step === 2 && agent.support === 'automatic' && <Btn variant="primary" disabled={busy} onClick={() => run(apply)}>{busy ? '正在应用…' : '备份并应用配置'}</Btn>}</>}>
     <div className="wizard-steps">{['连接供应商', '选择模型', '预览并应用'].map((name, i) => <div key={name} className={step === i ? 'active' : step > i ? 'done' : ''}><span>{step > i ? '✓' : i + 1}</span>{name}</div>)}</div>
     {error && <div className="notice warning" role="alert">{error}</div>}
-    {result ? <div className="connection-success"><span><Ico name="check" size={32} /></span><h2>配置已应用</h2><p>{result.message || `重启 ${agent.name} 后开始使用。`}</p><div className="review-summary"><b>{provider?.name}</b><span>→</span><code>{chosenModel}</code></div>{result.path && <p className="mono muted">{result.path}</p>}</div> : <>
+    {result ? <div className="connection-success"><span><Ico name="check" size={32} /></span><h2>配置已应用</h2><p>{result.message || `重启 ${agent.name} 后开始使用。`}</p>{payload.authMode === 'coexist' && <p>重启客户端后，在模型菜单选择“官方”或对应供应商。切换服务建议新建会话，避免不同供应商的加密上下文不兼容。</p>}<div className="review-summary"><b>{provider?.name}</b><span>→</span><code>{chosenModel}</code></div>{result.path && <p className="mono muted">{result.path}</p>}</div> : <>
       {step === 0 && <>
+        {codex && <div className="notice"><Ico name="user" size={18} /><div className="grow"><b>官方账号与第三方模型</b><p>{officialAvailable ? '已检测到官方登录。共存模式保留账号身份，并在同一模型菜单中显示官方与第三方模型。' : state.codexCoexist?.identity.message || '登录官方客户端后，可在这里开启账号与第三方模型共存。'}</p>{officialAvailable && <label className="checkbox-label"><input type="checkbox" aria-label="保留官方账号并与第三方模型共存" checked={authMode === 'coexist' || providerId === 'official'} disabled={providerId === 'official'} onChange={e => setAuthMode(e.target.checked ? 'coexist' : 'api')} />保留官方账号并与第三方模型共存</label>}<p className="hint">官方凭据由原客户端维护；第三方服务仅使用你配置的供应商密钥。</p></div></div>}
+        {codex && authMode === 'coexist' && state.codexCoexist?.warnings.map((message, i) => <div className="notice warning" key={i}>{message}</div>)}
         {!window.aurora && !state.providers.some(p => p.enabled) && <div className="notice">请先在电脑桌面端添加并启用供应商，再从这里选择客户端连接。</div>}
-        <div className="wizard-toggle"><button className={!creating ? 'selected' : ''} disabled={!state.providers.length} onClick={() => setCreating(false)}>使用已有供应商</button><button className={creating ? 'selected' : ''} disabled={!window.aurora} onClick={() => setCreating(true)}><Ico name="plus" size={14} />添加供应商</button></div>
+        <div className="wizard-toggle"><button className={!creating ? 'selected' : ''} disabled={!choices.length} onClick={() => setCreating(false)}>使用已有供应商</button><button className={creating ? 'selected' : ''} disabled={!window.aurora} onClick={() => setCreating(true)}><Ico name="plus" size={14} />添加供应商</button></div>
         {creating ? <div className="provider-inline-form">
           <Field label="从厂商预设开始" hint={catalogStatus}><PresetPicker presets={presets} value={draft.presetId} onChange={p => { setKey(''); if (!p) { setDraft({ name: '', baseUrl: '', format: 'openai-chat', models: [] }); setModelIds(''); return; } setDraft({ name: p.nameZh || p.name, presetId: p.id, baseUrl: p.baseUrl, format: p.format, models: p.models, color: p.color, icon: p.icon }); setModelIds(p.models.map(m => m.id).join('\n')); }} /></Field>
           <div className="grid cols-2"><Field label="供应商名称"><input aria-label="供应商名称" className="input" value={draft.name || ''} onChange={e => setDraft({ ...draft, name: e.target.value })} placeholder="例如：我的 DeepSeek" /></Field><Field label="API 协议"><select aria-label="API 协议" className="select" value={draft.format} onChange={e => setDraft({ ...draft, format: e.target.value as any })}>{Object.entries(PROTOCOL_TEXT).map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></Field></div>
           <Field label="API 地址"><input aria-label="API 地址" className="input mono" value={draft.baseUrl || ''} onChange={e => setDraft({ ...draft, baseUrl: e.target.value })} placeholder="https://api.example.com/v1" /></Field>
           <Field label="API Key" hint="密钥只保存在本机；无需认证的本地服务可以留空。"><input aria-label="API Key" className="input mono" type="password" autoComplete="off" value={key} onChange={e => setKey(e.target.value)} placeholder="输入你的 API Key" /></Field>
-          <Field label="模型 ID" hint="可留空，保存后自动读取。手动填写时每行一个，或用逗号分隔。"><textarea aria-label="模型 ID" className="textarea mono" rows={3} value={modelIds} onChange={e => setModelIds(e.target.value)} placeholder="留空自动读取，或填写实际模型 ID" /></Field>
-        </div> : <div className="provider-choices">{state.providers.map(p => <button className={`provider-choice ${providerId === p.id ? 'selected' : ''}`} key={p.id} disabled={!p.enabled} onClick={() => { setProviderId(p.id); setModel(p.models[0]?.id || ''); setTest(null); }}><span className="vendor-avatar" style={{ color: p.color || 'var(--accent)' }}>{p.name.slice(0, 1)}</span><div><b>{p.name}</b><small>{p.models.length} 个模型 · {PROTOCOL_TEXT[p.format]}{!p.enabled ? ' · 已停用' : ''}</small></div><span className="choice-radio">{providerId === p.id ? '●' : '○'}</span></button>)}</div>}
+          <Field label="模型 ID" hint="保存后会尝试同步模型，并保留这里填写的模型。手动填写时每行一个，或用逗号分隔。"><textarea aria-label="模型 ID" className="textarea mono" rows={3} value={modelIds} onChange={e => setModelIds(e.target.value)} placeholder="留空自动读取，或填写实际模型 ID" /></Field>
+        </div> : <div className="provider-choices">{choices.map(p => <button className={`provider-choice ${providerId === p.id ? 'selected' : ''}`} key={p.id} disabled={!p.enabled} onClick={() => { setProviderId(p.id); setModel(p.models[0]?.id || ''); setManualModel(false); if (p.id === 'official') setAuthMode('coexist'); setTest(null); }}><span className="vendor-avatar" style={{ color: p.color || 'var(--accent)' }}>{p.name.slice(0, 1)}</span><div><b>{p.name}</b><small>{p.id === 'official' ? '使用官方登录 · ' : ''}{p.models.length} 个模型 · {PROTOCOL_TEXT[p.format]}{!p.enabled ? p.id === 'official' ? ' · 请先在官方客户端加载模型' : ' · 已停用' : ''}</small></div><span className="choice-radio">{providerId === p.id ? '●' : '○'}</span></button>)}</div>}
       </>}
       {step === 1 && <>
-        <div className="review-summary"><b>{provider?.name}</b><span className="chip">{PROTOCOL_TEXT[provider?.format || '']}</span><span className="grow" /><Btn size="sm" disabled={busy} onClick={() => run(async () => { const r = await call('provider.models', { providerId }); if (!r.ok) throw new Error(r.message); await reload(); toast.push(`模型已同步，新增 ${r.added || 0} 个`, 'ok'); })}><Ico name="refresh" size={12} />同步模型</Btn></div>
-        <Field label="选择模型"><select aria-label="选择模型" className="select" value={chosenModel} onChange={e => { setModel(e.target.value); setTest(null); }}><option value="" disabled>请选择模型</option>{provider?.models.map(m => <option key={m.id} value={m.id}>{m.displayName || m.id}{m.contextWindow ? ` · ${fmtCtx(m.contextWindow)} 上下文` : ''}</option>)}</select></Field>
-        {!provider?.models.length && <Field label="手动模型 ID"><input className="input mono" aria-label="手动模型 ID" value={model} onChange={e => setModel(e.target.value.trim())} placeholder="填写该服务实际提供的模型 ID" /></Field>}
+        <div className="review-summary"><b>{provider?.name}</b><span className="chip">{PROTOCOL_TEXT[provider?.format || '']}</span><span className="grow" /><Btn size="sm" disabled={busy || providerId === 'official'} onClick={() => run(async () => { const r = await call('provider.models', { providerId }); if (!r.ok) throw new Error(r.message); await reload(); toast.push(`模型已同步，新增 ${r.added || 0} 个`, 'ok'); })}><Ico name="refresh" size={12} />同步模型</Btn></div>
+        <Field label="选择模型"><select aria-label="选择模型" className="select" disabled={manualModel} value={chosenModel} onChange={e => { setModel(e.target.value); setTest(null); }}><option value="" disabled>请选择模型</option>{provider?.models.map(m => <option key={m.id} value={m.id}>{m.displayName || m.id}{m.contextWindow ? ` · ${fmtCtx(m.contextWindow)} 上下文` : ''}</option>)}</select></Field>
+        {providerId !== 'official' && <>
+          {!!provider?.models.length && <Btn size="sm" onClick={() => { setManualModel(!manualModel); if (manualModel) setModel(provider.models[0]?.id || ''); setTest(null); }}>{manualModel ? '返回模型列表' : '手动输入其他模型 ID'}</Btn>}
+          {(manualModel || !provider?.models.length) && <Field label="手动模型 ID" hint="模型不在列表中时，填写供应商提供的准确 ID；预览前会保存到该供应商。"><input className="input mono" aria-label="手动模型 ID" value={model} onChange={e => { setModel(e.target.value.trim()); setTest(null); }} placeholder="填写该服务实际提供的模型 ID" /></Field>}
+        </>}
         {chosenModel && <div className="model-feature-row">{Object.entries(provider?.models.find(m => m.id === chosenModel)?.capabilities || {}).filter(([, v]) => v).map(([k]) => <span className="chip" key={k}>{({ tools: '工具调用', vision: '视觉理解', thinking: '深度思考' } as any)[k] || k}</span>)}</div>}
         <div className="notice"><Ico name="shield" size={18} /><div><b>通过本地网关连接</b><p>自动处理客户端与供应商的协议差异。模型是否支持工具、图片和推理，仍取决于上游实际能力。</p></div></div>
-        <div className="row"><Btn disabled={busy || !chosenModel} onClick={() => run(async () => { setTest(await call('provider.test', { providerId, model: chosenModel })); })}><Ico name="bolt" size={14} />测试连接</Btn><span className="muted">发送一条简短请求，可能产生少量费用。</span></div>{test && <div className={`notice ${test.ok ? '' : 'warning'}`}>{test.ok ? '✓ ' : ''}{test.message}</div>}
+        {providerId === 'official' ? <div className="notice">官方模型来自本机客户端目录；登录与可用额度请在官方客户端确认。应用后可直接在客户端发起对话。</div> : <div className="row"><Btn disabled={busy || !chosenModel} onClick={() => run(async () => { setTest(await call('provider.test', { providerId, model: chosenModel })); })}><Ico name="bolt" size={14} />测试连接</Btn><span className="muted">发送一条简短请求，可能产生少量费用。</span></div>}{test && <div className={`notice ${test.ok ? '' : 'warning'}`}>{test.ok ? '✓ ' : ''}{test.message}</div>}
       </>}
       {step === 2 && preview && <>
         <div className="review-summary"><b>{agent.name}</b><span>→</span><b>{provider?.name}</b><span>→</span><code>{chosenModel}</code></div>

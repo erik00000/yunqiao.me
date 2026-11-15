@@ -107,6 +107,7 @@ export interface AgentState {
   providerId?: string;
   model?: string;
   mode?: 'gateway' | 'direct';
+  authMode?: 'api' | 'coexist';
   /** Claude Code 的 opus / sonnet / haiku 分别用哪个模型 */
   modelMap?: Record<string, string>;
   configPath?: string;
@@ -217,6 +218,8 @@ export interface SessionSummary {
   cost: number;
   model?: string;
   provider?: string;
+  modelProvider?: string;
+  archived?: boolean;
   updatedAt: string;
   createdAt: string;
   sizeBytes: number;

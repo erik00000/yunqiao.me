@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { SessionSummary } from './store/types.js';
+import { nativeSessionRegions } from './historyRepairIO.js';
 
 /**
  * 历史会话聚合：把各客户端的本地会话日志读成统一结构。
@@ -12,11 +13,11 @@ function home(...p: string[]): string {
   return path.join(process.env.AURORA_CLIENT_HOME || os.homedir(), ...p);
 }
 function clientDir(env: string, fallback: string): string { return process.env.AURORA_CLIENT_HOME ? fallback : process.env[env] || fallback; }
-function sessionRoots(): Array<{ dir: string; agent: string }> {
+function sessionRoots(): Array<{ dir: string; agent: string; archived?: boolean }> {
   return [
     { dir: path.join(clientDir('CLAUDE_CONFIG_DIR', home('.claude')), 'projects'), agent: 'Claude Code' },
-    { dir: path.join(clientDir('CODEX_HOME', home('.codex')), 'sessions'), agent: 'Codex' },
-    { dir: path.join(clientDir('CODEX_HOME', home('.codex')), 'archived_sessions'), agent: 'Codex' },
+    { dir: path.join(clientDir('CODEX_HOME', home('.codex')), 'sessions'), agent: 'Codex', archived: false },
+    { dir: path.join(clientDir('CODEX_HOME', home('.codex')), 'archived_sessions'), agent: 'Codex', archived: true },
     { dir: home('.gemini', 'tmp'), agent: 'Gemini CLI' },
     { dir: home('.codebuddy', 'sessions'), agent: 'CodeBuddy' },
   ];
@@ -128,6 +129,7 @@ function summarize(file: string, agent: string): SessionSummary | null {
   let title = '';
   let messageCount = 0;
   let model = '';
+  let modelProvider: string | undefined;
   let cwd = '';
   let id = path.basename(file).replace(/\.jsonl?$/, '');
   let truncated = false;
@@ -146,7 +148,10 @@ function summarize(file: string, agent: string): SessionSummary | null {
       } catch {
         continue;
       }
-      if (o.type === 'session_meta' && typeof o.payload?.id === 'string') id = o.payload.id;
+      if (o.type === 'session_meta' && typeof o.payload?.id === 'string') {
+        id = o.payload.id;
+        if (typeof o.payload.model_provider === 'string') modelProvider = o.payload.model_provider;
+      }
       if (typeof o.sessionId === 'string') id = o.sessionId;
       const ex = extractLine(o);
       cwd = cwd || ex.cwd || '';
@@ -176,6 +181,7 @@ function summarize(file: string, agent: string): SessionSummary | null {
     tokens: 0,
     cost: 0,
     model: model || undefined,
+    modelProvider,
     updatedAt: stat.mtime.toISOString(),
     createdAt: stat.birthtime?.toISOString?.() ?? stat.mtime.toISOString(),
     sizeBytes: stat.size,
@@ -185,10 +191,19 @@ function summarize(file: string, agent: string): SessionSummary | null {
 
 export function scanSessions(): SessionSummary[] {
   const out: SessionSummary[] = [];
+  let regions: ReturnType<typeof nativeSessionRegions> = new Map();
+  try { regions = nativeSessionRegions(); } catch { /* Log-only histories still remain readable when the native index is unavailable. */ }
   for (const root of sessionRoots()) {
     for (const f of walk(root.dir, n => n.endsWith('.jsonl') || (root.agent === 'Gemini CLI' && /^session.*\.json$/.test(n)))) {
       const s = summarize(f, root.agent);
-      if (s) out.push(s);
+      if (s) {
+        if (root.agent === 'Codex') {
+          const region = regions.get(s.id);
+          if (regions.has(s.id)) s.modelProvider = region?.modelProvider;
+          s.archived = region?.archived ?? root.archived;
+        }
+        out.push(s);
+      }
     }
   }
 

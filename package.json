@@ -14,7 +14,7 @@
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "npm run typecheck && node scripts/test-clients.mjs && node scripts/test-gateway.mjs && node scripts/test-history-repair.mjs && node scripts/test-session-index.mjs && node scripts/test-management.mjs && node scripts/test-response-phase.mjs && node scripts/test-extensions.mjs && node scripts/test-member-client.mjs",
+    "test": "npm run typecheck && node scripts/test-settings-policy.mjs && node scripts/test-updates.mjs && node scripts/test-catalog-resilience.mjs && node scripts/test-model-sync.mjs && node scripts/test-clients.mjs && node scripts/test-gateway.mjs && node scripts/test-history-repair.mjs && node scripts/test-session-index.mjs && node scripts/test-management.mjs && node scripts/test-response-phase.mjs && node scripts/test-extensions.mjs && node scripts/test-extension-history.mjs && node scripts/test-member-client.mjs && node scripts/test-local-clients.mjs && node scripts/test-coexist.mjs && node scripts/test-coexist-config.mjs && node scripts/test-agent-transactions.mjs && node scripts/test-middleware.mjs && node scripts/test-config-files-transaction.mjs",
     "build:main": "node scripts/build-main.mjs",
     "build:ui": "vite build",
     "build": "npm run build:ui && npm run build:main",
@@ -34,6 +34,7 @@
     "esbuild": "^0.24.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "smol-toml": "^1.9.1",
     "typescript": "^5.6.3",
     "vite": "^5.4.11"
   },

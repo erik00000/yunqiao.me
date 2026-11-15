@@ -54,9 +54,19 @@ export function effectiveEntry(state: ExtensionState,id:string): {installed:bool
 export function validateConfig(schema: Record<string,any>, input:any):Record<string,any>{
   if(!input||typeof input!=='object'||Array.isArray(input))throw new Error('扩展配置必须是对象');const out:Record<string,any>={};
   for(const [key,value]of Object.entries(input)){const f=schema[key];if(!f||['__proto__','constructor','prototype'].includes(key))throw new Error(`未知配置项：${key}`);
+    if(!['boolean','number','string','file','select'].includes(f.type))throw new Error(`不支持此配置类型：${key}`);
     if(f.type==='boolean'&&typeof value!=='boolean')throw new Error(`${key} 必须是开关值`);
     if(f.type==='number'&&(typeof value!=='number'||!Number.isFinite(value)||(f.min!=null&&value<f.min)||(f.max!=null&&value>f.max)))throw new Error(`${key} 数值超出范围`);
     if(['string','file','select'].includes(f.type)&&(typeof value!=='string'||value.length>4000))throw new Error(`${key} 文本无效`);
     if(f.type==='select'&&!f.options?.some((o:any)=>(typeof o==='string'?o:o.value)===value))throw new Error(`${key} 不是可选值`);out[key]=value;
   }return out;
+}
+export function validatePackageConfig(id:string,input:any):Record<string,any>{
+  const result=validateConfig(manifest(id).config||{},input);
+  if(id==='agent-pet'){
+    if((result.soundSet!==undefined&&!['duck','fx1'].includes(result.soundSet))||result.customSoundPress||result.customSoundRelease)throw new Error('自定义或下载音效尚未接入；请使用内置 duck / fx1 音效');
+    if(result.image!==undefined&&!['whale','custom'].includes(result.image))throw new Error('此桌宠图库尚未接入；请选择 whale 或 custom');
+    if(result.codexAppWhaleBalanceProtocol==='custom'||result.codexAppWhaleBalancePath||result.codexAppWhaleBalanceField)throw new Error('自定义余额接口尚未接入；实时用量请查看用量状态栏');
+  }
+  return result;
 }

@@ -21,13 +21,16 @@ export default function Sessions({}: PageProps) {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [reading, setReading] = useState(false);
   const [agentFilter, setAgentFilter] = useState('all');
+  const [providerFilter, setProviderFilter] = useState('');
   const [visible, setVisible] = useState(100);
   const readingPath = useRef('');
 
   async function scan() {
     setLoading(true);
     try {
-      setSessions(await call<SessionSummary[]>('sessions.scan'));
+      const next = await call<SessionSummary[]>('sessions.scan');
+      setSessions(next);
+      setActive(previous => previous ? next.find(session => session.path === previous.path) || null : null);
     } catch (e: any) {
       toast.push(String(e?.message ?? e), 'bad');
     } finally {
@@ -43,14 +46,19 @@ export default function Sessions({}: PageProps) {
   const list = useMemo(() => {
     const key = q.trim().toLowerCase();
     return sessions.filter(
-      (s) => (agentFilter === 'all' || s.agent === agentFilter) && (!key ||
+      (s) => (agentFilter === 'all' || s.agent === agentFilter) && (!providerFilter || s.modelProvider === providerFilter) && (!key ||
         s.title.toLowerCase().includes(key) ||
         (s.cwd ?? '').toLowerCase().includes(key) ||
         s.agent.toLowerCase().includes(key) ||
+        (s.modelProvider || '').toLowerCase().includes(key) ||
         s.id.toLowerCase().includes(key)),
     );
-  }, [sessions, q, agentFilter]);
-  useEffect(() => setVisible(100), [q, agentFilter]);
+  }, [sessions, q, agentFilter, providerFilter]);
+  useEffect(() => setVisible(100), [q, agentFilter, providerFilter]);
+  const providerCounts = useMemo(() => sessions.reduce<Record<string, number>>((counts, session) => {
+    if (session.modelProvider) counts[session.modelProvider] = (counts[session.modelProvider] || 0) + 1;
+    return counts;
+  }, {}), [sessions]);
 
   async function open(s: SessionSummary) {
     setActive(s);
@@ -78,18 +86,18 @@ export default function Sessions({}: PageProps) {
         <div>
           <h1>历史会话</h1>
           <p>
-            统一检索本地客户端会话，阅读内容、导出 Markdown，或复制对应客户端的恢复命令。
+            按客户端与供应商区域检索会话，阅读、导出，或批量迁移 model_provider 归属。
           </p>
         </div>
         <div className="actions">
-          <Btn variant="primary" disabled={!window.aurora} onClick={() => setRepairing(true)}><Ico name="shield" size={13} />批量修复历史</Btn>
+          <Btn variant="primary" disabled={!window.aurora} onClick={() => setRepairing(true)}><Ico name="shield" size={13} />批量修复历史 / 区域迁移</Btn>
           <input className="input" style={{ width: 220 }} placeholder="搜索标题 / 目录 / 会话 ID" value={q} onChange={(e) => setQ(e.target.value)} />
           <Btn onClick={scan} disabled={loading}>
             <Ico name="refresh" size={13} /> {loading ? '扫描中…' : '重新扫描'}
           </Btn>
         </div>
       </div>
-      {repairing && <HistoryRepair onClose={() => setRepairing(false)} onRepaired={scan} />}
+      {repairing && <HistoryRepair initialSource={providerFilter} onClose={() => setRepairing(false)} onRepaired={scan} />}
 
       <div className="row wrap" style={{ marginBottom: 12 }}>
         <button className={`chip ${agentFilter === 'all' ? 'accent' : ''}`} onClick={() => setAgentFilter('all')}>全部 {sessions.length}</button>
@@ -98,6 +106,12 @@ export default function Sessions({}: PageProps) {
             {k} · {v}
           </button>
         ))}
+        <div className="grow" />
+        <select aria-label="历史供应商区域" className="select" style={{ width: 230 }} value={providerFilter} onChange={e => setProviderFilter(e.target.value)}>
+          <option value="">全部供应商区域</option>
+          {providerFilter && !providerCounts[providerFilter] && <option value={providerFilter}>{providerFilter} · 0</option>}
+          {Object.entries(providerCounts).sort(([a], [b]) => a.localeCompare(b)).map(([id, count]) => <option key={id} value={id}>{id} · {count}</option>)}
+        </select>
       </div>
 
       <div className="split">
@@ -123,6 +137,7 @@ export default function Sessions({}: PageProps) {
                   <div className="ellipsis" style={{ fontSize: 10.5, color: 'var(--muted)' }}>
                     {s.agent} · {s.project ?? '—'} · {s.messageCount} 条 · {fmtTime(s.updatedAt)}
                   </div>
+                  {(s.modelProvider || s.archived) && <div className="row wrap" style={{ marginTop: 5 }}>{s.modelProvider && <span className="chip mono">{s.modelProvider}</span>}{s.archived && <span className="chip">已归档</span>}</div>}
                 </div>
               </div>
             ))}
@@ -142,6 +157,7 @@ export default function Sessions({}: PageProps) {
               <div className="row wrap" style={{ marginBottom: 10 }}>
                 <span className="chip">{fmtBytes(active.sizeBytes)}</span>
                 {active.model && <span className="chip">{active.model}</span>}
+                {active.modelProvider && <span className="chip mono">区域：{active.modelProvider}</span>}
                 {active.cwd && <span className="chip mono ellipsis" style={{ maxWidth: 320 }}>{active.cwd}</span>}
                 <div style={{ flex: 1 }} />
                 <Btn
