@@ -37,5 +37,31 @@
     "publicConfigHttp": 200,
     "balanceValidation": "Authenticated member and administrator reads agree. Net balance difference is not used as credit proof because the account has concurrent usage; the exact consumed receipt is authoritative."
   },
-  "scope": "One existing user-initiated welcome request was resumed. Offline tests issued no production credits. No new member keys or model inference requests were created."
+  "scope": "One existing user-initiated welcome request was resumed. Offline tests issued no production credits. No new member keys or model inference requests were created.",
+  "windowsDebug": {
+    "executable": "release\\membership-fix-debug-0.6.0\\win-unpacked\\YunQiaoAI.exe",
+    "exeSha256": "b77b653f0f924fce9dcd348616b300acbca7949f79af59c2c7ed7ae989d3ede5",
+    "asarSha256": "5d4d76575351619b648836d77d0c7c98266c0e2e2c4081e9fbc15af935ada7bc",
+    "build": {
+      "id": "20261115T062334Z-c4424713",
+      "builtAt": "2026-11-15T06:23:34.740Z",
+      "revision": "c4424713",
+      "channel": "local"
+    },
+    "resourceFilesVerified": 188,
+    "compiledFilesMatched": [
+      "dist/main/gateway-cli.cjs",
+      "dist/main/main.cjs",
+      "dist/main/preload.cjs",
+      "dist/ui/index.html",
+      "dist/ui/tray.png",
+      "dist/ui/assets/index-BU1_8J-u.css",
+      "dist/ui/assets/index-vn0MKVwY.js"
+    ],
+    "packagedAcceptanceChecks": 11,
+    "packagedAcceptancePassed": true,
+    "membershipPublicConfigWarning": [],
+    "existingUserProcessUntouched": true,
+    "publishedRelease": false
+  }
 }
