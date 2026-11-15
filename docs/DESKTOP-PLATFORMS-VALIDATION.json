@@ -1,0 +1,172 @@
+{
+  "schemaVersion": 1,
+  "verifiedAt": "2026-11-15T07:28:44.347364+00:00",
+  "codeRevision": "0202d85e94de893e57dd598e9fe57d30936bb768",
+  "scope": "Windows and native Intel/Apple Silicon macOS desktop compatibility; isolated fixture profiles and test processes",
+  "windows": {
+    "platform": "win32",
+    "arch": "x64",
+    "core": {
+      "revision": "9f2775d1e2248d88b050d5561e6290b065ccf698",
+      "suites": 31,
+      "assertions": 533,
+      "passed": true
+    },
+    "finalLifecycleFollowup": {
+      "revision": "0202d85e94de893e57dd598e9fe57d30936bb768",
+      "sharedChecks": 18,
+      "macSimulationChecks": 12,
+      "typecheck": true
+    },
+    "nativeLifecycleChecks": 11,
+    "nativeShellChecks": 4,
+    "uiChecks": {
+      "restart": 7,
+      "plugins": 22,
+      "history": 7,
+      "updates": 18,
+      "membership": 8
+    },
+    "packaged": {
+      "version": "0.6.0",
+      "platform": "win32",
+      "passed": true,
+      "count": 12,
+      "checks": [
+        "Packaged version and AGPL notices",
+        "All 188 distributed resource hashes match pinned source; upstream tests and Rust reference sources are absent",
+        "Actual native packaged application renders app.asar with platform-specific controls and isolated data",
+        "Packaged gateway health is ready and management rejects missing credentials",
+        "Installed runtime loads 5 complete packages, 32 builtins and both pinned markets",
+        "Packaged settings hide catalog controls and migrate legacy preferences to automatic sync and GitHub releases",
+        "The packaged build is identifiable and source links do not depend on an unpublished release tag",
+        "Native packaged IPC exposes history region selection and provider discovery",
+        "Packaged plugin page renders the five bundled packages without errors",
+        "Packaged membership onboarding renders without authenticated user state",
+        "Packaged client cards expose restart and terminal actions; native IPC rejects API services and process overrides without launching any client",
+        "No page exceptions or changes to isolated client configuration"
+      ],
+      "executable": "release\\platform-final-debug-0.6.0\\win-unpacked\\YunQiaoAI.exe",
+      "exeSha256": "312b91b2abfccb0fbdcd34085745fdaaf13d0d9d203b0cbe6948d453996ae8ad",
+      "asarSha256": "87cdeb941409f8dc798a032d7ed802ce1b71790b745a02a5942136926dbe6ddc",
+      "build": {
+        "id": "20261115T072208Z-0202d85e",
+        "builtAt": "2026-11-15T07:22:08.231Z",
+        "revision": "0202d85e",
+        "channel": "local"
+      },
+      "resourceFilesVerified": 188,
+      "profile": "isolated temporary app, gateway and client directories",
+      "membershipPublicConfigWarning": []
+    }
+  },
+  "macOS": {
+    "arm64": {
+      "runner": "macos-15",
+      "jobUrl": "https://github.com/jxb412/aurora/actions/runs/43689616128/job/132737284998",
+      "coreSuites": 31,
+      "nativeBundleChecks": 8,
+      "nativeLifecycleChecks": 6,
+      "nativeShellChecks": 5,
+      "uiSuites": [
+        "client restart",
+        "plugins",
+        "history repair",
+        "provider balances",
+        "membership"
+      ],
+      "packaged": {
+        "version": "0.6.0",
+        "platform": "darwin",
+        "passed": true,
+        "count": 12,
+        "checks": [
+          "Packaged version and AGPL notices",
+          "All 188 distributed resource hashes match pinned source; upstream tests and Rust reference sources are absent",
+          "Actual native packaged application renders app.asar with platform-specific controls and isolated data",
+          "Packaged gateway health is ready and management rejects missing credentials",
+          "Installed runtime loads 5 complete packages, 32 builtins and both pinned markets",
+          "Packaged settings hide catalog controls and migrate legacy preferences to automatic sync and GitHub releases",
+          "The packaged build is identifiable and source links do not depend on an unpublished release tag",
+          "Native packaged IPC exposes history region selection and provider discovery",
+          "Packaged plugin page renders the five bundled packages without errors",
+          "Packaged membership onboarding renders without authenticated user state",
+          "Packaged client cards expose restart and terminal actions; native IPC rejects API services and process overrides without launching any client",
+          "No page exceptions or changes to isolated client configuration"
+        ],
+        "executable": "release/mac-arm64/YunQiaoAI.app/Contents/MacOS/YunQiaoAI",
+        "exeSha256": "6c79cc7a0ee3a36276867f1751e7b688005900b06c7c1006c7876e010d1fecfe",
+        "asarSha256": "bffafb68576a2c458111e22a4d61d0b231e6ee91fe026bbf73adb2902de136dc",
+        "build": {
+          "id": "20261115T072327Z-0202d85e",
+          "builtAt": "2026-11-15T07:23:27.200Z",
+          "revision": "0202d85e",
+          "channel": "release"
+        },
+        "resourceFilesVerified": 188,
+        "profile": "isolated temporary app, gateway and client directories",
+        "membershipPublicConfigWarning": []
+      }
+    },
+    "x64": {
+      "runner": "macos-15-intel",
+      "jobUrl": "https://github.com/jxb412/aurora/actions/runs/43689616128/job/132737284738",
+      "coreSuites": 31,
+      "nativeBundleChecks": 8,
+      "nativeLifecycleChecks": 6,
+      "nativeShellChecks": 5,
+      "uiSuites": [
+        "client restart",
+        "plugins",
+        "history repair",
+        "provider balances",
+        "membership"
+      ],
+      "packaged": {
+        "version": "0.6.0",
+        "platform": "darwin",
+        "passed": true,
+        "count": 12,
+        "checks": [
+          "Packaged version and AGPL notices",
+          "All 188 distributed resource hashes match pinned source; upstream tests and Rust reference sources are absent",
+          "Actual native packaged application renders app.asar with platform-specific controls and isolated data",
+          "Packaged gateway health is ready and management rejects missing credentials",
+          "Installed runtime loads 5 complete packages, 32 builtins and both pinned markets",
+          "Packaged settings hide catalog controls and migrate legacy preferences to automatic sync and GitHub releases",
+          "The packaged build is identifiable and source links do not depend on an unpublished release tag",
+          "Native packaged IPC exposes history region selection and provider discovery",
+          "Packaged plugin page renders the five bundled packages without errors",
+          "Packaged membership onboarding renders without authenticated user state",
+          "Packaged client cards expose restart and terminal actions; native IPC rejects API services and process overrides without launching any client",
+          "No page exceptions or changes to isolated client configuration"
+        ],
+        "executable": "release/mac/YunQiaoAI.app/Contents/MacOS/YunQiaoAI",
+        "exeSha256": "97253ff5f2b8cbec1d90345fc68d096aacc65290c58d7f1c399bc2a3f79b0e15",
+        "asarSha256": "8906c7c778d314d18dfe7d745b155981485f8041672788c70da0aac891bcc9ee",
+        "build": {
+          "id": "20261115T072452Z-0202d85e",
+          "builtAt": "2026-11-15T07:24:52.330Z",
+          "revision": "0202d85e",
+          "channel": "release"
+        },
+        "resourceFilesVerified": 188,
+        "profile": "isolated temporary app, gateway and client directories",
+        "membershipPublicConfigWarning": []
+      }
+    }
+  },
+  "githubValidation": {
+    "runId": 43689616128,
+    "url": "https://github.com/jxb412/aurora/actions/runs/43689616128",
+    "conclusion": "success",
+    "revision": "0202d85e94de893e57dd598e9fe57d30936bb768"
+  },
+  "limits": [
+    "Native lifecycle tests use private Cocoa/Windows fixture applications, not arbitrary third-party client versions.",
+    "Terminal AppleEvents command construction and denied authorization are tested with controlled hosts; real Terminal authorization was not exercised.",
+    "macOS packaging acceptance covers native applications; Developer ID signing, notarization and downloaded Gatekeeper installation remain unverified.",
+    "Provider/membership/usage core tests use isolated simulated services; no paid model requests or gift redemption occurred.",
+    "No new public release or production update metadata was published."
+  ]
+}

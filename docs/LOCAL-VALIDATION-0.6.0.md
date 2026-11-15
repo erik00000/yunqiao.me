@@ -1,8 +1,10 @@
 # Windows 本地功能验收
 
+本页保留数据清理阶段的验收结果。当前调试入口、Windows / macOS 适配与最新验证见 [双平台兼容性](DESKTOP-PLATFORMS.md)。
+
 当前阶段为本地功能完善，未发布包含本轮改动的新版本，也未更新线上下载元数据。已有早期 0.6.0 安装包不能代替本次调试包。
 
-最新调试入口：`release/data-clean-debug-0.6.0/win-unpacked/YunQiaoAI.exe`。先从托盘退出早期版本，再启动新包；侧栏显示「调试」，在「系统设置 → 版本更新」可核对构建时间。
+该阶段调试入口：`release/data-clean-debug-0.6.0/win-unpacked/YunQiaoAI.exe`。先从托盘退出早期版本，再启动新包；侧栏显示「调试」，在「系统设置 → 版本更新」可核对构建时间。
 
 运行或复制时保留整个 `win-unpacked` 目录。该入口直接运行已解压程序，适用于本机 C 盘临时空间不足的情况。本次仅生成已解压调试版；上一轮便携包不包含本次数据清理。
 
@@ -10,7 +12,7 @@
 
 本次追加修复插件市场同步超时、代理支持、备用请求与缓存验证，详见 [同步修复记录](PLUGIN-SYNC-VALIDATION.md)。真实 Windows 界面同步公开市场 520 项、完整索引 5,491 项成功。
 
-最新构建另完成 [正式数据清理](PRODUCTION-DATA-AUDIT-2026-11-15.md)：删除演示数据、清空四类地址模板、修正未发布版本与未知余额，并将随附测试和参考源码排除出客户端。实际产物扫描见 [清理验证](PRODUCTION-DATA-VALIDATION.json)。
+该阶段构建另完成 [正式数据清理](PRODUCTION-DATA-AUDIT-2026-11-15.md)：删除演示数据、清空四类地址模板、修正未发布版本与未知余额，并将随附测试和参考源码排除出客户端。实际产物扫描见 [清理验证](PRODUCTION-DATA-VALIDATION.json)。
 
 ## 本轮完成
 
@@ -63,7 +65,7 @@
 python scripts/test-packaged.py --exe release/data-clean-debug-0.6.0/win-unpacked/YunQiaoAI.exe
 ```
 
-当前调试包 SHA-256：
+该阶段调试包 SHA-256：
 
 ```text
 YunQiaoAI.exe  d0cf3507614eb9f047c4b141f7c3fc1958c781d1570d3b6a17c8b27a4b6ea96d

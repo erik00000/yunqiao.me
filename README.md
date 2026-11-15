@@ -4,7 +4,7 @@
 
 Windows / macOS 桌面端使用 Electron + React + TypeScript；iOS 为 Capacitor 伴侣端，连接电脑或服务器上的网关。0.6.0 正在本地功能验证，公开下载为 0.5.0 预览版。
 
-最新本地调试入口及验证范围见 [Windows 本地功能验收](docs/LOCAL-VALIDATION-0.6.0.md)。 本轮修复及后续优先级见 [工程审查记录](docs/ENGINEERING-AUDIT-2026-11-15.md)。
+最新调试入口及双平台验证范围见 [Windows / macOS 兼容性](docs/DESKTOP-PLATFORMS.md)；此前记录见 [Windows 本地功能验收](docs/LOCAL-VALIDATION-0.6.0.md)。 本轮修复及后续优先级见 [工程审查记录](docs/ENGINEERING-AUDIT-2026-11-15.md)。
 
 公开仓库：[jxb412/aurora](https://github.com/jxb412/aurora) · [下载预览版 0.5.0](https://github.com/jxb412/aurora/releases/tag/v0.5.0) · [构建记录](https://github.com/jxb412/aurora/actions) · [用户讨论](https://github.com/jxb412/aurora/discussions)
 
@@ -94,7 +94,7 @@ python scripts/test-ui.py
 
 客户端测试使用隔离的临时 home；网关测试使用本地模拟上游。UI 测试需要 Python Playwright，使用 Electron 与隔离数据目录，验证实际的配置、恢复、会话下载和认证流程。它们不会证明所有服务商或所有客户端版本都已通过真实付费 API 联调。
 
-0.6.0 的新增本地发现与账号共存仍在 Windows 本地调试，本轮未发布新版或切换客户端更新指向。之前的 GitHub 构建记录对应新增功能之前的代码，不能作为这些新增流程的验收。
+0.6.0 已通过 Windows 本地回归，以及 [Intel / Apple Silicon Mac 原生验证](https://github.com/jxb412/aurora/actions/runs/43689616128)，覆盖完整核心测试、原生启动/重启、界面和实际应用包。本轮未发布新版或切换客户端下载指向，具体验证边界见 [平台记录](docs/DESKTOP-PLATFORMS-VALIDATION.json)。
 
 ## 当前边界
 

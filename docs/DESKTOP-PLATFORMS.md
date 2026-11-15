@@ -19,6 +19,10 @@
 | 更新下载 | GitHub 对应架构 EXE，官网备用 | GitHub 对应架构或 Universal DMG/PKG，官网备用；拒绝错架构和降级 |
 | 配置导入导出、自启、数据目录 | Windows 原生入口与 AppData | macOS 原生入口与 Application Support；配置导出不包含会员登录凭据 |
 
+## 当前调试入口
+
+Windows：`release/platform-final-debug-0.6.0/win-unpacked/YunQiaoAI.exe`，运行时保留整个 `win-unpacked` 目录。构建标识 `20261115T072208Z-0202d85e`，可在系统设置的版本更新页核对。测试使用独立配置，不会替换当前运行的旧版本。
+
 ## 验证方式
 
 `npm test` 包含平台参数化测试与当前系统的文件、配置、网关、余额、插件、历史及并发回归。参数化测试不能代替原生系统执行。
@@ -26,6 +30,18 @@
 `node scripts/test-desktop-shell.mjs` 启动独立 Electron 实例，检查真实 IPC、窗口菜单、快捷键和关闭/恢复行为。`scripts/test-client-lifecycle-native.mjs` 只在 Windows 使用私有程序；`scripts/test-client-lifecycle-macos-native.mjs` 只在 macOS 使用私有 Cocoa 应用包，不重启真实客户端。`scripts/test-desktop-macos.mjs` 在 macOS 实际读取 XML/二进制 plist、检查执行权限与 ps。
 
 GitHub 的 `Desktop platform validation` 工作流分别使用原生 arm64 和 x64 Mac：执行完整核心测试、macOS 专用测试、交互页面回归、Electron 原生窗口测试和打包后资源/IPC 验收。它不发布版本。`build` 工作流的 `macos` 目标复用这些检查并额外生成两种 DMG。
+
+## 本轮结果
+
+源码提交 `0202d85`；[GitHub 双架构原生验收](https://github.com/jxb412/aurora/actions/runs/43689616128) 全部成功。
+
+| 环境 | 核心回归 | 原生专项 | 实际打包应用 |
+| --- | --- | --- | --- |
+| Windows x64 | 31 组通过，后续生命周期 18 + 12 项通过 | 私有进程 11 项，窗口 4 项 | 12 项通过，188 个资源哈希一致 |
+| macOS Intel x64 | 31 组通过 | 应用包 8 项、生命周期 6 项、窗口 5 项 | 12 项通过，188 个资源哈希一致 |
+| macOS Apple Silicon arm64 | 31 组通过 | 应用包 8 项、生命周期 6 项、窗口 5 项 | 12 项通过，188 个资源哈希一致 |
+
+两种 Mac 还实际运行了客户端重启、插件、历史修复、供应商余额及会员的页面测试。具体构建标识、文件哈希和验证边界见平台验证 JSON。
 
 ## 明确边界
 
