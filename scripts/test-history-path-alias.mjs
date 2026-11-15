@@ -82,7 +82,7 @@ CREATE UNIQUE INDEX idx_thread_items_page ON thread_items(thread_id,rollout_ordi
   await test('path aliases never authorize files whose canonical location is outside the client root', () => {
     const outside = path.join(root, 'outside'); write(path.join(outside, 'private.jsonl'), 'untouched');
     const externalLink = path.join(home, 'external'); link(outside, externalLink);
-    assert.throws(() => api.checkedFile(alias, path.join(alias, 'external', 'private.jsonl')), /外部链接/);
+    assert.throws(() => api.checkedFile(alias, path.join(alias, 'external', 'private.jsonl')), /路径不属于/);
     assert.equal(api.sameHistoryFile(alias, rollout, path.join(outside, 'private.jsonl')), false);
     assert.equal(fs.readFileSync(path.join(outside, 'private.jsonl'), 'utf8'), 'untouched');
   });

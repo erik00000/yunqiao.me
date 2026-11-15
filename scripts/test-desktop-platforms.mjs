@@ -61,6 +61,16 @@ try {
     assert.throws(() => api.resolveMacApplication(helper, options), /辅助进程/);
     assert.equal(api.resolveMacApplication(path.join(temporaryRoot, 'missing.app'), options), null);
   });
+  test('configured application metadata failures do not break detection and recover after an update', () => {
+    write(plist, '{malformed');
+    assert.throws(() => api.inspectCodingDesktop(app, options));
+    const unavailable = api.detectCodingDesktop(app, options);
+    assert.equal(unavailable.installed, false); assert.equal(unavailable.supportsCodexConfig, false);
+    assert.match(unavailable.detectionError, /更新|安装/);
+    assert.equal(unavailable.executable, undefined);
+    write(plist, JSON.stringify(metadata()));
+    assert.equal(api.detectCodingDesktop(app, options).installed, true);
+  });
   test('repair process detection covers Windows desktop and CLI without unrelated names', () => {
     const rows = '"ChatGPT.exe","1"\r\n"Codex.exe","2"\r\n"not-codex.exe","3"\r\n"ChatGPT Beta.exe","4"';
     assert.deepEqual(api.parseCodingClientProcesses(rows, 'win32'), ['ChatGPT.exe', 'Codex.exe', 'ChatGPT Beta.exe']);

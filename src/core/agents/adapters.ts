@@ -23,7 +23,7 @@ export interface ConnectContext {
 }
 export interface ConnectResult { ok: boolean; path?: string; backup?: string; message: string; restartRequired?: boolean; extraFiles?: string[] }
 export interface ConnectPreview { ok: boolean; message: string; files: PlannedFile[]; warnings: string[]; requiresRestart: boolean; revision?: string; manual?: { baseUrl: string; apiKey: string; model: string } }
-export interface AgentDetection { installed: boolean; configured: boolean; command?: string; configPath?: string; version?: string; productName?: string; supportsCodexConfig?: boolean; evidence?: string[] }
+export interface AgentDetection { installed: boolean; configured: boolean; command?: string; configPath?: string; version?: string; productName?: string; supportsCodexConfig?: boolean; evidence?: string[]; detectionError?: string }
 export interface AgentAdapter {
   id: AgentId; name: string; vendor: string; description: string; needsInstall: boolean; protocol: string; hotSwitch: boolean;
   support: 'automatic' | 'manual' | 'unsupported'; category: 'cli' | 'desktop' | 'service'; supportNote: string; docsUrl: string;
@@ -203,7 +203,7 @@ const codexDesktop = makeAdapter({
 });
 const desktopPreview = codexDesktop.preview.bind(codexDesktop), desktopConnect = codexDesktop.connect.bind(codexDesktop);
 Object.defineProperty(codexDesktop, 'support', { enumerable: true, get: () => desktopDetection().supportsCodexConfig ? 'automatic' : 'manual' });
-codexDesktop.detect = () => { const detected = desktopDetection(); return { installed: detected.installed, configured: fs.existsSync(codexConfig()), command: detected.executable, version: detected.version, configPath: codexConfig(), productName: detected.productName, supportsCodexConfig: detected.supportsCodexConfig, evidence: detected.evidence }; };
+codexDesktop.detect = () => { const detected = desktopDetection(); return { installed: detected.installed, configured: fs.existsSync(codexConfig()), command: detected.executable, version: detected.version, configPath: codexConfig(), productName: detected.productName, supportsCodexConfig: detected.supportsCodexConfig, evidence: detected.evidence, detectionError: detected.detectionError }; };
 codexDesktop.preview = ctx => desktopDetection().supportsCodexConfig ? desktopPreview(ctx) : { ok: false, message: '尚未从安装资源确认该桌面版本支持 Codex 配置。请升级到含编程模块的 ChatGPT 桌面版，或在桌面增强中指定程序路径后重新检测。', files: [], warnings: [], requiresRestart: false };
 codexDesktop.connect = ctx => desktopDetection().supportsCodexConfig ? desktopConnect(ctx) : { ok: false, message: '当前桌面版本的编程配置能力尚未确认，未改写任何客户端配置。' };
 const DESKTOP_PROFILE = '753cb857-baa9-45ce-a04b-000000003425';
@@ -256,7 +256,7 @@ export function detectAll(_fast = false): Record<string, AgentDetection> {
   if (detectCache && Date.now() - detectCache.at < 60_000) return detectCache.data;
   const data: Record<string, AgentDetection> = {};
   for (const adapter of AGENT_ADAPTERS) { try { data[adapter.id] = adapter.detect(); } catch { data[adapter.id] = { installed: false, configured: false }; } }
-  detectCache = { at: Date.now(), data }; return data;
+  detectCache = Object.values(data).some(item => item.detectionError) ? null : { at: Date.now(), data }; return data;
 }
 export function detectReset(): void { detectCache = null; }
 export function exportEnvScript(ctx: ConnectContext, protocol: string, platform: NodeJS.Platform = process.platform): string {

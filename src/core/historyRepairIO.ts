@@ -31,7 +31,8 @@ export function historyContext(): HistoryContext {
 export function inside(root: string, file: string): boolean { const relative = path.relative(path.resolve(root), path.resolve(file)); return !!relative && !relative.startsWith('..') && !path.isAbsolute(relative); }
 export function checkedFile(root: string, file: string): string {
   const realRoot = fs.realpathSync(root), realFile = fs.realpathSync(file);
-  if (!inside(realRoot, realFile) || fs.lstatSync(file).isSymbolicLink() || !fs.statSync(file).isFile()) throw new Error('修复不接受外部链接或非普通文件');
+  if (!inside(realRoot, realFile)) throw new Error('文件路径不属于本次修复目录');
+  if (fs.lstatSync(file).isSymbolicLink() || !fs.statSync(file).isFile()) throw new Error('修复不接受外部链接或非普通文件');
   return realFile;
 }
 export function sameHistoryFile(root: string, first: string, second: string): boolean {
@@ -50,8 +51,9 @@ export async function assertClientsStopped(ctx: HistoryContext): Promise<void> {
   if (processes.length) throw new Error(`请先完全退出 ChatGPT 桌面版 / Codex 及 CLI，再执行修复或恢复。检测到：${processes.join('、')}`);
 }
 export async function runningClients(): Promise<string[]> {
-  const configured = getAdapter('chatgpt-desktop')?.detect().command;
-  return runningCodingClients(configured ? [configured] : []);
+  const configured = getAdapter('chatgpt-desktop')?.detect();
+  if (configured?.detectionError) throw new Error('客户端程序状态暂时无法确认，请等待更新完成或重新选择程序路径后再修复历史');
+  return runningCodingClients(configured?.command ? [configured.command] : []);
 }
 
 /** Shared across provider repair and native index repair; stale owners are recovered only after PID verification. */

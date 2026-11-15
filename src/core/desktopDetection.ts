@@ -7,6 +7,7 @@ export interface CodingDesktopDetection {
   installed: boolean; executable?: string; exePath?: string; productName?: string;
   supportsCodexConfig: boolean; version?: string; evidence: string[];
   bundlePath?: string; bundleId?: string; resourcesPath?: string;
+  detectionError?: string;
 }
 export interface MacApplication {
   bundlePath: string; executable: string; bundleId?: string; version?: string;
@@ -122,10 +123,16 @@ export function detectCodingDesktop(exePath?: string, options?: DesktopDetection
   const key = JSON.stringify([process.platform, isolated || '', exePath || 'auto']);
   const cached = !options && cache.get(key);
   if (cached && Date.now() - cached.at < 15000) return cached.value;
-  const detected = exePath ? [inspectCodingDesktop(path.resolve(exePath), options)] : candidates(options || {}).flatMap(file => {
-    try { const value = inspectCodingDesktop(file, options); return value.installed ? [value] : []; } catch { return []; }
+  const unavailable = (file: string): CodingDesktopDetection => ({ installed: false, supportsCodexConfig: false, evidence: [], exePath: file,
+    detectionError: '客户端程序暂时不可用，可能正在更新或安装不完整。请稍后重新检测，或在连接设置中重新选择程序路径。' });
+  const configured = (): CodingDesktopDetection[] => {
+    try { const value = inspectCodingDesktop(path.resolve(exePath!), options); return [value.installed ? value : unavailable(exePath!)]; }
+    catch { return [unavailable(exePath!)]; }
+  };
+  const detected = exePath ? configured() : candidates(options || {}).flatMap(file => {
+    try { const value = inspectCodingDesktop(file, options); return value.installed ? [value] : []; } catch { return [unavailable(file)]; }
   });
-  const value = detected.find(item => item.supportsCodexConfig) || detected.find(item => item.installed) || { installed: false, supportsCodexConfig: false, evidence: [] };
-  if (!options) cache.set(key, { at: Date.now(), value });
+  const value = detected.find(item => item.supportsCodexConfig) || detected.find(item => item.installed) || detected.find(item => item.detectionError) || { installed: false, supportsCodexConfig: false, evidence: [] };
+  if (!options && !value.detectionError) cache.set(key, { at: Date.now(), value });
   return value;
 }

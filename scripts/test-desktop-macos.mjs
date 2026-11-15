@@ -18,7 +18,7 @@ let passed = 0;
 try {
   process.env.AURORA_CLIENT_HOME = root;
   const bundle = path.join(root, 'api.cjs');
-  await build({ stdin: { contents: `export * from './src/core/desktopDetection.ts'; export * from './src/core/clientProcesses.ts'; export { desktopDebugLaunch } from './src/core/injector.ts'; export { runExtensionAction } from './src/core/extensions/index.ts'; export { AuroraStore } from './src/core/store/index.ts';`, resolveDir: workspace, loader: 'ts' }, outfile: bundle, bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent' });
+  await build({ stdin: { contents: `export * from './src/core/desktopDetection.ts'; export * from './src/core/clientProcesses.ts'; export { desktopDebugLaunch } from './src/core/injector.ts'; export { configureDesktopPath, getAdapter, detectAll } from './src/core/agents/adapters.ts'; export { runningClients } from './src/core/historyRepairIO.ts'; export { runExtensionAction } from './src/core/extensions/index.ts'; export { AuroraStore } from './src/core/store/index.ts';`, resolveDir: workspace, loader: 'ts' }, outfile: bundle, bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent' });
   const api = createRequire(import.meta.url)(bundle);
   const app = path.join(root, 'Applications', 'ChatGPT Beta.app');
   const plist = path.join(app, 'Contents', 'Info.plist');
@@ -55,6 +55,28 @@ try {
   assert.throws(() => api.resolveMacApplication(app), /执行权限/);
   fs.chmodSync(executable, 0o700);
   console.log('PASS native bundle validation rejects a non-executable main program'); passed++;
+  const recoveryHome = path.join(root, 'updating-profile');
+  const updatingApp = path.join(recoveryHome, 'Applications', 'ChatGPT.app');
+  fs.mkdirSync(path.dirname(updatingApp), { recursive: true }); fs.cpSync(app, updatingApp, { recursive: true });
+  const updatingPlist = path.join(updatingApp, 'Contents', 'Info.plist'), originalPlist = fs.readFileSync(updatingPlist);
+  fs.writeFileSync(updatingPlist, 'temporarily incomplete plist');
+  process.env.AURORA_CLIENT_HOME = recoveryHome;
+  api.configureDesktopPath(updatingApp);
+  try {
+    assert.throws(() => api.inspectCodingDesktop(updatingApp));
+    assert.equal(api.detectCodingDesktop(updatingApp).installed, false);
+    assert.match(api.detectCodingDesktop().detectionError, /更新/);
+    assert.equal(api.getAdapter('chatgpt-desktop').support, 'manual');
+    assert.match(api.detectAll()['chatgpt-desktop'].detectionError, /更新/);
+    await assert.rejects(api.runningClients(), /状态暂时无法确认/);
+    await assert.rejects(api.runExtensionAction({ store }, 'extension.configure', { exePath: updatingApp }), /Info.plist/);
+    fs.writeFileSync(updatingPlist, originalPlist);
+    assert.equal(api.detectCodingDesktop(updatingApp).installed, true);
+    assert.equal(api.detectCodingDesktop().installed, true);
+    assert.equal(api.getAdapter('chatgpt-desktop').support, 'automatic');
+    assert.equal(api.detectAll()['chatgpt-desktop'].installed, true);
+  } finally { api.configureDesktopPath(undefined); process.env.AURORA_CLIENT_HOME = root; }
+  console.log('PASS a broken configured app leaves settings accessible, blocks history writes and recovers without cached failure'); passed++;
   const processes = await api.runningCodingClients();
   assert(Array.isArray(processes)); assert(processes.every(name => typeof name === 'string'));
   console.log('PASS native ps comm query executes without reading process arguments'); passed++;

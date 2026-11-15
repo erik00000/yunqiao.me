@@ -65,6 +65,32 @@ async function makeFixture(parent, bundleId) {
   const state = path.join(path.dirname(bundle), 'fixture-state'); fs.mkdirSync(state);
   const fixture = { bundle, executable, bundleId, state }; fixtures.push(fixture); return fixture;
 }
+async function diagnostic(fixtures) {
+  console.log('Private fixture markers', JSON.stringify(fixtures.map(fixture => ({ bundleId: fixture.bundleId, alive: alive(fixture), launches: launches(fixture), pid: Number(text(path.join(fixture.state, 'pid'))) || null }))));
+  const source = `ObjC.import('AppKit'); ObjC.import('Foundation');
+function run(argv) {
+  var fixtures = JSON.parse(argv[0]); var output = [];
+  var applications = $.NSWorkspace.sharedWorkspace.runningApplications;
+  for (var i = 0; i < Number(applications.count); i++) {
+    var app = applications.objectAtIndex(i); var id = ''; try { id = String(ObjC.unwrap(app.bundleIdentifier) || ''); } catch (_) { continue; }
+    if (!fixtures.some(function(fixture) { return fixture.bundleId === id; })) continue;
+    var row = { bundleId: id, pid: Number(app.processIdentifier) };
+    try { row.bundlePath = ObjC.unwrap(app.bundleURL.path); } catch(e) { row.bundleError = String(e); }
+    try { row.executablePath = ObjC.unwrap(app.executableURL.path); } catch(e) { row.executableError = String(e); }
+    try { row.canonicalBundle = ObjC.unwrap(app.bundleURL.URLByResolvingSymlinksInPath.path); } catch(e) { row.canonicalError = String(e); }
+    try { row.isTerminated = Boolean(app.isTerminated); row.terminated = Boolean(app.terminated); } catch(e) { row.terminatedError = String(e); }
+    try { row.launchTime = Number(app.launchDate.timeIntervalSince1970); } catch(e) { row.launchError = String(e); }
+    output.push(row);
+  }
+  return JSON.stringify({ count: Number(applications.count), fixtures: output });
+}`;
+  try { const result = await runFile('/usr/bin/osascript', ['-l', 'JavaScript', '-e', source, JSON.stringify(fixtures.map(({ bundleId }) => ({ bundleId })))], { timeout: 15000 }); console.log('Private fixture AppKit', result.stdout.trim()); }
+  catch (error) { console.log('Private fixture AppKit diagnostic failed', String(error.stderr || error.message).slice(0, 2000)); }
+  for (const fixture of fixtures) {
+    const pid = Number(text(path.join(fixture.state, 'pid'))); if (!pid) continue;
+    try { const result = await runFile('/bin/ps', ['-p', String(pid), '-o', 'uid=', '-o', 'ppid=', '-o', 'lstart='], { timeout: 5000 }); console.log('Private fixture process', fixture.bundleId, result.stdout.trim()); } catch { console.log('Private fixture exited', fixture.bundleId); }
+  }
+}
 
 try {
   const output = path.join(temporary, 'lifecycle.cjs');
@@ -85,7 +111,7 @@ try {
   await runFile('/usr/bin/open', ['-n', '-a', sentinel.bundle], { timeout: 15000 }); await until(() => alive(sentinel), 'Private sentinel did not start through LaunchServices');
   const sentinelPid = Number(text(path.join(sentinel.state, 'pid')));
   await check('LaunchServices starts the private target and AppKit verifies exact bundle/executable/UID identity', async () => {
-    const result = await lifecycle.restartClient(payload); assert.equal(result.ok, true, result.message); assert.equal(result.operation, 'started');
+    const result = await lifecycle.restartClient(payload); if (!result.ok) await diagnostic([target, sentinel]); assert.equal(result.ok, true, result.message); assert.equal(result.operation, 'started');
     await until(() => alive(target), 'Private target did not initialize');
     const resolved = await runtime.resolveTarget(payload.agentId, detected); const found = await runtime.listProcesses(resolved);
     assert.equal(found.uncertain, false); assert.equal(found.processes.length, 1); assert.equal(found.processes[0].executable, target.executable); assert.equal(found.processes[0].ownerSid, 'uid:' + process.getuid()); assert(found.processes[0].started.includes('|')); assert.equal(launches(target), 1);

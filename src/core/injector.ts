@@ -20,7 +20,7 @@ export interface CodexDesktopInfo extends CodingDesktopDetection {
 export async function desktopInfo(lastVersion?: string, exePath?: string, port = 9222): Promise<CodexDesktopInfo> {
   const detected = detectCodingDesktop(exePath); const running = isCodexRunning(detected.executable); const open = await debugPortOpen(port);
   return { ...detected, running, debugPortOpen: open, lastVersion, versionChanged: !!(lastVersion && detected.version && lastVersion !== detected.version),
-    message: !detected.installed ? '没有找到 ChatGPT 桌面版，可指定程序路径。' : !detected.supportsCodexConfig ? '尚未从安装资源确认编程桌面能力；连接时将检测实际页面。旧聊天客户端不支持 Codex 配置。' : running && !open ? '客户端正在运行但没有开启调试端口，请完全退出后使用启动并连接。' : undefined };
+    message: detected.detectionError || (!detected.installed ? '没有找到 ChatGPT 桌面版，可指定程序路径。' : !detected.supportsCodexConfig ? '尚未从安装资源确认编程桌面能力；连接时将检测实际页面。旧聊天客户端不支持 Codex 配置。' : running && !open ? '客户端正在运行但没有开启调试端口，请完全退出后使用启动并连接。' : undefined) };
 }
 
 export type BridgeHandler = (route: string, payload: any) => Promise<any>;
@@ -133,7 +133,7 @@ export async function openDesktopConnection(options: { port: number; exePath?: s
   if (!await debugPortOpen(port)) {
     if (!options.launch) throw new Error('调试端口未开启，请完全退出客户端后选择启动并连接');
     const d = detectCodingDesktop(options.exePath);
-    if (!d.executable) throw new Error('未找到桌面程序，请先指定程序路径');
+    if (!d.executable) throw new Error(d.detectionError || '未找到桌面程序，请先指定程序路径');
     if (isCodexRunning(d.executable)) throw new Error('客户端正在运行且未开启调试端口，请完全退出后重试');
     const launch = desktopDebugLaunch(d, port);
     const child = spawn(launch.command, launch.args, { detached: true, stdio: 'ignore', windowsHide: false, shell: false });

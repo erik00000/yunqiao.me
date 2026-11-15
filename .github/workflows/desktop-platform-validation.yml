@@ -2,6 +2,11 @@ name: Desktop platform validation
 
 on:
   workflow_dispatch:
+    inputs:
+      native-only:
+        description: Run only native bundle and lifecycle checks
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       package-installer:
@@ -41,13 +46,17 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - uses: actions/setup-python@v5
+        if: inputs.native-only != true
         with:
           python-version: '3.12'
       - run: python -m pip install playwright
+        if: inputs.native-only != true
       - run: python -m playwright install chromium
+        if: inputs.native-only != true
       - name: Verify actual native runner architecture
         run: node -e "if (process.platform !== 'darwin' || process.arch !== '${{ matrix.arch }}') process.exit(1)"
       - name: Core features and configuration regressions
+        if: inputs.native-only != true
         run: node scripts/test-core-all.mjs
       - run: node scripts/test-desktop-macos.mjs
         if: ${{ !cancelled() }}
@@ -55,7 +64,7 @@ jobs:
         if: ${{ !cancelled() }}
       - run: pnpm build
         id: build
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && inputs.native-only != true }}
       - run: node scripts/test-desktop-shell.mjs
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
       - name: Client, plugin, history, balance and membership UI

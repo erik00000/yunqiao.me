@@ -7,7 +7,7 @@ import { randomBytes, createCipheriv, createDecipheriv } from 'node:crypto';
 import { build } from 'esbuild';
 
 const workspace = path.resolve(import.meta.dirname, '..');
-const isolated = fs.mkdtempSync(path.join(os.tmpdir(), 'aurora-member-client-'));
+const isolated = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'aurora-member-client-')));
 const require = createRequire(import.meta.url);
 const bundle = path.join(isolated, 'member-client.cjs');
 const originalFetch = globalThis.fetch;
@@ -21,7 +21,7 @@ await build({
   } }],
 });
 
-function freshApi() { delete require.cache[bundle]; return require(bundle); }
+function freshApi() { delete require.cache[require.resolve(bundle)]; return require(bundle); }
 function fixture(label) {
   const directory = path.join(isolated, label); fs.mkdirSync(directory, { recursive: true });
   const encryptionKey = randomBytes(32);
@@ -216,7 +216,7 @@ try {
   console.log(`All ${passed} desktop membership integration tests passed.`);
 } finally {
   globalThis.fetch = originalFetch; delete globalThis.__memberElectron;
-  assert.equal(path.dirname(path.resolve(isolated)), path.resolve(os.tmpdir()));
+  assert.equal(path.dirname(isolated), fs.realpathSync(os.tmpdir()));
   assert(path.basename(isolated).startsWith('aurora-member-client-'));
   fs.rmSync(isolated, { recursive: true, force: true });
 }
