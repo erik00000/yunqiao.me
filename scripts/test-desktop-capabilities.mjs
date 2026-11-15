@@ -37,6 +37,21 @@ function installation(label, name = 'ChatGPT.exe') {
   write(exe, 'NEVER EXECUTE THIS PRIVATE FIXTURE'); fs.mkdirSync(resources, { recursive: true });
   return { exe, resources, asar: path.join(resources, 'app.asar') };
 }
+// Cache and adapter entrypoints use the actual host platform, without test options.
+// Supply a real private bundle on macOS so its native plist and permission checks run.
+function hostInstallation(label, create = true) {
+  const bundle = process.platform === 'darwin' ? path.join(temporary, label, 'ChatGPT.app') : undefined;
+  const exe = bundle ? path.join(bundle, 'Contents', 'MacOS', 'Private Main') : path.join(temporary, label, 'ChatGPT.exe');
+  const resources = bundle ? path.join(bundle, 'Contents', 'Resources') : path.join(path.dirname(exe), 'resources');
+  if (create) {
+    write(exe, 'NEVER EXECUTE THIS PRIVATE FIXTURE'); fs.mkdirSync(resources, { recursive: true });
+    if (bundle) {
+      write(path.join(bundle, 'Contents', 'Info.plist'), '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>CFBundleExecutable</key><string>Private Main</string><key>CFBundleName</key><string>ChatGPT</string><key>CFBundleIdentifier</key><string>io.aurora.private.capabilities-fixture</string></dict></plist>');
+      fs.chmodSync(exe, 0o700);
+    }
+  }
+  return { exe, resources, asar: path.join(resources, 'app.asar') };
+}
 function desktopArchive(app, main = 'require("electron");', rest = {}) {
   archive(app.asar, { 'package.json': JSON.stringify({ name: 'private-desktop-fixture', main: '.vite/build/main-abc123.js' }), '.vite/build/main-abc123.js': main, ...rest });
 }
@@ -109,29 +124,29 @@ try {
     assert.throws(() => api.inspectCodingDesktop(helper, options), /辅助进程/);
   });
   test('short caches cover unconfirmed and confirmed capabilities and explicit refresh clears both', () => {
-    const app = installation('cache'); api.clearDesktopDetectionCache();
-    const pending = api.detectCodingDesktop(app.exe); assert.equal(pending.supportsCodexConfig, false); desktopArchive(app, strong);
+    const app = hostInstallation('cache'); api.clearDesktopDetectionCache();
+    const pending = api.detectCodingDesktop(app.exe); assert.equal(pending.installed, true); assert.equal(pending.supportsCodexConfig, false); desktopArchive(app, strong);
     assert.equal(api.detectCodingDesktop(app.exe), pending); api.detectReset();
     assert.equal(api.detectCodingDesktop(app.exe).supportsCodexConfig, true);
     desktopArchive(app, 'require("electron");'); assert.equal(api.detectCodingDesktop(app.exe).supportsCodexConfig, true); api.detectReset();
     assert.equal(api.detectCodingDesktop(app.exe).supportsCodexConfig, false);
-    const absent = path.join(temporary, 'cache-absent', 'ChatGPT.exe'), missing = api.detectCodingDesktop(absent);
-    assert.equal(missing.installed, false); write(absent, 'private fixture');
+    const absent = hostInstallation('cache-absent', false).exe, missing = api.detectCodingDesktop(absent);
+    assert.equal(missing.installed, false); hostInstallation('cache-absent');
     assert.equal(api.detectCodingDesktop(absent), missing); api.detectReset(); assert.equal(api.detectCodingDesktop(absent).installed, true);
   });
   test('shared configuration preview and backup work without confirmed desktop capability', () => {
-    const adapter = api.getAdapter('chatgpt-desktop'), absent = path.join(temporary, 'absent', 'ChatGPT.exe');
+    const adapter = api.getAdapter('chatgpt-desktop'), absent = hostInstallation('absent', false).exe;
     const context = { provider: { id: 'test', name: 'Fixture', enabled: true, format: 'openai-responses', baseUrl: 'https://example.com/v1', models: [{ id: 'model-one' }], apiKeys: [{ enabled: true, key: 'private-fixture-key' }] }, model: 'model-one', mode: 'direct', gatewayUrl: 'http://127.0.0.1:3425' };
     const file = adapter.configPaths()[0], auth = path.join(path.dirname(file), 'auth.json'), original = '# private fixture\nmodel="old"\n';
     write(file, original); write(auth, '{"fixture":"keep"}');
     api.configureDesktopPath(absent); const missing = adapter.preview(context); assert.equal(missing.ok, true, missing.message);
     assert(missing.warnings.some(item => /尚未确认桌面程序位置/.test(item) && /可以继续保存共享编程配置/.test(item)));
     assert.equal(fs.readFileSync(file, 'utf8'), original); assert.equal(missing.files[0].path, file);
-    assert.throws(() => api.desktopDebugLaunch(api.detectCodingDesktop(absent), 9222, 'win32'), /未找到桌面程序/);
+    assert.throws(() => api.desktopDebugLaunch(api.detectCodingDesktop(absent), 9222), /未找到桌面程序/);
     const saved = adapter.connect({ ...context, expectedRevision: missing.revision }); assert.equal(saved.ok, true, saved.message);
     assert.match(saved.message, /共享编程配置已保存并备份/); assert.match(saved.message, /不表示桌面版本已验证可用/); assert(saved.backup);
     assert.equal(fs.readFileSync(auth, 'utf8'), '{"fixture":"keep"}'); assert.equal(adapter.disconnect(saved.backup).ok, true); assert.equal(fs.readFileSync(file, 'utf8'), original);
-    const plain = installation('preview-plain'); desktopArchive(plain); api.configureDesktopPath(plain.exe);
+    const plain = hostInstallation('preview-plain'); desktopArchive(plain); api.configureDesktopPath(plain.exe);
     const unsupported = adapter.preview(context); assert.equal(unsupported.ok, true, unsupported.message);
     assert(unsupported.warnings.some(item => /已找到桌面程序/.test(item) && /尚未确认它是否读取 Codex 配置/.test(item)));
     assert.equal(api.detectCodingDesktop(plain.exe).supportsCodexConfig, false);
