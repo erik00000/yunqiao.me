@@ -8,8 +8,8 @@
 | CLI 检测与打开 | PATH、新 PowerShell 窗口 | PATH、常见 Homebrew/npm/用户目录、新 Terminal；按需请求自动化权限 |
 | 桌面启动与重启 | 核验用户、会话、路径、启动时间后正常关闭窗口 | 核验用户、应用包、主程序、启动时间后请求 AppKit 正常退出 |
 | 已有供应商/官方账号发现 | 使用 Windows 配置根 | 使用 Application Support、XDG 与客户端配置根 |
-| 配置、预览、应用、恢复 | 保留官方身份，写前校验和备份 | 相同事务流程，执行权限与私有备份目录检查 |
-| 官方账号与中转共存 | 需客户端实际提供 Codex 配置能力 | 同一能力检测；原生聊天版不能冒充支持第三方接入 |
+| 配置、预览、应用、恢复 | 保留登录文件，写前校验和备份；共享编程配置不依赖程序发现 | 相同事务流程，执行权限与私有备份目录检查 |
+| 官方账号与中转共存 | 需有效官方登录、模型目录，实际客户端读取 Codex 配置 | 相同配置流程；原生纯聊天版不读取此编程配置 |
 | 历史区域迁移、索引修复 | 预览、SQLite 事务、进程检查、备份恢复 | 相同流程；ps 检查应用包主程序及子进程，检查失败时停止写入 |
 | 插件市场、MCP、Skills、提示词 | 校验目录、Git 对象和资源哈希 | 相同校验，保留必要的 Unix 可执行位 |
 | 桌面插件、解锁与主题 | 兼容的 Electron 客户端经调试接口挂载 | 从 .app 启动调试接口，使用 macOS 主题资源；原生聊天应用无此接口时明确拒绝 |
@@ -21,7 +21,9 @@
 
 ## 当前调试入口
 
-Windows：`release/platform-final-debug-0.6.0/win-unpacked/YunQiaoAI.exe`，运行时保留整个 `win-unpacked` 目录。构建标识 `20261115T072208Z-0202d85e`，可在系统设置的版本更新页核对。测试使用独立配置，不会替换当前运行的旧版本。
+Windows：`release/client-config-debug-0.6.0/win-unpacked/YunQiaoAI.exe`，运行时保留整个 `win-unpacked` 目录。构建标识 `20261115T090057Z-e3efa01e`，可在系统设置的版本更新页核对。测试使用独立配置，不会替换当前运行的旧版本。
+
+此调试包修复了共享编程配置被桌面检测误拦的问题，包含此前的上下文输入和批量设置功能。配置流程见 [配置目录与接入流程](CLIENT-CONFIGURATION.md)，本次验证见 [共享配置验证记录](CLIENT-CONFIGURATION-VALIDATION.json)。
 
 ## 验证方式
 
@@ -31,7 +33,7 @@ Windows：`release/platform-final-debug-0.6.0/win-unpacked/YunQiaoAI.exe`，运�
 
 GitHub 的 `Desktop platform validation` 工作流分别使用原生 arm64 和 x64 Mac：执行完整核心测试、macOS 专用测试、交互页面回归、Electron 原生窗口测试和打包后资源/IPC 验收。它不发布版本。`build` 工作流的 `macos` 目标复用这些检查并额外生成两种 DMG。
 
-## 本轮结果
+## 此前平台基础验证
 
 源码提交 `0202d85`；[GitHub 双架构原生验收](https://github.com/jxb412/aurora/actions/runs/43689616128) 全部成功。
 

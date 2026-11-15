@@ -1,0 +1,123 @@
+{
+  "date": "2026-11-15",
+  "version": "0.6.0",
+  "implementationCommit": "e3efa01ef0aa2d6330623866c5b229c23772c733",
+  "validationCommit": "abc3dc4d3b6e082619e03083c666c642aaefd2ec",
+  "changes": [
+    "Shared Codex configuration no longer depends on discovering a desktop executable",
+    "Native selection and explicit detection refresh preserve provider/model choices",
+    "Electron reads ASAR with original-fs and verifies bounded structured resources",
+    "Windows discovery reads registered manifests, uninstall locations and shortcuts independently",
+    "Known non-credential image marker no longer suppresses importing an otherwise valid API-key configuration",
+    "Official auth files remain unchanged; API mode and official coexistence are explained separately"
+  ],
+  "windows": {
+    "architecture": "x64",
+    "coreSuites": 40,
+    "corePassed": true,
+    "focusedChecks": {
+      "desktopCapabilities": 13,
+      "desktopCandidates": 10,
+      "nativeSelection": 8,
+      "sharedConfiguration": 14,
+      "localConfigurationImport": 29,
+      "wizardUI": 9,
+      "clientCatalogUI": 12,
+      "clientDiagnostics": 12
+    },
+    "nativeShellChecks": 4,
+    "package": {
+      "passed": true,
+      "count": 13,
+      "checks": [
+        "Packaged version and AGPL notices",
+        "All 188 distributed resource hashes match pinned source; upstream tests and Rust reference sources are absent",
+        "Actual native packaged application renders app.asar with platform-specific controls and isolated data",
+        "Packaged gateway health is ready and management rejects missing credentials",
+        "Installed runtime loads 5 complete packages, 32 builtins and both pinned markets",
+        "Packaged settings hide catalog controls and migrate legacy preferences to automatic sync and GitHub releases",
+        "The packaged build is identifiable and source links do not depend on an unpublished release tag",
+        "Native packaged IPC exposes history region selection and provider discovery",
+        "Packaged plugin page renders the five bundled packages without errors",
+        "Packaged membership onboarding renders without authenticated user state",
+        "Packaged client cards expose restart and terminal actions; native IPC rejects API services and process overrides without launching any client",
+        "Read-only views leave isolated client configurations unchanged",
+        "Native wizard previews, backs up, applies and restores shared Codex configuration without a desktop executable; auth bytes stay intact and CLI state stays synchronized"
+      ],
+      "executable": "release\\client-config-debug-0.6.0\\win-unpacked\\YunQiaoAI.exe",
+      "exeSha256": "e4d167aa57973ff6f357bfd4baade0a39a3b0a7a4d46503c8aab06ab932c0d23",
+      "asarSha256": "805f3fd65c6c92777f25b825e823242e83a2210ff9f311ab418c03d9142243fe",
+      "build": {
+        "id": "20261115T090057Z-e3efa01e",
+        "builtAt": "2026-11-15T09:00:57.514Z",
+        "revision": "e3efa01e",
+        "channel": "local"
+      },
+      "resourceFilesVerified": 188
+    }
+  },
+  "macOS": {
+    "workflow": "https://github.com/jxb412/aurora/actions/runs/43698055414",
+    "headSha": "abc3dc4d3b6e082619e03083c666c642aaefd2ec",
+    "status": "success",
+    "architectures": [
+      "arm64",
+      "x64"
+    ],
+    "previousRun": {
+      "url": "https://github.com/jxb412/aurora/actions/runs/43697523204",
+      "note": "Native UI and packaged acceptance passed; a cache regression incorrectly used a Windows executable fixture on macOS. Corrected to a native app bundle and reran both architectures."
+    },
+    "results": {
+      "arm64": {
+        "coreSuites": 40,
+        "corePassed": true,
+        "nativeBundleChecks": 8,
+        "nativeLifecycleChecks": 6,
+        "nativeShellChecks": 5,
+        "wizardUI": 9,
+        "package": {
+          "passed": true,
+          "count": 13,
+          "exeSha256": "6c79cc7a0ee3a36276867f1751e7b688005900b06c7c1006c7876e010d1fecfe",
+          "asarSha256": "c55f54fd49f80bdee630dfd6bd31ec6e2a6706841b7890d376d6dc70688b9bca",
+          "build": {
+            "id": "20261115T091340Z-abc3dc4d",
+            "builtAt": "2026-11-15T09:13:40.849Z",
+            "revision": "abc3dc4d",
+            "channel": "release"
+          },
+          "resourceFilesVerified": 188
+        }
+      },
+      "x64": {
+        "coreSuites": 40,
+        "corePassed": true,
+        "nativeBundleChecks": 8,
+        "nativeLifecycleChecks": 6,
+        "nativeShellChecks": 5,
+        "wizardUI": 9,
+        "package": {
+          "passed": true,
+          "count": 13,
+          "exeSha256": "97253ff5f2b8cbec1d90345fc68d096aacc65290c58d7f1c399bc2a3f79b0e15",
+          "asarSha256": "083cffc4ce6a00bcd47f7f806a9a3228f5bc8551f021b79e96a501293bb1bdbb",
+          "build": {
+            "id": "20261115T091400Z-abc3dc4d",
+            "builtAt": "2026-11-15T09:14:00.361Z",
+            "revision": "abc3dc4d",
+            "channel": "release"
+          },
+          "resourceFilesVerified": 188
+        }
+      }
+    }
+  },
+  "boundaries": [
+    "All configuration mutations were limited to isolated test profiles",
+    "No real user client was launched or stopped; no personal configuration or login file was modified",
+    "No paid model requests or member gift redemption",
+    "Saving shared configuration does not prove that a particular native chat-only desktop app reads it",
+    "No new public release or installer published"
+  ]
+}

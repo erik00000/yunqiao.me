@@ -94,7 +94,7 @@ python scripts/test-ui.py
 
 客户端测试使用隔离的临时 home；网关测试使用本地模拟上游。UI 测试需要 Python Playwright，使用 Electron 与隔离数据目录，验证实际的配置、恢复、会话下载和认证流程。它们不会证明所有服务商或所有客户端版本都已通过真实付费 API 联调。
 
-0.6.0 已通过 Windows 本地回归，以及 [Intel / Apple Silicon Mac 原生验证](https://github.com/jxb412/aurora/actions/runs/43689616128)，覆盖完整核心测试、原生启动/重启、界面和实际应用包。本轮未发布新版或切换客户端下载指向，具体验证边界见 [平台记录](docs/DESKTOP-PLATFORMS-VALIDATION.json)。
+0.6.0 的平台基础功能已通过 Windows 本地回归，以及 [Intel / Apple Silicon Mac 原生验证](https://github.com/jxb412/aurora/actions/runs/43689616128)，覆盖完整核心测试、原生启动/重启、界面和实际应用包。最新共享配置修复另见 [配置流程验证](docs/CLIENT-CONFIGURATION-VALIDATION.json)。本轮未发布新版或切换客户端下载指向。
 
 ## 当前边界
 
