@@ -480,7 +480,7 @@ function renderSettings(content) {
   content.append(note('手机只连接你选择的工作台。网关需保持运行，访问令牌不会写入地址或本地存储。'));
   const website = el('a', 'website-link', 'yunqiao.me'); website.href = 'https://yunqiao.me'; website.target = '_blank'; website.rel = 'noopener noreferrer';
   const disconnect = button('断开连接', () => { epoch++; stopLive(); rpc = null; state = null; summary = null; recent = []; live = []; sessions = null; renderConnect(); toast('已断开连接，访问令牌已清除'); }, 'button danger');
-  const source = el('a', 'website-link', '开源代码 · AGPL-3.0-only'); source.href = 'https://github.com/jxb412/aurora'; source.target = '_blank'; source.rel = 'noopener noreferrer';
+  const source = el('a', 'website-link', '开源代码 · AGPL-3.0-only'); source.href = 'https://github.com/jxb412/yunqiao.me'; source.target = '_blank'; source.rel = 'noopener noreferrer';
   content.append(disconnect, website, source, el('p', 'footer-version', `yunqiao.me · 手机伴侣 ${packageInfo.version}`));
 }
 

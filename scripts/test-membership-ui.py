@@ -148,6 +148,18 @@ window.renderMember=()=>root.render(<ToastHost key={window.generation}><Membersh
             assert claim_count() == 1
             checks.append('Logout clears the account and receipt immediately even if the following status read fails')
 
+            page.evaluate('window.reset();window.memberStatus.canRefresh=true;window.renderMember()')
+            ready()
+            expect(page.get_by_text('登录状态会自动续期，无需每小时重新登录。', exact=False)).to_be_visible()
+            page.evaluate('window.reset();window.memberStatus.canRefresh=false;window.renderMember()')
+            ready()
+            expect(page.get_by_text('当前登录不支持自动续期，访问令牌到期后需要重新绑定。', exact=False)).to_be_visible()
+            page.get_by_role('button', name='退出会员登录', exact=True).click()
+            page.get_by_text('通过平台访问令牌绑定', exact=True).click()
+            expect(page.get_by_text('此方式不能自动续期，令牌到期后需重新绑定。', exact=False)).to_be_visible()
+            assert claim_count() == 0
+            checks.append('Renewable and legacy/manual sessions have truthful renewal guidance; the token binding form explains its limit')
+
             assert not errors, errors
             browser.close()
             for check in checks:

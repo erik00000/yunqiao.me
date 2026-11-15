@@ -47,7 +47,7 @@ export interface Provider {
   icon?: string;
   notes?: string;
   rateMultiplier?: number;
-  quota?: { balance?: number; currency?: string; updatedAt?: string };
+  quota?: { balance?: number; currency?: string; updatedAt?: string; windows?: Array<{ label: string; usedPercent: number; resetsAt?: string }> };
   balanceQuery?: ProviderBalanceQuery;
   createdAt: string;
   updatedAt: string;
@@ -93,6 +93,7 @@ export interface Settings {
   autoCheckUpdate: boolean;
   adminUrl: string;
   autoSyncModels: boolean;
+  connectionUpdatedAt?: string;
   updatedAt: string;
 }
 
@@ -207,9 +208,12 @@ export interface AgentCatalogItem {
 
 export interface AgentState {
   id: string;
+  permissionMode?: 'preserve' | 'full-access';
+  skipOnboarding?: boolean;
   authMode?: 'api' | 'coexist';
   mode?: 'gateway' | 'direct';
   connected: boolean;
+  pendingReapply?: boolean;
   providerId?: string;
   model?: string;
   modelMap?: Record<string, string>;
@@ -254,6 +258,7 @@ export interface AgentDetection {
   supportsCodexConfig?: boolean;
   evidence?: string[];
   detectionError?: string;
+  detecting?: boolean;
 }
 
 export interface AppState {
@@ -440,6 +445,6 @@ export const MODE_TEXT: Record<RouteMode, string> = {
   weight: '按权重',
   usage: '用得少的优先',
   pace: '额度余量优先',
-  smart: '智能（冷却+成功率）',
+  smart: '健康与优先级',
 };
 

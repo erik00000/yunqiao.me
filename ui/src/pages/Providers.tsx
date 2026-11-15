@@ -5,6 +5,7 @@ import ProviderCompactBalance from '../components/ProviderCompactBalance';
 import BalanceQueryEditor from '../components/BalanceQueryEditor';
 import { useProviderBalances } from '../hooks/useProviderBalances';
 import { persistProviderView, providerBalanceFacts, readProviderView, type BalanceFilter, type ProviderView } from '../lib/providerPresentation';
+import { catalogSearchText, sortCatalogEntries } from '../lib/catalogPresentation';
 import '../styles/providers.css';
 import { applyContextDefaults, DEFAULT_CHATGPT_CONTEXT_WINDOW, isChatgptTextModel, isValidContextWindow } from '../../../src/core/modelContext';
 import ContextCompactHint from '../components/ContextCompactHint';
@@ -123,14 +124,9 @@ export default function Providers({ state, reload, go }: PageProps) {
 
   const presets = useMemo(() => {
     const q = presetQuery.trim().toLowerCase();
-    const apiPresets = state.presets.filter(p => p.region !== 'subscription');
+    const apiPresets = sortCatalogEntries(state.presets).filter(p => p.region !== 'subscription');
     if (!q) return apiPresets;
-    return apiPresets.filter(
-      (p) =>
-        p.name.toLowerCase().includes(q) ||
-        p.nameZh.includes(presetQuery) ||
-        p.vendor.includes(presetQuery),
-    );
+    return apiPresets.filter(p => catalogSearchText(p).includes(q));
   }, [state.presets, presetQuery]);
 
   async function fetchModelsFromUpstream(p: Partial<Provider>) {
@@ -416,7 +412,7 @@ export default function Providers({ state, reload, go }: PageProps) {
           {cloud.loading && <div style={{ color: 'var(--muted)', padding: 24 }}>正在连接云端…</div>}
           {cloud.data && (
             <div className="cloud-grid">
-              {cloud.data.providers.map((p: any) => {
+              {sortCatalogEntries(cloud.data.providers).map((p: any) => {
                 const on = cloud.picked.has(p.key);
                 return (
                   <div

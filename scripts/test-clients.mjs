@@ -17,7 +17,10 @@ const write = (file, text) => { fs.mkdirSync(path.dirname(file), { recursive: tr
 const read = file => fs.readFileSync(file, 'utf8');
 try {
   const bundle = path.join(isolated, 'test-api.cjs');
-  await build({ stdin: { contents: `export * from './src/core/agents/adapters.ts'; export * from './src/core/codex.ts'; export * from './src/core/sessions.ts'; export * from './src/core/store/index.ts'; export * from './src/core/actions.ts';`, resolveDir: workspace, loader: 'ts' }, outfile: bundle, bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent' });
+  await build({ stdin: { contents: `export * from './src/core/agents/adapters.ts'; export * from './src/core/codex.ts'; export * from './src/core/sessions.ts'; export * from './src/core/store/index.ts'; export * from './src/core/actions.ts'; export * from './src/core/protocol/index.ts';`, resolveDir: workspace, loader: 'ts' }, outfile: bundle, bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent' });
+  for (const [input, output] of [['src/core/readOnlyWorker.ts', 'read-only-worker.cjs'], ['src/core/agents/detectionWorker.ts', 'detection-worker.cjs']]) {
+    await build({ entryPoints: [path.join(workspace, input)], outfile: path.join(isolated, output), bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent' });
+  }
   const api = createRequire(import.meta.url)(bundle);
   const provider = { id: 'prov_test', name: '测试供应商', format: 'openai-chat', baseUrl: 'https://example.com/v1', enabled: true, priority: 1, apiKeys: [{ id: 'key_test', label: '测试', key: 'sk-original-secret', enabled: true, weight: 1 }], models: [{ id: 'model-one' }, { id: 'model-two' }], createdAt: '', updatedAt: '' };
   const context = { provider, model: 'model-one', mode: 'gateway', gatewayUrl: 'http://127.0.0.1:3425', token: 'gateway-secret-0123456789' };
@@ -26,11 +29,11 @@ try {
   const original = '# keep this comment\nmodel = "old"\nmodel_reasoning_effort = "high"\n\n[projects."D:/important"]\ntrust_level = "trusted"\nmodel = "project-model"\n\n[mcp_servers.example]\ncommand = "npx"\nargs = ["example"]\n';
   write(codexFile, original);
   const pre = codex.preview(context);
-  check('Codex preview has no write and hides credentials', () => { assert(pre.ok, pre.message); assert.equal(read(codexFile), original); assert(pre.revision); assert(!pre.files[0].after.includes(context.token)); });
+  check('Codex preview has no write and hides credentials', () => { assert(pre.ok, pre.message); assert.equal(read(codexFile), original); assert(pre.revision); assert(!pre.files[0].after.includes(context.token)); assert(!pre.warnings.some(message => message.includes('原 aurora'))); });
   const connected = codex.connect({ ...context, expectedRevision: pre.revision });
-  check('Codex keeps top-level values, comments and unrelated tables', () => { assert(connected.ok, connected.message); const text = read(codexFile); assert(text.includes('# keep this comment')); assert(text.indexOf('model_provider = "aurora"') < text.indexOf('[projects.')); assert(text.includes('model = "project-model"')); assert(text.includes('requires_openai_auth = false')); assert(text.includes('stream_idle_timeout_ms = 300000')); assert(!text.includes('/v1/v1')); });
+  check('Codex keeps top-level values, comments and unrelated tables', () => { assert(connected.ok, connected.message); const text = read(codexFile); assert(text.includes('# keep this comment')); assert(text.includes('model_provider = "yunqiao"')); assert(text.indexOf('model_provider = "yunqiao"') < text.indexOf('[projects.')); assert(text.includes('model = "project-model"')); assert(text.includes('requires_openai_auth = false')); assert(text.includes('stream_idle_timeout_ms = 300000')); assert(!text.includes('/v1/v1')); });
   const toml = spawnSync('python', ['-c', 'import sys,tomllib,json; print(json.dumps(tomllib.loads(sys.stdin.read())))'], { input: read(codexFile), encoding: 'utf8' });
-  check('Generated Codex config parses independently as valid TOML', () => { assert.equal(toml.status, 0, toml.stderr); const value = JSON.parse(toml.stdout); assert.equal(value.model, 'prov_test/model-one'); assert.equal(value.model_providers.aurora.requires_openai_auth, false); assert.equal(typeof value.model_providers.aurora.stream_idle_timeout_ms, 'number'); assert.equal(value.projects['D:/important'].model, 'project-model'); });
+  check('Generated Codex config parses independently as valid TOML', () => { assert.equal(toml.status, 0, toml.stderr); const value = JSON.parse(toml.stdout); assert.equal(value.model, 'prov_test/model-one'); assert.equal(value.model_provider, 'yunqiao'); assert.equal(value.model_providers.yunqiao.requires_openai_auth, false); assert.equal(typeof value.model_providers.yunqiao.stream_idle_timeout_ms, 'number'); assert.equal(value.projects['D:/important'].model, 'project-model'); });
   const second = codex.connect({ ...context, model: 'model-two', previousBackup: connected.backup });
   check('Repeated switches restore the first original configuration', () => { assert(second.ok, second.message); assert(api.getAdapter('codex-desktop').disconnect(second.backup).ok); assert.equal(read(codexFile), original); });
   const stale = codex.preview(context);
@@ -53,6 +56,37 @@ try {
   write(claudeFile, claudeOriginal);
   check('Direct protocol mismatch is rejected', () => assert(!claude.preview({ ...context, mode: 'direct' }).ok));
   check('Compatible base URL does not double append version', () => { const params = api.connectionParameters({ ...context, mode: 'direct' }, 'openai-chat'); assert.equal(params.baseUrl, 'https://example.com/v1'); });
+  check('Native SDK operation paths match upstream tests for roots, prefixes and explicit versions', () => {
+    const ir = api.parseClientRequest('openai-chat', { model: 'model-one', messages: [{ role: 'user', content: 'fixture' }], stream: false });
+    for (const protocol of ['openai-chat', 'openai-responses', 'anthropic', 'gemini']) {
+      const paths = protocol === 'gemini' ? ['', '/proxy', '/v1beta', '/proxy/v1beta/', '/proxy/v1', '/proxy/v1alpha'] : ['', '/proxy', '/v1', '/proxy/v1/'];
+      for (const pathname of paths) {
+        const baseUrl = 'https://fixture.invalid' + pathname;
+        const ep = api.connectionParameters({ ...context, mode: 'direct', provider: { ...provider, format: protocol, baseUrl } }, protocol);
+        // Actual SDK resource paths: Anthropic /v1/messages; Google SDK
+        // baseUrl + apiVersion + models/...; OpenAI appends only the operation.
+        const operation = protocol === 'anthropic' ? '/v1/messages' : protocol === 'gemini' ? `/${ep.apiVersion}/models/model-one:generateContent` : protocol === 'openai-responses' ? '/responses' : '/chat/completions';
+        assert.equal(ep.baseUrl + operation, api.buildUpstreamHttp(ir, { baseUrl, apiKey: 'fixture', format: protocol, model: 'model-one' }, protocol).url, `${protocol}: ${pathname}`);
+      }
+    }
+  });
+  check('Unsupported Claude native versions and URL query or fragment are rejected before writing', () => {
+    for (const pathname of ['/proxy/v2', '/proxy/v1beta', '/proxy/V1', '/proxy?key=fixture', '/proxy#fragment']) {
+      const bad = { ...context, mode: 'direct', provider: { ...provider, format: 'anthropic', baseUrl: 'https://fixture.invalid' + pathname } };
+      assert.equal(claude.preview(bad).ok, false); assert.equal(claude.connect(bad).ok, false);
+    }
+    assert.equal(read(claudeFile), claudeOriginal);
+  });
+  check('Adapter and exported parameters reject direct custom headers and proxy settings', () => {
+    for (const patch of [{ provider: { ...provider, headers: { 'X-Required': 'fixture' } } }, { provider: { ...provider, proxy: 'http://127.0.0.1:1234' } }, { globalProxy: 'http://127.0.0.1:1234' }]) {
+      const direct = { ...context, ...patch, mode: 'direct' };
+      assert.throws(() => api.connectionParameters(direct, 'openai-chat'), /本地网关/);
+      assert.equal(api.getAdapter('workbuddy').preview(direct).ok, false);
+      const native = { ...direct, provider: { ...direct.provider, format: 'openai-responses' } };
+      assert.equal(codex.preview(native).ok, false); assert.equal(codex.connect(native).ok, false);
+    }
+    assert.equal(read(codexFile), original);
+  });
   check('Shared programming configuration is independent of desktop discovery; WorkBuddy stays manual', () => { const shared = api.getAdapter('chatgpt-desktop'); assert.equal(shared.support, 'automatic'); const planned = shared.preview(context); assert(planned.ok, planned.message); assert.equal(planned.files[0].path, codexFile); assert(planned.warnings.some(w => w.includes('共享编程配置'))); assert.equal(api.getAdapter('codex-desktop').id, 'chatgpt-desktop'); assert.equal(api.AGENT_ADAPTERS.filter(a => ['codex-desktop', 'chatgpt-desktop'].includes(a.id)).length, 1); const manual = api.getAdapter('workbuddy').preview(context); assert(manual.ok); assert.equal(manual.files.length, 0); assert(manual.manual); assert(!api.getAdapter('workbuddy').connect(context).ok); });
   const desktopPaths = desktop.configPaths();
   write(desktopPaths[0], JSON.stringify({ deploymentMode: '1p', userPreference: true }));
@@ -63,7 +97,15 @@ try {
   const [geminiFile, envFile] = gemini.configPaths();
   write(geminiFile, JSON.stringify({ security: { other: true }, model: { maxSessionTurns: 20 } })); write(envFile, 'CUSTOM=preserve\nGEMINI_API_KEY=old-secret\n');
   const g = gemini.connect(context);
-  check('Gemini uses supported .env and auth settings while preserving others', () => { assert(g.ok, g.message); assert(read(envFile).includes('CUSTOM=preserve')); assert.equal(JSON.parse(read(geminiFile)).security.auth.selectedType, 'gemini-api-key'); assert.equal(JSON.parse(read(geminiFile)).model.maxSessionTurns, 20); assert(gemini.disconnect(g.backup).ok); });
+  check('Gemini uses supported .env and auth settings while preserving others', () => { assert(g.ok, g.message); assert(read(envFile).includes('CUSTOM=preserve')); assert.match(read(envFile), /GOOGLE_GENAI_API_VERSION="v1beta"/); assert.equal(JSON.parse(read(geminiFile)).security.auth.selectedType, 'gemini-api-key'); assert.equal(JSON.parse(read(geminiFile)).model.maxSessionTurns, 20); assert(gemini.disconnect(g.backup).ok); });
+  check('Gemini direct config and exported script pin the requested API version and restore it', () => {
+    const before = read(envFile), direct = { ...context, mode: 'direct', provider: { ...provider, format: 'gemini', baseUrl: 'https://fixture.invalid/proxy/v1' } };
+    const result = gemini.connect(direct); assert.equal(result.ok, true, result.message);
+    assert.match(read(envFile), /GOOGLE_GEMINI_BASE_URL="https:\/\/fixture.invalid\/proxy"/);
+    assert.match(read(envFile), /GOOGLE_GENAI_API_VERSION="v1"/);
+    assert.match(api.exportEnvScript(direct, 'gemini', 'darwin'), /export GOOGLE_GENAI_API_VERSION='v1'/);
+    assert.equal(gemini.disconnect(result.backup).ok, true); assert.equal(read(envFile), before);
+  });
   write(codexFile, original);
   const store = new api.AuroraStore(path.join(isolated, 'store'));
   check('New profiles start empty and keep the same token across restarts', () => { assert.equal(store.listProviders().length, 0); assert.equal(new api.AuroraStore(store.dir).getSettings().gatewayToken, store.getSettings().gatewayToken); });
@@ -72,6 +114,17 @@ try {
   check('Partial legacy settings persist a missing token before returning it', () => { const legacy = new api.AuroraStore(legacyDir); const first = legacy.getSettings().gatewayToken; assert(first); assert.equal(legacy.getSettings().gatewayToken, first); assert.equal(new api.AuroraStore(legacyDir).getSettings().gatewayToken, first); assert.equal(JSON.parse(read(path.join(legacyDir, 'settings.json'))).gatewayToken, first); });
   const savedProvider = store.saveProvider({...provider,id:undefined});
   const deps = { store, dataDir: store.dir, gatewayStatus: () => ({ running: true }), gatewayUrl: () => context.gatewayUrl };
+  for (const setting of ['headers', 'providerProxy', 'globalProxy']) {
+    const blockedProvider = store.saveProvider({ ...provider, id: undefined, format: 'openai-responses', ...(setting === 'headers' ? { headers: { 'X-Required': 'fixture' } } : setting === 'providerProxy' ? { proxy: 'http://127.0.0.1:1234' } : {}) });
+    if (setting === 'globalProxy') store.saveSettings({ proxy: 'http://127.0.0.1:1234' });
+    const before = read(codexFile), states = JSON.stringify(store.listAgents());
+    for (const action of ['agent.preview', 'agent.parameters', 'agent.connect']) {
+      const result = await api.runAction(deps, action, { agentId: 'codex-cli', providerId: blockedProvider.id, model: 'model-one', mode: 'direct', globalProxy: '', proxy: '', headers: {} });
+      assert.equal(result.ok, false, action); assert.match(result.message, /本地网关/);
+    }
+    check(`RPC refuses direct ${setting} without config or state writes despite payload overrides`, () => { assert.equal(read(codexFile), before); assert.equal(JSON.stringify(store.listAgents()), states); });
+    store.saveSettings({ proxy: '' });
+  }
   const rpcPreview = await api.runAction(deps, 'agent.preview', { agentId: 'codex-cli', providerId: savedProvider.id, model: 'model-one' });
   const rpcConnect = await api.runAction(deps, 'agent.connect', { agentId: 'codex-cli', providerId: savedProvider.id, model: 'model-one', revision: rpcPreview.revision });
   check('Shared RPC keeps Codex CLI and desktop state synchronized', () => { assert(rpcConnect.ok, rpcConnect.message); assert(store.listAgents()['codex-cli'].connected); assert(store.listAgents()['codex-desktop'].connected); });

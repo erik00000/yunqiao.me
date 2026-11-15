@@ -71,8 +71,9 @@ export class Router {
     const groups = this.store.listGroups().filter((g) => g.enabled);
 
     // 1) 分组：group/xxx 或直接分组名
-    const groupKey = requested.startsWith('group/') ? requested.slice(6) : null;
-    const group = groupKey
+    const explicitGroup = requested.startsWith('group/');
+    const groupKey = explicitGroup ? requested.slice(6) : null;
+    const group = explicitGroup
       ? groups.find((g) => g.id === groupKey || g.name === groupKey)
       : groups.find((g) => g.name === requested || g.id === requested);
     if (group) {
@@ -85,7 +86,7 @@ export class Router {
           retries: group.retries,
         };
     }
-    if (groupKey) return { requested, candidates: [], reason: '指定的路由分组不存在或已停用' };
+    if (explicitGroup) return { requested, candidates: [], reason: '指定的路由分组不存在或已停用' };
 
     // 2) provider/model
     const slash = requested.indexOf('/');
@@ -151,11 +152,15 @@ export class Router {
   private expandGroup(group: { members: any[]; mode: RouteMode; id: string }, providers: Provider[]): Candidate[] {
     const members: Array<{ candidates: Candidate[]; weight: number }> = [];
     for (const member of group.members) {
+      // Zero explicitly removes a member from weighted traffic, including failover.
+      if (group.mode === 'weight' && Number(member.weight) === 0) continue;
       const p = providers.find((x) => x.id === member.providerId);
       if (!p) continue;
       const model = member.model ?? p.models[0]?.id ?? '';
       if (!model) continue;
-      const pm = p.models.find((mm) => mm.id === model) ?? ({ id: model, capabilities: { tools: true } } as ProviderModel);
+      const declared = p.models.find((mm) => mm.id === model);
+      if (p.models.length && !declared) continue;
+      const pm = declared ?? ({ id: model, capabilities: { tools: true } } as ProviderModel);
       const candidates = this.candidatesFor(p, pm, model);
       const weight = group.mode === 'weight' ? Math.min(1000, Math.max(1, Math.floor(Number(member.weight) || 1))) : 1;
       if (candidates.length) members.push({ candidates, weight });
@@ -193,7 +198,10 @@ export class Router {
             if (difference) return difference;
           }
           if (group.mode === 'pace') {
-            const peak = (p: Provider) => p.quota?.windows?.length ? Math.max(...p.quota.windows.map((w) => w.usedPercent)) : 101;
+            const peak = (p: Provider) => {
+              const values = p.quota?.windows?.map(window => window.usedPercent).filter(value => Number.isFinite(value) && value >= 0 && value <= 100) || [];
+              return values.length ? Math.max(...values) : 101;
+            };
             const difference = peak(a.provider) - peak(b.provider);
             if (difference) return difference;
           }
@@ -231,9 +239,11 @@ export class Router {
         };
       }),
     ));
-    const cur = this.failCounts.get(providerId) ?? 0;
-    this.failCounts.set(providerId, cur + 1);
+    this.markProviderFailure(providerId);
   }
+
+  /** Health ordering includes transport/server failures, without cooling every key. */
+  markProviderFailure(providerId: string): void { this.failCounts.set(providerId, (this.failCounts.get(providerId) ?? 0) + 1); }
 
   markKeySuccess(providerId: string, keyId: string, expectedKey?: string): void {
     const key = this.store.getProvider(providerId)?.apiKeys.find(item => item.id === keyId);
@@ -305,5 +315,5 @@ export const MODE_LABEL: Record<RouteMode, string> = {
   weight: '按权重',
   usage: '用得少的优先',
   pace: '额度余量优先',
-  smart: '智能',
+  smart: '健康与优先级',
 };

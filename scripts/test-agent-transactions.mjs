@@ -25,6 +25,9 @@ try {
   await build({ stdin: { contents: [
     "export * from './src/core/store/index.ts';", "export * from './src/core/actions.ts';", "export * from './src/core/agents/adapters.ts';",
   ].join('\n'), resolveDir: workspace, loader: 'ts' }, outfile: bundle, bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent' });
+  for (const [input, output] of [['src/core/readOnlyWorker.ts', 'read-only-worker.cjs'], ['src/core/agents/detectionWorker.ts', 'detection-worker.cjs']]) {
+    await build({ entryPoints: [path.join(workspace, input)], outfile: path.join(scratch, output), bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent' });
+  }
   const api = createRequire(import.meta.url)(bundle);
   function fixture(label, original = configOriginal) {
     const root = path.join(scratch, label), client = path.join(root, 'client');

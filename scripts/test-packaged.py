@@ -250,7 +250,7 @@ def main():
             expect(page.get_by_text('更新接口地址', exact=True)).to_have_count(0)
             settings = page.evaluate("async () => (await window.aurora.invoke('state.get')).settings")
             assert settings['autoSyncModels'] is True
-            assert settings['updateUrl'] == 'https://api.github.com/repos/jxb412/aurora/releases/latest'
+            assert settings['updateUrl'] == 'https://api.github.com/repos/jxb412/yunqiao.me/releases/latest'
             page.screenshot(path=str(images / 'settings-v0.6.png'), animations='disabled', style='.toast-wrap{visibility:hidden!important}')
             checks.append('Packaged settings hide catalog controls and migrate legacy preferences to automatic sync and GitHub releases')
             build = page.evaluate("async () => (await window.aurora.invoke('state.get')).build")
@@ -258,7 +258,7 @@ def main():
             if build['channel'] == 'local':
                 expect(page.get_by_text('本地调试版', exact=False)).to_be_visible()
             page.get_by_role('button', name='数据与关于', exact=True).click()
-            expect(page.get_by_role('link', name='项目源码 ↗', exact=True)).to_have_attribute('href', 'https://github.com/jxb412/aurora')
+            expect(page.get_by_role('link', name='项目源码 ↗', exact=True)).to_have_attribute('href', 'https://github.com/jxb412/yunqiao.me')
             checks.append('The packaged build is identifiable and source links do not depend on an unpublished release tag')
             page.locator('nav').get_by_role('button', name='历史会话', exact=True).click()
             page.get_by_role('button', name='批量修复历史 / 区域迁移', exact=True).click()
@@ -275,9 +275,16 @@ def main():
             expect(page.locator('.extension-card')).to_have_count(5)
             expect(page.get_by_text('云桥桌面扩展', exact=True)).to_be_visible()
             assert 'CODEX++' not in page.locator('main').inner_text().upper()
-            assert page.get_by_role('alert').count() == 0
+            extension_state = page.evaluate("() => window.aurora.invoke('extension.list')")
+            assert extension_state['client']['installed'] is False, 'Isolated acceptance must not discover a real desktop client'
+            recovery = page.get_by_role('region', name='桌面插件连接处理', exact=True)
+            expect(recovery).to_be_visible()
+            expect(recovery.get_by_role('alert')).to_have_count(1)
+            for label in ['选择程序', '重新连接', '恢复默认连接设置']:
+                expect(recovery.get_by_role('button', name=label, exact=True)).to_be_enabled()
+            assert page.get_by_role('alert').count() == 1, 'Unexpected error outside the missing-client recovery panel'
             page.screenshot(path=str(images / 'plugins-v0.6.png'), animations='disabled', style='.toast-wrap{visibility:hidden!important}')
-            checks.append('Packaged plugin page renders the five bundled packages without errors')
+            checks.append('Packaged plugin page renders all five packages and offers three recovery actions for the isolated missing client without unrelated errors')
 
             page.locator('nav').get_by_role('button', name='云桥会员', exact=True).click()
             page.get_by_role('heading', name='云桥会员', exact=True).wait_for()
@@ -328,7 +335,7 @@ def main():
             wizard.get_by_role('button', name='备份并应用配置', exact=True).click()
             expect(wizard.get_by_role('heading', name='配置已应用', exact=True)).to_be_visible()
             configured = (clients / '.codex/config.toml').read_text(encoding='utf-8')
-            assert 'model_provider = "aurora"' in configured and supplier['id'] + '/gpt-6.1-sol' in configured
+            assert 'model_provider = "yunqiao"' in configured and supplier['id'] + '/gpt-6.1-sol' in configured
             limits = tomllib.loads(configured)
             assert limits['model_context_window'] == 272000 and limits['model_auto_compact_token_limit'] == 244800
             assert (clients / '.codex/auth.json').read_bytes() == original[clients / '.codex/auth.json']

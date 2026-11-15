@@ -94,7 +94,7 @@ try {
 
   const exitPreview = await api.runAction(deps, 'agent.preview', { agentId: 'codex-cli', providerId: supplier.id, model: 'relay-model', authMode: 'api' });
   const exited = await api.runAction(deps, 'agent.connect', { agentId: 'codex-cli', providerId: supplier.id, model: 'relay-model', authMode: 'api', revision: exitPreview.revision });
-  check('leaving coexistence removes only coexist routing and keeps the API provider', () => { assert(exited.ok, exited.message); const parsed = parseToml(configFile); assert.equal(parsed.model_provider, 'aurora'); assert.equal(parsed.model, `${supplier.id}/relay-model`); assert.equal(parsed.profiles['work.v2'].model_provider, 'aurora'); assert.equal(parsed.profiles['work.v2'].permissions[0], 'read'); assert.equal(parsed.openai_base_url, undefined); assert.equal(parsed.model_catalog_json, undefined); assert.equal(parsed.profiles['work.v2'].openai_base_url, undefined); assert.equal(parsed.profiles['work.v2'].model_catalog_json, undefined); assert.equal(parsed.model_providers.aurora.base_url, 'http://127.0.0.1:3425/v1'); assert.equal(read(authFile), authBefore); });
+  check('leaving coexistence removes only coexist routing and keeps the API provider', () => { assert(exited.ok, exited.message); const parsed = parseToml(configFile); assert.equal(parsed.model_provider, 'yunqiao'); assert.equal(parsed.model, `${supplier.id}/relay-model`); assert.equal(parsed.profiles['work.v2'].model_provider, 'yunqiao'); assert.equal(parsed.profiles['work.v2'].permissions[0], 'read'); assert.equal(parsed.openai_base_url, undefined); assert.equal(parsed.model_catalog_json, undefined); assert.equal(parsed.profiles['work.v2'].openai_base_url, undefined); assert.equal(parsed.profiles['work.v2'].model_catalog_json, undefined); assert.equal(parsed.model_providers.yunqiao.base_url, 'http://127.0.0.1:3425/v1'); assert.equal(read(authFile), authBefore); });
   const restored = await api.runAction(deps, 'agent.disconnect', { agentId: 'codex-desktop' });
   check('disconnect restores the original config byte for byte', () => { assert(restored.ok, restored.message); assert.equal(read(configFile), originalConfig); assert.equal(read(authFile), authBefore); });
 
@@ -166,6 +166,99 @@ try {
   const stopped = await api.runAction({ ...deps, gatewayStatus: () => ({ running: false }) }, 'agent.connect', { agentId: 'codex-cli', providerId: supplier.id, model: 'relay-model', authMode: 'coexist' });
   const direct = await api.runAction(deps, 'agent.connect', { agentId: 'codex-cli', providerId: supplier.id, model: 'relay-model', authMode: 'coexist', mode: 'direct' });
   check('stopped gateway and direct coexistence requests leave configuration untouched', () => { assert.equal(stopped.ok, false); assert.equal(direct.ok, false); assert.equal(read(configFile), originalConfig); assert.equal(fs.existsSync(catalogFile), false); assert.equal(read(authFile), authBefore); });
+
+  for (const mode of ['gateway', 'direct']) {
+    const profileOriginal = originalConfig + '\n[profiles."work.v2".model_providers.yunqiao]\nname = "Stale managed provider"\nbase_url = "https://stale.invalid/v1"\nwire_api = "responses"\nexperimental_bearer_token = "fixture-stale-profile-key"\nenv_key = "FIXTURE_STALE_PROFILE_KEY"\nrequires_openai_auth = true\nrequest_max_retries = 7\n\n[profiles.inactive.model_providers.yunqiao]\nbase_url = "https://inactive.invalid/v1"\nexperimental_bearer_token = "fixture-inactive-profile-key"\n';
+    write(configFile, profileOriginal);
+    const adapter = api.getAdapter('codex-cli'), context = { provider: supplier, model: 'relay-model', mode, gatewayUrl: deps.gatewayUrl(), token: store.getSettings().gatewayToken, authMode: 'api' };
+    const preview = adapter.preview(context);
+    assert(preview.ok, preview.message);
+    assert.equal(read(configFile), profileOriginal);
+    for (const secret of ['fixture-stale-profile-key', 'fixture-inactive-profile-key', 'fixture-api-secret', 'fixture-gateway-token']) assert(!JSON.stringify(preview).includes(secret));
+    const applied = adapter.connect({ ...context, expectedRevision: preview.revision });
+    check(`${mode} API transport overrides stale same-name active-profile URL and credentials`, () => {
+      assert(applied.ok, applied.message);
+      const parsed = parseToml(configFile), rootProvider = parsed.model_providers.yunqiao, profile = parsed.profiles['work.v2'];
+      const effectiveProvider = { ...rootProvider, ...profile.model_providers.yunqiao };
+      assert.equal(effectiveProvider.base_url, mode === 'gateway' ? deps.gatewayUrl() + '/v1' : supplier.baseUrl);
+      assert.equal(effectiveProvider.experimental_bearer_token, mode === 'gateway' ? store.getSettings().gatewayToken : supplier.apiKeys[0].key);
+      assert.equal(effectiveProvider.env_key, undefined); assert.equal(effectiveProvider.requires_openai_auth, false); assert.equal(effectiveProvider.wire_api, 'responses');
+      assert.equal(profile.model, mode === 'gateway' ? `${supplier.id}/relay-model` : 'relay-model');
+      assert.equal(profile.model_providers.yunqiao.request_max_retries, 7);
+      assert.deepEqual(profile.permissions, ['read', 'write']);
+      assert.deepEqual(parsed.profiles.inactive.model_providers.yunqiao, { base_url: 'https://inactive.invalid/v1', experimental_bearer_token: 'fixture-inactive-profile-key' });
+      assert.equal(parsed.mcp_servers.keep.command, 'fixture'); assert.equal(read(authFile), authBefore);
+      assert(adapter.matchesConfiguration(context));
+      assert(adapter.disconnect(applied.backup).ok); assert.equal(read(configFile), profileOriginal);
+    });
+  }
+  write(configFile, originalConfig);
+
+  for (const table of ['model_providers.yunqiao', 'profiles."work.v2".model_providers.yunqiao']) {
+    for (const authSection of ['auth', 'aws']) {
+      const conflicting = originalConfig + `\n[${table}.${authSection}]\nsecret = "fixture-conflicting-auth-secret"\n`;
+      write(configFile, conflicting);
+      const adapter = api.getAdapter('codex-cli');
+      for (const mode of ['gateway', 'direct']) {
+        const context = { provider: supplier, model: 'relay-model', mode, gatewayUrl: deps.gatewayUrl(), token: store.getSettings().gatewayToken, authMode: 'api' };
+        for (const result of [adapter.preview(context), adapter.connect(context)]) {
+          assert.equal(result.ok, false); assert.match(result.message, /auth.*aws/); assert(!JSON.stringify(result).includes('fixture-conflicting-auth-secret'));
+        }
+      }
+      assert.equal(read(configFile), conflicting); assert.equal(read(authFile), authBefore);
+    }
+  }
+  check('conflicting auth or AWS settings in the root or active managed provider reject preview and apply without deleting credentials', () => {});
+  write(configFile, originalConfig);
+
+  for (const mode of ['gateway', 'direct']) {
+    const legacyTables = '\n[model_providers.aurora]\nname = "Legacy Aurora"\nbase_url = "https://legacy.invalid/v1"\nwire_api = "responses"\nrequest_max_retries = 9\n\n[model_providers.aurora.auth]\nsecret = "fixture-legacy-auth-secret"\n\n[profiles."work.v2".model_providers.aurora]\nname = "Legacy profile"\nbase_url = "https://legacy-profile.invalid/v1"\n\n[profiles."work.v2".model_providers.aurora.aws]\nsecret = "fixture-legacy-aws-secret"\n\n[model_providers.provider0029]\nname = "Other provider"\nbase_url = "https://unrelated.invalid/v1"\n';
+    const legacyConfig = originalConfig.replace('model_provider = "old-provider"', 'model_provider = "aurora"').replace('"model_provider" = "profile-old"', '"model_provider" = "aurora"') + legacyTables;
+    write(configFile, legacyConfig);
+    const before = parseToml(configFile), adapter = api.getAdapter('codex-cli');
+    const context = { provider: supplier, model: 'relay-model', mode, gatewayUrl: deps.gatewayUrl(), token: store.getSettings().gatewayToken, authMode: 'api' };
+    const preview = adapter.preview(context);
+    assert(preview.ok, preview.message); assert.equal(read(configFile), legacyConfig);
+    assert(preview.warnings.some(message => message.includes('aurora') && message.includes('yunqiao') && message.includes('不会自动迁移历史')));
+    for (const secret of ['fixture-legacy-auth-secret', 'fixture-legacy-aws-secret']) assert(!JSON.stringify(preview).includes(secret));
+    const applied = adapter.connect({ ...context, expectedRevision: preview.revision });
+    check(`${mode} API moves the active aurora selection to yunqiao while preserving legacy tables and exact restore`, () => {
+      assert(applied.ok, applied.message);
+      const parsed = parseToml(configFile);
+      assert.equal(parsed.model_provider, 'yunqiao'); assert.equal(parsed.profiles['work.v2'].model_provider, 'yunqiao');
+      assert.equal(parsed.model_providers.yunqiao.base_url, mode === 'gateway' ? deps.gatewayUrl() + '/v1' : supplier.baseUrl);
+      assert.equal(parsed.model_providers.yunqiao.experimental_bearer_token, mode === 'gateway' ? store.getSettings().gatewayToken : supplier.apiKeys[0].key);
+      assert.equal(parsed.profiles['work.v2'].model_providers.yunqiao, undefined);
+      assert.deepEqual(parsed.model_providers.aurora, before.model_providers.aurora);
+      assert.deepEqual(parsed.profiles['work.v2'].model_providers.aurora, before.profiles['work.v2'].model_providers.aurora);
+      assert.deepEqual(parsed.model_providers.provider0029, before.model_providers.provider0029);
+      assert(read(configFile).includes(legacyTables)); assert.deepEqual(parsed.mcp_servers, before.mcp_servers);
+      assert.equal(read(authFile), authBefore); assert(adapter.matchesConfiguration(context));
+      assert(adapter.disconnect(applied.backup).ok); assert.equal(read(configFile), legacyConfig);
+    });
+  }
+  write(configFile, originalConfig);
+
+  check('legacy migration guidance appears only for API mode with root or active-profile aurora state', () => {
+    const adapter = api.getAdapter('codex-cli');
+    const apiContext = { provider: supplier, model: 'relay-model', mode: 'gateway', gatewayUrl: deps.gatewayUrl(), token: store.getSettings().gatewayToken, authMode: 'api' };
+    const notice = preview => preview.warnings.some(message => message.includes('原 aurora'));
+    for (const before of [
+      originalConfig.replace('model_provider = "old-provider"', 'model_provider = "aurora"'),
+      originalConfig.replace('"model_provider" = "profile-old"', '"model_provider" = "aurora"'),
+      originalConfig + '\n[model_providers.aurora]\nname = "Legacy root provider"\n',
+      originalConfig + '\n[profiles."work.v2".model_providers.aurora]\nname = "Legacy active provider"\n',
+    ]) {
+      write(configFile, before);
+      const apiPreview = adapter.preview(apiContext); assert(apiPreview.ok, apiPreview.message); assert(notice(apiPreview));
+      const coexistPreview = adapter.preview({ ...apiContext, authMode: 'coexist', modelCatalogPath: catalogFile });
+      assert(coexistPreview.ok, coexistPreview.message); assert(!notice(coexistPreview)); assert.equal(read(configFile), before);
+    }
+    for (const before of [originalConfig, originalConfig + '\n[profiles.inactive]\nmodel_provider = "aurora"\n[profiles.inactive.model_providers.aurora]\nname = "Inactive legacy provider"\n']) {
+      write(configFile, before); const preview = adapter.preview(apiContext); assert(preview.ok, preview.message); assert(!notice(preview)); assert.equal(read(configFile), before);
+    }
+  });
+  write(configFile, originalConfig);
 
   const payload = { agentId: 'codex-cli', providerId: supplier.id, model: 'relay-model', authMode: 'coexist' };
   const dangerousOverrides = ['base_url = "https://override.invalid/v1"', 'env_key = "FIXTURE_OPENAI_KEY"', 'experimental_bearer_token = "fixture-openai-override-secret"'];

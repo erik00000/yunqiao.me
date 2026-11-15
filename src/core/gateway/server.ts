@@ -490,7 +490,7 @@ export class GatewayServer {
     }
     // Gemini 把模型名放在 URL 上
     if (proto === 'gemini' && !ir.model) {
-      const mm = /\/models\/([^:]+):/.exec(path);
+      const mm = /\/models\/(.+):(?:generateContent|streamGenerateContent)$/.exec(path);
       if (mm) ir.model = decodeURIComponent(mm[1]);
     }
 
@@ -546,12 +546,14 @@ export class GatewayServer {
     trackRequest(store, { id: requestId, threadId, agent, phase: 'connecting', model: ir.model, startedAtMs: startedAt, attempts: 0, autoRetries: 0 });
     res.once('close', () => finishRequest(store, requestId));
     let attempt = 0;
+    let lastCandidate = resolved.candidates[0];
     let lastErr: { status: number; message: string; raw?: string } | null = null;
     const maxAttempts = Math.min(resolved.candidates.length, 1 + Math.max(0, resolved.retries ?? settings.maxRetries));
 
     for (const cand of resolved.candidates.slice(0, maxAttempts)) {
       if (controller.signal.aborted || res.destroyed) { finishRequest(store, requestId); return; }
       attempt++;
+      lastCandidate = cand;
       updateRequest(store, requestId, { attempts: attempt, autoRetries: attempt - 1, phase: attempt > 1 ? 'retrying' : 'connecting', model: cand.model, providerName: cand.provider.name });
       const supportsImages = cand.providerModel.capabilities?.vision ?? true;
       const target = {
@@ -598,13 +600,12 @@ export class GatewayServer {
               upstream.status === 429 ? 30_000 : 120_000,
               cand.key.key,
             );
-          }
+          } else this.router.markProviderFailure(cand.provider.id);
           continue;
         }
 
         // 成功：记录并转发
         accepted = true;
-        this.router.markKeySuccess(cand.provider.id, cand.key.id, cand.key.key);
         this.status.requests++;
         const header = (value: string) => encodeURIComponent(Buffer.from(value, 'utf8').toString('utf8'));
         res.setHeader('x-aurora-provider', header(cand.provider.name));
@@ -612,9 +613,12 @@ export class GatewayServer {
         res.setHeader('x-aurora-route', header(resolved.reason));
 
         if (ir.stream) {
-          await this.pipeStream(upstream.stream, upstream.headers, proto, ir, cand, requestId, res, startedAt, attempt, agent, masker, native);
+          const complete = await this.pipeStream(upstream.stream, upstream.headers, proto, ir, cand, requestId, res, startedAt, attempt, agent, masker, native);
+          if (complete) this.router.markKeySuccess(cand.provider.id, cand.key.id, cand.key.key);
+          else this.router.markProviderFailure(cand.provider.id);
         } else {
           await this.pipeJson(upstream.stream, proto, ir, cand, requestId, res, startedAt, attempt, agent, masker, native);
+          this.router.markKeySuccess(cand.provider.id, cand.key.id, cand.key.key);
         }
         return;
       } catch (e: any) {
@@ -628,6 +632,7 @@ export class GatewayServer {
           return;
         }
         lastErr = { status: 0, message: this.redactError(String(e?.message ?? e)) };
+        this.router.markProviderFailure(cand.provider.id);
         if (accepted) { lastErr.message = `上游已接受请求，但响应未能完成；为避免重复消耗，未自动重试。${lastErr.message}`; break; }
         continue;
       }
@@ -648,9 +653,9 @@ export class GatewayServer {
     this.record({
       ts: nowIso(),
       agent,
-      providerId: resolved.candidates[0]?.provider.id ?? '',
-      providerName: resolved.candidates[0]?.provider.name ?? '',
-      model: resolved.candidates[0]?.model ?? ir.model,
+      providerId: lastCandidate.provider.id,
+      providerName: lastCandidate.provider.name,
+      model: lastCandidate.model,
       requestModel: ir.model,
       protocol: proto,
       stream: ir.stream,
@@ -755,7 +760,7 @@ export class GatewayServer {
     masker: Masker,
     native = false,
     extraSecrets: string[] = [],
-  ): Promise<void> {
+  ): Promise<boolean> {
     if (!String(headers['content-type'] ?? '').toLowerCase().includes('text/event-stream')) {
       throw new Error('上游没有返回 SSE 流，请检查供应商协议和流式支持');
     }
@@ -907,6 +912,7 @@ export class GatewayServer {
       attempts: attempt,
       requestId,
     });
+    return !streamError;
   }
 
   private record(rec: UsageRecord): void {
@@ -919,8 +925,16 @@ export class GatewayServer {
 
   private redactError(text: string, extraSecrets: string[] = []): string {
     let result = text;
-    const secrets = [...extraSecrets, this.deps.store.getSettings().gatewayToken, ...this.deps.store.listProviders().flatMap((p) => p.apiKeys.map((k) => k.key))];
-    for (const key of secrets) if (key && key.length >= 4) result = result.split(key).join('[已隐藏密钥]');
+    const secrets = [...extraSecrets, this.deps.store.getSettings().gatewayToken, ...this.deps.store.listProviders().flatMap((provider) => [
+      ...provider.apiKeys.map(key => key.key),
+      ...Object.values(provider.headers ?? {}).filter((value): value is string => typeof value === 'string').flatMap(value => [
+        value, value.trim(), /^(?:Bearer|Basic)\s+(.+)$/i.exec(value.trim())?.[1] || '',
+      ]),
+    ])];
+    // Longest first also hides complete authorization headers before their token substrings.
+    // Keep the existing minimum length so short header values do not erase unrelated words.
+    for (const key of [...new Set(secrets)].filter(key => key && key.length >= 4).sort((a, b) => b.length - a.length))
+      result = result.split(key).join('[已隐藏密钥]');
     return result.slice(0, 2000);
   }
 }

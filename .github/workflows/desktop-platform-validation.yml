@@ -17,7 +17,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: desktop-platform-validation-${{ github.ref }}
+  group: desktop-platform-validation-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -73,6 +73,10 @@ jobs:
           python scripts/test-client-restart-ui.py
           python scripts/test-desktop-setup-ui.py
           python scripts/test-client-diagnostics-ui.py
+          python scripts/test-client-connections-ui.py
+          python scripts/test-permission-restore-ui.py
+          python scripts/test-manual-guides-ui.py
+          python scripts/test-extension-connection-ui.py
           python scripts/test-provider-views-ui.py
           python scripts/test-model-context-ui.py
           python scripts/test-model-batch-context-ui.py
@@ -81,11 +85,14 @@ jobs:
           python scripts/test-history-ui.py
           python scripts/test-provider-balance-ui.py
           python scripts/test-membership-ui.py
+          python scripts/test-routing-groups-ui.py
+          python scripts/test-navigation-ui.py
       - name: Package native application for acceptance (no release)
         id: package
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: npx electron-builder --mac --${{ matrix.arch }} --dir --publish never
       - name: Validate packaged native application and resources
+        id: acceptance
         if: ${{ !cancelled() && steps.package.outcome == 'success' }}
         shell: bash
         run: |
@@ -94,18 +101,36 @@ jobs:
           test -n "$APP_ROOT"
           EXECUTABLE=$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$APP_ROOT/Contents/Info.plist")
           python scripts/test-packaged.py --exe "$APP_ROOT/Contents/MacOS/$EXECUTABLE"
+          printf 'app-root=%s\n' "$APP_ROOT" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: desktop-validation-mac-${{ matrix.arch }}
           path: docs/PACKAGED-VALIDATION-0.6.0.json
           if-no-files-found: ignore
-      - name: Build DMG when requested by the build workflow
+      - name: Build DMG and ZIP when requested by the build workflow
         if: inputs.package-installer == true
-        run: npx electron-builder --mac --${{ matrix.arch }} --publish never
+        env:
+          ACCEPTED_APP_ROOT: ${{ steps.acceptance.outputs.app-root }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$ACCEPTED_APP_ROOT"
+          test -d "$ACCEPTED_APP_ROOT"
+          npx electron-builder --mac dmg zip --${{ matrix.arch }} --prepackaged "$ACCEPTED_APP_ROOT" --publish never
+      - name: Hash macOS DMG and ZIP
+        if: inputs.package-installer == true
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release
+          shasum -a 256 ./*.dmg ./*.zip > SHA256SUMS-macos-${{ matrix.arch }}.txt
       - uses: actions/upload-artifact@v4
         if: inputs.package-installer == true
         with:
           name: yunqiao-macos-${{ matrix.arch }}
-          path: release/*.dmg
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/SHA256SUMS-macos-${{ matrix.arch }}.txt
           if-no-files-found: error

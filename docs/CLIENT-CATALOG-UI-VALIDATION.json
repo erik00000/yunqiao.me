@@ -1,6 +1,6 @@
 {
   "passed": true,
-  "count": 12,
+  "count": 15,
   "checks": [
     "A provider created from a nonempty preset synchronizes upstream models and preserves the selected preset model",
     "Pending client preview locks model edits; failed application requires a fresh reviewed selection and revision",
@@ -13,6 +13,9 @@
     "Closing a loading catalog prevents its late response from reopening the modal",
     "The vendor directory follows completed startup synchronization without a manual refresh and removes stale selections",
     "A late stale directory response cannot overwrite a newer background snapshot",
+    "Real directory keeps OpenAI, Anthropic and Gemini first, then international/domestic/relay/local groups across reordered remote updates; filters and selection survive",
+    "Shared client/provider preset picker uses the same priority and finds the OpenAI preset by ChatGPT alias",
+    "Cloud-import chooser presents the same international-first order without changing imported data",
     "No renderer exceptions or real client/configuration/network actions occurred"
   ],
   "scope": "Real React components with controlled IPC; no real client, provider or published catalog changes"

@@ -164,7 +164,7 @@ export function parseGeminiResponse(json: any): IRResponse {
   const cand = json?.candidates?.[0] ?? {};
   const blocks: Block[] = [];
   for (const p of cand.content?.parts ?? []) {
-    if (typeof p.text === 'string' && p.text) blocks.push({ type: 'text', text: p.text });
+    if (typeof p.text === 'string' && p.text) blocks.push({ type: p.thought ? 'thinking' : 'text', text: p.text });
     else if (p.functionCall)
       blocks.push({
         type: 'tool_use',

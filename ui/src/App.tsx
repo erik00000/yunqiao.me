@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { memo, startTransition, useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, UpdateInfo, call } from './lib/api';
 import { Btn, Ico, Modal, ToastHost, WindowControls, useToast } from './components/ui';
 import Overview from './pages/Overview';
@@ -15,6 +15,7 @@ import Usage from './pages/Usage';
 import SettingsPage from './pages/Settings';
 import Membership from './pages/Membership';
 import UpdateActions from './components/UpdateActions';
+import { reconcileWorkspaceSnapshot } from './lib/workspaceSnapshot';
 
 export type PageId = 'overview' | 'agents' | 'catalog' | 'providers' | 'models' | 'groups' | 'accounts' | 'codex' | 'plugins' | 'sessions' | 'usage' | 'settings' | 'membership';
 export interface PageProps { state: AppState; reload: () => Promise<void>; go: (p: PageId) => void; }
@@ -40,6 +41,10 @@ const NAV: Array<{ group: string; items: Array<{ id: PageId; label: string; icon
 ];
 const ALL_NAV = [...NAV.flatMap(g => g.items), { id: 'settings' as PageId, label: '系统设置', icon: 'gear', hint: '外观、网络、数据与更新' }];
 const PAGES = { agents: Agents, overview: Overview, catalog: Catalog, providers: Providers, models: Models, groups: Groups, accounts: Accounts, codex: CodexEnhance, plugins: Plugins, sessions: Sessions, usage: Usage, settings: SettingsPage, membership: Membership };
+const PageContent = memo(function PageContent({ page, ...props }: PageProps & { page: PageId }) {
+  const Page = PAGES[page];
+  return <Page {...props} />;
+});
 
 function Shell() {
   const initial = window.location.hash.slice(1).split('-')[0] as PageId;
@@ -50,20 +55,50 @@ function Shell() {
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const refreshFlight = useRef<Promise<void> | null>(null);
+  const refreshQueued = useRef(false);
+  const lifecycle = useRef(0);
+  const alive = useRef(true);
   const toast = useToast();
   const go = useCallback((p: PageId) => { setPage(p); window.history.replaceState(null, '', `#${p}`); setSearchOpen(false); }, []);
-  const reload = useCallback(async () => {
-    try { setState(await call<AppState>('state.get')); setErr(''); }
-    catch (e: any) { setErr(e.message || String(e)); }
+  const refresh = useCallback((afterChange = false): Promise<void> => {
+    if (!alive.current) return Promise.resolve();
+    if (refreshFlight.current) {
+      // A save/detection event needs a snapshot taken after that change; timer ticks can share a read.
+      if (afterChange) refreshQueued.current = true;
+      return refreshFlight.current;
+    }
+    const epoch = lifecycle.current;
+    const flight = (async () => {
+      do {
+        refreshQueued.current = false;
+        try {
+          const next = await call<AppState>('state.get');
+          if (!alive.current || epoch !== lifecycle.current) return;
+          if (refreshQueued.current) continue;
+          startTransition(() => setState(previous => reconcileWorkspaceSnapshot(previous, next)));
+          setErr('');
+        } catch (e: any) {
+          if (!alive.current || epoch !== lifecycle.current) return;
+          if (!refreshQueued.current) setErr(e.message || String(e));
+        }
+      } while (refreshQueued.current);
+    })().finally(() => { if (refreshFlight.current === flight) refreshFlight.current = null; });
+    refreshFlight.current = flight;
+    return flight;
   }, []);
+  const reload = useCallback(() => refresh(true), [refresh]);
   useEffect(() => {
-    reload();
-    const off = window.aurora?.onGateway(() => reload());
-    const timer = setInterval(reload, 15000);
+    alive.current = true;
+    void refresh();
+    const off = window.aurora?.onGateway(() => { void refresh(true); });
+    const refreshVisible = () => { if (!document.hidden) void refresh(); };
+    const timer = setInterval(refreshVisible, 15000);
+    document.addEventListener('visibilitychange', refreshVisible);
     const onKey = (e: KeyboardEvent) => { if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.isComposing && e.key.toLowerCase() === 'k') { e.preventDefault(); setSearchOpen(v => !v); } };
     window.addEventListener('keydown', onKey);
-    return () => { off?.(); clearInterval(timer); window.removeEventListener('keydown', onKey); };
-  }, [reload]);
+    return () => { alive.current = false; lifecycle.current++; refreshFlight.current = null; refreshQueued.current = false; off?.(); clearInterval(timer); document.removeEventListener('visibilitychange', refreshVisible); window.removeEventListener('keydown', onKey); };
+  }, [refresh]);
   useEffect(() => {
     if (!window.aurora || !state?.settings.autoCheckUpdate) return;
     let alive = true;
@@ -87,7 +122,6 @@ function Shell() {
       <button className="btn primary" type="submit">连接工作空间</button>
     </form> : err ? <div className="login-panel"><p role="alert">无法连接应用：{err}</p><Btn onClick={reload}>重新连接</Btn></div> : <p className="muted">正在打开工作空间…</p>}
   </div>;
-  const Page = PAGES[page];
   const active = ALL_NAV.find(i => i.id === page)!;
   return <div className="app" data-platform={window.aurora ? state.platform : 'web'}>
     <header className="titlebar">
@@ -110,7 +144,7 @@ function Shell() {
       <main className="main" id="main-content">
         {err && <div className="notice warning" role="alert">连接暂时中断：{err}<Btn size="sm" onClick={reload}>重试</Btn></div>}
         {update && <div className="notice" style={{ flexWrap: 'wrap' }}><Ico name="download" /><span className="grow">新版本 v{update.version} 已发布 · {update.source === 'website' ? '官网备用' : 'GitHub'}</span><UpdateActions key={`${update.source}:${update.version}`} update={update} /><Btn variant="ghost" size="sm" onClick={() => setUpdate(null)}>稍后</Btn></div>}
-        <Page state={state} reload={reload} go={go} />
+        <PageContent page={page} state={state} reload={reload} go={go} />
       </main>
     </div>
     {searchOpen && <Modal title="前往工作空间" sub="输入功能名称，快速打开对应页面" onClose={() => setSearchOpen(false)} width={560}><input autoFocus aria-label="搜索功能" className="input" placeholder="客户端、供应商、会话、插件…" value={query} onChange={e => setQuery(e.target.value)} /><div className="command-list">{ALL_NAV.filter(it => `${it.label}${it.hint}`.toLowerCase().includes(query.toLowerCase())).map(it => <button key={it.id} onClick={() => go(it.id)}><Ico name={it.icon} size={20} /><div><b>{it.label}</b><small>{it.hint}</small></div><span>↗</span></button>)}</div></Modal>}

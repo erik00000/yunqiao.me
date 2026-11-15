@@ -6,14 +6,17 @@ import { activeRequests } from './gateway/liveUsage.js';
 import path from 'node:path';
 import fs from 'node:fs';
 import { applyContextDefaults, isChatgptTextModel, isValidContextWindow } from './modelContext.js';
-import { readText, atomicWrite, digest } from './agents/configFiles.js';
+import { readText, atomicWrite, digest, expectedPlanFiles } from './agents/configFiles.js';
+import { runPermissionAction } from './agents/permissions.js';
 import { getCoexistCatalog } from './gateway/coexist.js';
 import { runExtensionAction } from './extensions/index.js';
-import { AGENT_ADAPTERS, detectAll, detectReset, getAdapter, connectionParameters, exportEnvScript, configureDesktopPath, type ConnectContext } from './agents/adapters.js';
-import { scanSessions, readSession, resumeCommand, exportSessionMarkdown } from './sessions.js';
+import { AGENT_ADAPTERS, detectReset, getAdapter, connectionParameters, exportEnvScript, configureDesktopPath, type ConnectContext } from './agents/adapters.js';
+import { detectAllAsync, detectDesktopAsync } from './agents/detectionAsync.js';
+import { resumeCommand } from './sessions.js';
+import { scanSessionsAsync, readSessionAsync, exportSessionAsync, listCodexAssetsAsync } from './readOnlyJobs.js';
 import { BUILTIN_MIDDLEWARE, SAMPLE_PLUGIN, getMiddlewareStatus } from './plugins/middleware.js';
 import { desktopInfo, launchAndInject, injectorStatus, BUILTIN_INJECT_SCRIPTS } from './injector.js';
-import { diagnoseSessions, repairSessions, listCodexAssets, toggleCodexAsset, readAgentsMd, writeAgentsMd, readCodexFlags, writeCodexFlag, CODEX_FLAGS } from './codex.js';
+import { diagnoseSessions, repairSessions, toggleCodexAsset, readAgentsMd, writeAgentsMd, readCodexFlags, writeCodexFlag, CODEX_FLAGS } from './codex.js';
 import { openUpstream, readAll } from './gateway/upstream.js';
 import { buildUpstreamHttp, parseClientRequest } from './protocol/index.js';
 import type { GatewayStatus } from './gateway/server.js';
@@ -29,6 +32,7 @@ import {
 import { GITHUB_RELEASE_PAGE } from './releaseSources.js';
 import { providerBalance } from './providerBalance.js';
 import { diagnoseClient } from './clientDiagnostics.js';
+import { testClientConnection, cancelClientConnectionTest } from './clientConnectionTest.js';
 
 /**
  * 与 Electron 无关的动作层：桌面端的 IPC 和网关的 /api/rpc 共用同一份实现，
@@ -52,31 +56,6 @@ interface ClientFileExpected { existed: boolean; hash: string }
 function snapshotClientFiles(paths: string[]): ClientFileSnapshot[] {
   return paths.map(file => ({ path: file, content: readText(file), existed: fs.existsSync(file) }));
 }
-function expectedClientFiles(files: ClientFileSnapshot[]): Map<string, ClientFileExpected> {
-  return new Map(files.map(file => [file.path, { existed: file.existed, hash: digest(file.content) }]));
-}
-/** The adapter's manifest records the exact bytes it wrote, independently of later external edits. */
-function clientManifestExpected(backup: string | undefined, files: ClientFileSnapshot[], restoring = false): Map<string, ClientFileExpected> {
-  if (!backup || !files.length) throw new Error('缺少可核验的客户端备份');
-  const root = path.join(path.dirname(files[0].path), '.aurora-backups');
-  const within = (file: string) => { const rel = path.relative(root, file); return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel); };
-  if (!within(backup)) throw new Error('客户端备份路径无效');
-  const manifest = JSON.parse(readText(backup));
-  if (manifest.format !== 'aurora-client-backup-v1' || !Array.isArray(manifest.files)) throw new Error('客户端备份格式无效');
-  const expected = expectedClientFiles(files), seen = new Set<string>();
-  for (const entry of manifest.files) {
-    const file = files.find(item => path.resolve(item.path) === path.resolve(entry.path));
-    if (!file || seen.has(file.path) || !/^[a-f0-9]{64}$/.test(entry.installedHash)
-      || (entry.backup !== null && (typeof entry.backup !== 'string' || !within(entry.backup)))) throw new Error('客户端备份记录无效');
-    seen.add(file.path);
-    if (restoring) {
-      if (entry.backup !== null && !fs.existsSync(entry.backup)) throw new Error('客户端原始备份丢失');
-      expected.set(file.path, { existed: entry.backup !== null, hash: digest(entry.backup === null ? '' : readText(entry.backup)) });
-    } else expected.set(file.path, { existed: true, hash: entry.installedHash });
-  }
-  if (!restoring && seen.size !== files.length) throw new Error('客户端备份记录不完整');
-  return expected;
-}
 /** Never undo another application's edit while recovering a failed state commit. */
 function rollbackClientFiles(files: ClientFileSnapshot[], expected: Map<string, ClientFileExpected>): string[] {
   const failed: string[] = [];
@@ -86,7 +65,7 @@ function rollbackClientFiles(files: ClientFileSnapshot[], expected: Map<string, 
       if (current.existed === file.existed && currentHash === digest(file.content)) continue;
       const applied = expected.get(file.path);
       if (!applied || current.existed !== applied.existed || currentHash !== applied.hash) { failed.push(file.path); continue; }
-      if (file.existed) atomicWrite(file.path, file.content);
+      if (file.existed) atomicWrite(file.path, file.content, { existed: current.existed, content: current.content });
       else if (current.existed) fs.unlinkSync(file.path);
     } catch { failed.push(file.path); }
   }
@@ -351,6 +330,7 @@ export async function runAction(deps: ActionDeps, action: string, payload: any):
   const store = deps.store;
   payload = payload ?? {};
   if (action.startsWith('extension.')) return runExtensionAction(deps, action, payload);
+  if (action === 'agent.permissions.preview' || action === 'agent.permissions.restore') return runPermissionAction(deps, action, payload);
   configureDesktopPath(store.readExtra<any>('extensions.json', {})?.connection?.exePath);
   if (action.startsWith('codex.repair.')) return runHistoryRepairAction(action, payload);
   if (action.startsWith('codex.indexRepair.')) return runSessionIndexRepairAction(action, payload);
@@ -400,7 +380,7 @@ export async function runAction(deps: ActionDeps, action: string, payload: any):
         version: deps.version ?? '0.1.0',
         build: buildInfo,
         platform: deps.platform ?? process.platform,
-        detected: detectAll(true),
+        detected: await detectAllAsync({ background: true }),
         mode: deps.platform === 'web' ? 'web' : 'desktop',
       };
     }
@@ -462,7 +442,7 @@ export async function runAction(deps: ActionDeps, action: string, payload: any):
     case 'codex.repairSessions':
       return { ok: false, message: '请使用历史会话中的批量修复，先预览范围后执行；旧版全库直接改写入口已停用。' };
     case 'codex.assets':
-      return { ok: true, assets: listCodexAssets() };
+      return { ok: true, assets: await listCodexAssetsAsync() };
     case 'codex.toggleAsset':
       return toggleCodexAsset(payload.id, !!payload.enabled);
     case 'codex.readAgents':
@@ -513,15 +493,23 @@ export async function runAction(deps: ActionDeps, action: string, payload: any):
 
     case 'agent.detect':
       detectReset();
-      return detectAll();
+      return await detectAllAsync();
     case 'agent.diagnose':
       return diagnoseClient(deps, payload);
+    case 'agent.test':
+      return testClientConnection(deps, payload);
+    case 'agent.test.cancel':
+      return cancelClientConnectionTest(deps, payload);
     case 'agent.preview':
     case 'agent.parameters':
     case 'agent.connect': {
       const adapter = getAdapter(String(payload.agentId || ''));
       if (!adapter) return { ok: false, message: '未知客户端' };
       if (adapter.support === 'unsupported') return { ok: false, message: adapter.supportNote, files: [], warnings: [] };
+      const desktopDetection = adapter.id === 'chatgpt-desktop'
+        ? await detectDesktopAsync(store.readExtra<any>('extensions.json', {})?.connection?.exePath, action === 'agent.connect')
+          .catch(() => ({ installed: false, supportsCodexConfig: false, evidence: [] }))
+        : undefined;
       const sharedCodex = adapter.id === 'codex-cli' || adapter.id === 'chatgpt-desktop';
       const authMode = payload.authMode || 'api';
       if (!['api', 'coexist'].includes(authMode) || (authMode === 'coexist' && !sharedCodex)) return { ok: false, message: '此客户端不支持所选账号模式' };
@@ -540,10 +528,12 @@ export async function runAction(deps: ActionDeps, action: string, payload: any):
       const prior = states[adapter.id] || (sharedCodex ? states['codex-cli'] || states['chatgpt-desktop'] || states['codex-desktop'] : undefined);
       const context: ConnectContext = {
         provider, model: String(payload.model || provider.models[0]?.id || ''), modelMap: payload.modelMap,
-        mode: payload.mode || 'gateway', gatewayUrl: deps.gatewayUrl(), token: store.getSettings().gatewayToken,
+        mode: payload.mode || 'gateway', gatewayUrl: deps.gatewayUrl(), token: store.getSettings().gatewayToken, globalProxy: store.getSettings().proxy,
         previousBackup: prior?.connected || prior?.pendingReapply ? prior.backupPath : undefined,
         expectedRevision: payload.revision,
-        authMode, modelCatalogPath: path.join(store.dir, 'codex-model-catalog.json'),
+        authMode, permissionMode: payload.permissionMode ?? 'preserve', skipOnboarding: payload.skipOnboarding ?? false,
+        modelCatalogPath: path.join(store.dir, 'codex-model-catalog.json'),
+        desktopDetection,
       };
       const preview = adapter.preview(context);
       const clientRevision = preview.revision;
@@ -559,7 +549,10 @@ export async function runAction(deps: ActionDeps, action: string, payload: any):
       const catalogFile = context.modelCatalogPath!;
       let clientBefore: ClientFileSnapshot[], catalogBefore: ClientFileSnapshot[];
       try {
-        clientBefore = snapshotClientFiles(adapter.configPaths());
+        const allowedPaths = new Set(adapter.configPaths().map(file => path.resolve(file)));
+        const plannedPaths = preview.files.map(file => file.path);
+        if (plannedPaths.some(file => !allowedPaths.has(path.resolve(file)))) throw new Error('客户端预览包含未知配置位置');
+        clientBefore = snapshotClientFiles(plannedPaths);
         catalogBefore = coexist ? snapshotClientFiles([catalogFile]) : [];
       } catch { return { ok: false, message: '无法安全读取本次操作前的配置，未应用连接。请检查客户端配置与云桥数据目录权限。' }; }
       const catalogExpected = coexist ? new Map([[catalogFile, { existed: true, hash: digest(JSON.stringify(coexist.nativeCatalog, null, 2)) }]]) : new Map<string, ClientFileExpected>();
@@ -576,8 +569,8 @@ export async function runAction(deps: ActionDeps, action: string, payload: any):
         const ids = sharedCodex ? (['codex-cli', 'chatgpt-desktop', 'codex-desktop'] as const) : [adapter.id];
         let expected = new Map(catalogExpected);
         try {
-          expected = new Map([...clientManifestExpected(result.backup, clientBefore), ...catalogExpected]);
-          store.saveAgents(ids.map(id => ({ id, connected: true, pendingReapply: false, providerId: provider.id, model: context.model, modelMap: context.modelMap, mode: context.mode, authMode, configPath: result.path, backupPath: result.backup })));
+          expected = new Map([...expectedPlanFiles(sharedCodex ? 'codex-cli' : adapter.id, result.backup, clientBefore), ...catalogExpected]);
+          store.saveAgents(ids.map(id => ({ id, connected: true, pendingReapply: false, providerId: provider.id, model: context.model, modelMap: context.modelMap, mode: context.mode, authMode, permissionMode: context.permissionMode, skipOnboarding: context.skipOnboarding, configPath: result.path, backupPath: result.backup })));
         } catch { return clientStateFailure([...clientBefore, ...catalogBefore], expected, result.backup); }
       }
       return result;
@@ -590,7 +583,7 @@ export async function runAction(deps: ActionDeps, action: string, payload: any):
       let before: ClientFileSnapshot[], expected: Map<string, ClientFileExpected>;
       try {
         before = snapshotClientFiles(adapter.restorePaths?.(current.backupPath) ?? adapter.configPaths());
-        expected = clientManifestExpected(current.backupPath, before, true);
+        expected = expectedPlanFiles(adapter.id === 'chatgpt-desktop' ? 'codex-cli' : adapter.id, current.backupPath, before, true);
       } catch { return { ok: false, message: '无法安全读取当前配置或原始备份，未断开连接。请检查客户端配置与备份目录权限。' }; }
       const result = adapter.disconnect(current?.backupPath);
       if (result.ok) {
@@ -625,17 +618,13 @@ export async function runAction(deps: ActionDeps, action: string, payload: any):
       return summarizeUsage(store.readUsage(payload?.days ?? 14));
 
     case 'sessions.scan':
-      return scanSessions();
+      return scanSessionsAsync();
     case 'sessions.read':
-      return readSession(payload.path);
+      return readSessionAsync(payload.path);
     case 'sessions.resume':
       return { command: resumeCommand(payload.summary) };
     case 'sessions.export': {
-      const md = payload.summary
-        ? exportSessionMarkdown(payload.summary)
-        : readSession(payload.path)
-            .map((m) => `## ${m.role}\n\n${m.text}\n`)
-            .join('\n');
+      const md = await exportSessionAsync({ summary: payload.summary, path: payload.path });
       return { ok: true, markdown: md };
     }
 

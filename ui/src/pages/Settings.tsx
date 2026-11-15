@@ -49,7 +49,7 @@ export default function SettingsPage({ state, reload }: PageProps) {
         {switchField('启动时检查更新', 'autoCheckUpdate', '发现新版本后显示下载入口，由你选择安装。')}
         <div className="row" style={{ flexWrap: 'wrap' }}>
           <Btn onClick={() => task(async () => { setUpdate(null); setUpdateError(''); try { setUpdate(await call<UpdateInfo>('update.check')); } catch (e: any) { setUpdateError(e.message || String(e)); } })}><Ico name="refresh" size={14} />{busy ? '正在检查…' : '检查更新'}</Btn>
-          <Btn variant="ghost" onClick={() => task(async () => { await call('app.openExternal', { url: 'https://github.com/jxb412/aurora/releases/latest' }); })}>GitHub 发布页 ↗</Btn>
+          <Btn variant="ghost" onClick={() => task(async () => { await call('app.openExternal', { url: 'https://github.com/jxb412/yunqiao.me/releases/latest' }); })}>GitHub 发布页 ↗</Btn>
         </div>
         {updateError && <div className="notice warning" role="alert" style={{ marginTop: 24 }}>{updateError}</div>}
         {update && <div style={{ marginTop: 24 }} aria-live="polite">
@@ -65,6 +65,6 @@ export default function SettingsPage({ state, reload }: PageProps) {
         <div className="card"><div className="card-title">云桥 AI · yunqiao.me</div><p className="muted">连接你的客户端、供应商与模型。</p><div className="kv"><span className="k">版本</span><span className="v">{state.version}</span><span className="k">平台</span><span className="v">{platformName}</span><span className="k">网关</span><span className="v mono">{state.gatewayUrl}</span></div><div className="row" style={{ marginTop: 22 }}><Btn onClick={() => task(async () => { await call('gateway.restart'); await reload(); toast.push('网关已重启', 'ok'); })}><Ico name="refresh" size={14} />重启网关</Btn><Btn variant="danger" onClick={() => { if (confirm('退出云桥 AI 并停止本地网关？')) call('app.quit'); }}>退出应用</Btn></div></div>
       </div>}
     </fieldset>
-    {tab === 'data' && <div className="page-footnote"><a href="https://github.com/jxb412/aurora" target="_blank" rel="noopener noreferrer">项目源码 ↗</a><a href="https://github.com/jxb412/aurora/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">AGPL 许可 ↗</a></div>}
+    {tab === 'data' && <div className="page-footnote"><a href="https://github.com/jxb412/yunqiao.me" target="_blank" rel="noopener noreferrer">项目源码 ↗</a><a href="https://github.com/jxb412/yunqiao.me/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">AGPL 许可 ↗</a></div>}
   </>;
 }

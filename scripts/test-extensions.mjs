@@ -8,10 +8,34 @@ import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 const tmp=fs.mkdtempSync(path.join(os.tmpdir(),'aurora-extension-test-'));
 process.env.AURORA_CLIENT_HOME=path.join(tmp,'client');
-await build({stdin:{contents:`export * from './src/core/extensions/index.ts';export * from './src/core/extensions/catalog.ts';export * from './src/core/extensions/market.ts';export * from './src/core/extensions/runtime.ts';export * from './src/core/extensions/usage.ts';export * from './src/core/extensions/sessions.ts';export * from './src/core/extensions/nativeModules.ts';export * from './src/core/extensions/nativeCapture.ts';export * from './src/core/extensions/operations.ts';export * from './src/core/extensions/workView.ts';export * from './src/core/extensions/theme.ts';export * from './src/core/extensions/dictation.ts';export * from './src/core/extensions/stepwise.ts';export * from './src/core/gateway/liveUsage.ts';export * from './src/core/injector.ts';export {AuroraStore} from './src/core/store/index.ts';`,resolveDir:process.cwd(),loader:'ts'},bundle:true,platform:'node',format:'esm',outfile:path.join(tmp,'bundle.mjs'),logLevel:'silent'});
+await build({stdin:{contents:`export * from './src/core/extensions/index.ts';export * from './src/core/extensions/models.ts';export * from './src/core/extensions/catalog.ts';export * from './src/core/extensions/market.ts';export * from './src/core/extensions/runtime.ts';export * from './src/core/extensions/usage.ts';export * from './src/core/extensions/sessions.ts';export * from './src/core/extensions/nativeModules.ts';export * from './src/core/extensions/nativeCapture.ts';export * from './src/core/extensions/operations.ts';export * from './src/core/extensions/workView.ts';export * from './src/core/extensions/theme.ts';export * from './src/core/extensions/dictation.ts';export * from './src/core/extensions/stepwise.ts';export * from './src/core/gateway/liveUsage.ts';export * from './src/core/injector.ts';export {AuroraStore} from './src/core/store/index.ts';`,resolveDir:process.cwd(),loader:'ts'},bundle:true,platform:'node',format:'esm',outfile:path.join(tmp,'bundle.mjs'),logLevel:'silent'});
 const m=await import('file:///'+path.join(tmp,'bundle.mjs').replace(/\\/g,'/'));
 const store=new m.AuroraStore(path.join(tmp,'store'));
 let passed=0;function test(name,fn){fn();passed++;console.log(`✓ ${name}`);}async function atest(name,fn){await fn();passed++;console.log(`✓ ${name}`);}
+test('desktop model catalogs recognize new and legacy managed providers and report the actual native identifier',()=>{
+  const isolated=new m.AuroraStore(path.join(tmp,'model-catalog-store')),file=path.join(process.env.AURORA_CLIENT_HOME,'.codex','config.toml');
+  const before=fs.existsSync(file)?fs.readFileSync(file):undefined;fs.mkdirSync(path.dirname(file),{recursive:true});
+  const provider=isolated.saveProvider({name:'Catalog fixture',format:'openai-responses',baseUrl:'https://fixture.test/v1',models:[{id:'first-model'},{id:'profile-model'}]});
+  isolated.saveAgent({id:'chatgpt-desktop',connected:true,providerId:provider.id,model:'first-model',mode:'gateway',authMode:'api'});
+  try{
+    const fingerprints=[];
+    for(const managed of ['yunqiao','aurora']){
+      const root=`model_provider = "${managed}"\nmodel = "first-model"\n[model_providers.${managed}]\nbase_url = "http://127.0.0.1:3425/v1"\nrequires_openai_auth = false\n`;
+      fs.writeFileSync(file,root);
+      let catalog=m.desktopModelCatalog(isolated);
+      assert.equal(catalog.status,'ok');assert.equal(catalog.model_provider,managed);assert.equal(catalog.codex_model_provider,managed);assert.equal(catalog.sources[0].id,`${managed}:${provider.id}`);assert.deepEqual(catalog.models,['first-model','profile-model']);
+      fingerprints.push(m.modelCatalogFingerprint(isolated));assert.equal(fs.readFileSync(file,'utf8'),root);
+      const inherited='profile = "工作.默认"\n'+root+'\n[profiles."工作.默认"]\nmodel = "profile-model"\n';
+      fs.writeFileSync(file,inherited);catalog=m.desktopModelCatalog(isolated);assert.equal(catalog.codex_model_provider,managed);assert.equal(catalog.default_model,'profile-model');assert.equal(fs.readFileSync(file,'utf8'),inherited);
+      const selected=`profile = "工作.默认"\nmodel_provider = "foreign"\n[profiles."工作.默认"]\nmodel_provider = "${managed}"\nmodel = "profile-model"\n[profiles."工作.默认".model_providers.${managed}]\nbase_url = "http://127.0.0.1:3425/v1"\n`;
+      fs.writeFileSync(file,selected);catalog=m.desktopModelCatalog(isolated);assert.equal(catalog.codex_model_provider,managed);assert.equal(catalog.default_model,'profile-model');assert.equal(fs.readFileSync(file,'utf8'),selected);
+    }
+    assert.notEqual(...fingerprints);
+    for(const unrelated of ['model_provider = "other"\n','profile = "missing"\nmodel_provider = "yunqiao"\n','model_provider = "yunqiao"\nsecret = "fixture-invalid-secret\n']){
+      fs.writeFileSync(file,unrelated);const catalog=m.desktopModelCatalog(isolated);assert.equal(catalog.status,'not_configured');assert(!JSON.stringify(catalog).includes('fixture-invalid-secret'));assert.equal(fs.readFileSync(file,'utf8'),unrelated);
+    }
+  }finally{if(before)fs.writeFileSync(file,before);else fs.unlinkSync(file);}
+});
 test('32 upstream builtins and 5 real bundled packages',()=>{assert.equal(m.BUILTINS.length,32);assert.equal(m.BUNDLED.length,5);for(const id of m.BUNDLED)assert.ok(m.manifest(id).renderer.length);});
 test('plugin catalogs pinned to public repositories',()=>{assert.equal(m.loadIndex(store,'public').plugins.length,520);assert.equal(m.loadIndex(store,'full').plugins.length,5491);assert.throws(()=>m.validateIndex({schemaVersion:1,repository:'evil/repo',revision:'f'.repeat(40),plugins:[]},'public'));});
 await atest('corrupt native install records never become an empty registry or get overwritten on reinstall',async()=>{

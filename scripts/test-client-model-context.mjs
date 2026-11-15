@@ -64,7 +64,7 @@ try {
     const f = fixture('profile', text); connect(f); const next = parse(read(f.config));
     assert.equal(next.model_context_window, 64000); assert.equal(next.profiles['work.v2'].model, 'fixture-provider/selected-model');
     assert.equal(next.model_auto_compact_token_limit, 57600); assert.equal(next.profiles['work.v2'].model_auto_compact_token_limit, undefined);
-    assert.equal(next.profiles['work.v2'].model_provider, 'aurora'); assert.equal(next.profiles['work.v2'].model_reasoning_effort, 'high');
+    assert.equal(next.profiles['work.v2'].model_provider, 'yunqiao'); assert.equal(next.profiles['work.v2'].model_reasoning_effort, 'high');
     assert.equal(next.profiles['work.v2'].model_context_window, undefined); assert.deepEqual(policy(next.profiles['work.v2']), policy({}));
     assert.deepEqual(policy(next), policy(parse(text)));
   });

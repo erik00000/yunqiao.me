@@ -38,6 +38,7 @@ export function openUpstream(urlStr: string, opt: OpenOptions = {}): Promise<Ope
     const timeout = Math.max(1000, opt.timeoutMs ?? 600000);
     const firstTimeout = Math.max(1000, Math.min(timeout, opt.firstByteTimeoutMs ?? timeout));
     const isHttps = url.protocol === 'https:';
+    const hostname = url.hostname.replace(/^\[|\]$/g, '');
     const port = Number(url.port || (isHttps ? 443 : 80));
     const method = opt.method ?? 'POST';
     const headers: Record<string, string> = { host: url.host, ...opt.headers };
@@ -62,7 +63,7 @@ export function openUpstream(urlStr: string, opt: OpenOptions = {}): Promise<Ope
       req.end();
     };
     const makeRequest = (agent?: https.Agent) => {
-      send((isHttps ? https : http).request({ protocol: url.protocol, hostname: url.hostname, port,
+      send((isHttps ? https : http).request({ protocol: url.protocol, hostname, port,
         path: url.pathname + url.search, method, headers, agent }, onResponse));
     };
     if (!proxyUrl) { makeRequest(); return; }
@@ -81,7 +82,7 @@ export function openUpstream(urlStr: string, opt: OpenOptions = {}): Promise<Ope
     connectReq.once('connect', (res, socket, head) => {
       if (res.statusCode !== 200) { socket.destroy(); fail(new Error(`Proxy CONNECT failed: ${res.statusCode}`)); return; }
       if (head.length) socket.unshift(head);
-      const secure = tls.connect({ socket, servername: net.isIP(url.hostname) ? undefined : url.hostname });
+      const secure = tls.connect({ socket, servername: net.isIP(hostname) ? undefined : hostname });
       secure.once('error', fail);
       tunnelAgent = new https.Agent({ keepAlive: false });
       tunnelAgent.createConnection = (() => secure) as typeof tunnelAgent.createConnection;

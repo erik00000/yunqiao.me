@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import type { PageProps } from '../App';
 import { Btn, Empty, Field, Ico, Modal, useToast } from '../components/ui';
 import { call, fmtCtx, fmtCost } from '../lib/api';
@@ -8,6 +8,8 @@ import ContextCompactHint from '../components/ContextCompactHint';
 export default function Models({ state, reload, go }: PageProps) {
   const toast = useToast();
   const [query, setQuery] = useState('');
+  const deferredQuery = useDeferredValue(query);
+  const [page, setPage] = useState(0);
   const [provider, setProvider] = useState('');
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
@@ -19,8 +21,12 @@ export default function Models({ state, reload, go }: PageProps) {
   const [draft, setDraft] = useState<Record<string, string>>({});
   const desktop = !!window.aurora;
   const all = useMemo(() => state.providers.flatMap(p => p.models.map(model => ({ providerId: p.id, providerName: p.name, model, key: JSON.stringify([p.id, model.id]) }))), [state.providers]);
-  const rows = all.filter(r => (!provider || r.providerId === provider) && `${r.model.id} ${r.model.displayName || ''} ${r.providerName}`.toLowerCase().includes(query.toLowerCase()));
-  const chatgptRows = rows.filter(r => isChatgptTextModel(r.model.id));
+  const rows = useMemo(() => all.filter(r => (!provider || r.providerId === provider) && `${r.model.id} ${r.model.displayName || ''} ${r.providerName}`.toLowerCase().includes(deferredQuery.toLowerCase())), [all, provider, deferredQuery]);
+  const chatgptRows = useMemo(() => rows.filter(r => isChatgptTextModel(r.model.id)), [rows]);
+  useEffect(() => setPage(0), [provider, deferredQuery]);
+  const pageCount = Math.max(1, Math.ceil(rows.length / 100));
+  const currentPage = Math.min(page, pageCount - 1);
+  const pageRows = rows.slice(currentPage * 100, (currentPage + 1) * 100);
   useEffect(() => { const keys = new Set(all.map(r => r.key)); setPicked(p => new Set([...p].filter(k => keys.has(k)))); }, [all]);
   const items = all.filter(r => picked.has(r.key)).map(r => ({ providerId: r.providerId, modelId: r.model.id }));
   const patch: any = {};
@@ -69,7 +75,8 @@ export default function Models({ state, reload, go }: PageProps) {
     <div className="repair-toolbar"><div className="search-input"><Ico name="search" size={14} /><input aria-label="搜索模型" placeholder="搜索模型或供应商…" value={query} onChange={e => setQuery(e.target.value)} /></div><select className="select" style={{ width: 200 }} aria-label="按供应商筛选模型" value={provider} onChange={e => setProvider(e.target.value)}><option value="">全部供应商</option>{state.providers.map(p => <option key={p.id} value={p.id}>{p.name} · {p.models.length}</option>)}</select><div className="grow" /><span className="hint">已选 {picked.size} 条</span><Btn disabled={!desktop || !picked.size} onClick={() => open('update')}>批量编辑</Btn><Btn variant="danger" disabled={!desktop || !picked.size} onClick={() => open('delete')}>删除所选</Btn></div>
     <div className="row wrap" style={{ marginBottom: 12 }}><Btn size="sm" disabled={!desktop || !chatgptRows.length} onClick={() => setPicked(new Set(chatgptRows.map(row => row.key)))}>选择当前 ChatGPT 文本模型（{chatgptRows.length}）</Btn><span className="hint">仅选择当前筛选结果中的 GPT / Codex 文本模型，图像、语音和辅助模型不自动选中。</span></div>
     {picked.size > 0 && <div className="notice"><span>选择跨筛选条件保留，共 {picked.size} 条。</span><button className="text-button" onClick={() => setPicked(new Set())}>清空选择</button></div>}
-    <div className="card" style={{ padding: 0, overflowX: 'auto' }}>{!rows.length ? <Empty icon="◇" title={all.length ? '没有匹配的模型' : '还没有模型'} hint="到我的供应商同步模型，或手动添加。" /> : <table className="tbl"><thead><tr><th><input aria-label="全选当前模型" type="checkbox" disabled={!desktop} checked={allVisible} onChange={e => setPicked(p => { const n = new Set(p); for (const r of rows) e.target.checked ? n.add(r.key) : n.delete(r.key); return n; })} /></th><th>供应商</th><th>模型 ID</th><th>上下文</th><th>输入 / 输出价</th><th>能力</th><th /></tr></thead><tbody>{rows.map(r => <tr key={r.key}><td><input type="checkbox" aria-label={`选择模型 ${r.providerName} ${r.model.id}`} disabled={!desktop} checked={picked.has(r.key)} onChange={e => setPicked(p => { const n = new Set(p); e.target.checked ? n.add(r.key) : n.delete(r.key); return n; })} /></td><td>{r.providerName}</td><td className="mono">{r.model.id}</td><td>{fmtCtx(r.model.contextWindow)}</td><td>{fmtCost(r.model.inputPrice)} / {fmtCost(r.model.outputPrice)}</td><td><div className="tag-list">{(['tools', 'vision', 'thinking'] as const).filter(c => r.model.capabilities?.[c]).map(c => <span className="chip accent" key={c}>{c === 'tools' ? '工具' : c === 'vision' ? '视觉' : '思考'}</span>)}</div></td><td><Btn size="sm" disabled={!desktop} onClick={() => { setPicked(new Set([r.key])); open('update', { contextWindow: String(r.model.contextWindow ?? (isChatgptTextModel(r.model.id) ? DEFAULT_CHATGPT_CONTEXT_WINDOW : '')) }); }}>编辑</Btn></td></tr>)}</tbody></table>}</div>
+    <div className="card" style={{ padding: 0, overflowX: 'auto' }}>{!rows.length ? <Empty icon="◇" title={all.length ? '没有匹配的模型' : '还没有模型'} hint="到我的供应商同步模型，或手动添加。" /> : <table className="tbl"><thead><tr><th><input aria-label="全选当前模型" type="checkbox" disabled={!desktop} checked={allVisible} onChange={e => setPicked(p => { const n = new Set(p); for (const r of rows) e.target.checked ? n.add(r.key) : n.delete(r.key); return n; })} /></th><th>供应商</th><th>模型 ID</th><th>上下文</th><th>输入 / 输出价</th><th>能力</th><th /></tr></thead><tbody>{pageRows.map(r => <tr key={r.key}><td><input type="checkbox" aria-label={`选择模型 ${r.providerName} ${r.model.id}`} disabled={!desktop} checked={picked.has(r.key)} onChange={e => setPicked(p => { const n = new Set(p); e.target.checked ? n.add(r.key) : n.delete(r.key); return n; })} /></td><td>{r.providerName}</td><td className="mono">{r.model.id}</td><td>{fmtCtx(r.model.contextWindow)}</td><td>{fmtCost(r.model.inputPrice)} / {fmtCost(r.model.outputPrice)}</td><td><div className="tag-list">{(['tools', 'vision', 'thinking'] as const).filter(c => r.model.capabilities?.[c]).map(c => <span className="chip accent" key={c}>{c === 'tools' ? '工具' : c === 'vision' ? '视觉' : '思考'}</span>)}</div></td><td><Btn size="sm" disabled={!desktop} onClick={() => { setPicked(new Set([r.key])); open('update', { contextWindow: String(r.model.contextWindow ?? (isChatgptTextModel(r.model.id) ? DEFAULT_CHATGPT_CONTEXT_WINDOW : '')) }); }}>编辑</Btn></td></tr>)}</tbody></table>}</div>
+    {rows.length > 100 && <div className="row wrap" style={{ marginTop: 12 }} aria-label="模型列表分页"><span className="hint">共 {rows.length} 条 · 第 {currentPage + 1} / {pageCount} 页 · 全选与批量操作作用于全部筛选结果</span><div className="grow" /><Btn size="sm" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>上一页</Btn><Btn size="sm" disabled={currentPage + 1 >= pageCount} onClick={() => setPage(currentPage + 1)}>下一页</Btn></div>}
     <p className="hint" style={{ marginTop: 16 }}>价格为每百万 Token 的美元估算值。上下文与能力标记不改变服务商的实际限制；批量修改前保存本地备份。修改窗口后，已接入的 ChatGPT / Codex 请到“客户端接入”重新预览、应用并重启；应用时按上下文的 90% 同步自动压缩阈值。</p>
     {operation && <Modal title={operation === 'delete' ? '批量删除模型' : '批量编辑模型'} sub={`已选择 ${items.length} 条记录，先检查影响，再应用。`} width={760} onClose={() => !busy && setOperation(null)} foot={<><Btn disabled={busy} onClick={() => setOperation(null)}>取消</Btn>{preview ? <Btn variant={operation === 'delete' ? 'danger' : 'primary'} disabled={busy || !!preview.conflicts?.length} onClick={apply}>确认{operation === 'delete' ? '删除' : '更新'} {preview.count} 条</Btn> : <Btn variant="primary" disabled={busy} onClick={review}>{busy ? '检查中…' : '预览修改'}</Btn>}</>}>
       {error && <div className="notice warning" role="alert">{error}</div>}
@@ -88,7 +95,8 @@ export default function Models({ state, reload, go }: PageProps) {
       </>}
       {operation === 'delete' && <p>正在使用的客户端或路由分组会列出，完成调整后才能删除。删空的供应商会自动停用。</p>}
       {preview?.conflicts?.map((c: string) => <div key={c} className="notice warning">{c}</div>)}{preview && !preview.conflicts?.length && <div className="notice">检查完成，可以应用。{preview.emptied?.length ? `以下供应商将停用：${preview.emptied.join('、')}` : ''}</div>}
-      <div className="scroll-y" style={{ maxHeight: 160 }}>{all.filter(r => picked.has(r.key)).map(r => <div className="list-row" key={r.key}><span>{r.providerName}</span><code>{r.model.id}</code></div>)}</div>
+      <div className="scroll-y" style={{ maxHeight: 160 }}>{all.filter(r => picked.has(r.key)).slice(0, 100).map(r => <div className="list-row" key={r.key}><span>{r.providerName}</span><code>{r.model.id}</code></div>)}</div>
+      {items.length > 100 && <p className="hint">此处仅展示前 100 条，操作仍包含已选择的全部 {items.length} 条。</p>}
     </Modal>}
   </>;
 }

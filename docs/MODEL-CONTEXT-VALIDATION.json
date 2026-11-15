@@ -24,7 +24,7 @@
   },
   "macos": {
     "status": "passed",
-    "runUrl": "https://github.com/jxb412/aurora/actions/runs/43694767981",
+    "runUrl": "https://github.com/jxb412/yunqiao.me/actions/runs/43694767981",
     "architectures": [
       "arm64",
       "x64"

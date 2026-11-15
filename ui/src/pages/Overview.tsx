@@ -9,20 +9,15 @@ export default function Overview({ state, reload, go }: PageProps) {
   const [recent, setRecent] = useState<UsageRecord[]>([]);
 
   useEffect(() => {
-    (async () => {
-      try {
-        setUsage(await call<UsageSummary>('usage.summary', { days: 14 }));
-        setRecent(await call<UsageRecord[]>('usage.recent'));
-      } catch {
-        /* 首次启动没有数据 */
-      }
-    })();
-    const off = window.aurora?.onUsage((r) => setRecent((s) => [r, ...s].slice(0, 12)));
-    return () => off?.();
+    let alive = true;
+    void call<UsageSummary>('usage.summary', { days: 14 }).then(result => { if (alive) setUsage(result); }).catch(() => {});
+    void call<UsageRecord[]>('usage.recent').then(result => { if (alive) setRecent(current => [...new Map([...result, ...current].map(record => [record.requestId, record])).values()].sort((a, b) => Date.parse(b.ts) - Date.parse(a.ts)).slice(0, 12)); }).catch(() => {});
+    const off = window.aurora?.onUsage((r) => { if (alive) setRecent((s) => [r, ...s.filter(record => record.requestId !== r.requestId)].slice(0, 12)); });
+    return () => { alive = false; off?.(); };
   }, []);
 
   const enabled = state.providers.filter((p) => p.enabled);
-  const connected = Object.entries(state.agents).filter(([, a]) => a.connected);
+  const connected = state.agentCatalog.flatMap(agent => state.agents[agent.id]?.connected ? [[agent.id, state.agents[agent.id]] as const] : []);
   const today = usage?.byDay?.find(d => d.day === new Date().toISOString().slice(0, 10));
 
   return (

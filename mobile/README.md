@@ -6,18 +6,18 @@
 
 电脑负责网关和客户端配置，手机负责远程管理。API Key 留在电脑；访问令牌只保留在当前应用内存中，断开连接后清除。仅保存网关地址和外观偏好。
 
-本版本按 [AGPL-3.0-only](../LICENSE) 发布，[项目源码与构建材料](https://github.com/jxb412/aurora)公开可用，0.6.0 仍在本地验证；源码包附带许可证和第三方声明，应用「我的」页面也提供对应源码入口。
+本版本按 [AGPL-3.0-only](../LICENSE) 发布，[项目源码与构建材料](https://github.com/jxb412/yunqiao.me)公开可用，0.6.0 仍在本地验证；源码包附带许可证和第三方声明，应用「我的」页面也提供对应源码入口。
 
 ## 已验证的构建与下载
 
 2026-11-15，0.5.0 的 GitHub Actions macOS runner 已成功完成依赖安装、移动接口测试、CocoaPods 同步，以及 Xcode 模拟器和 iPhone 设备二进制编译。以下是这次已有成功记录；0.6.0 的源码、网页构建及测试已更新，原生二进制以新提交对应的 Actions 结果为准。
 
-- [查看成功的 iOS 构建任务](https://github.com/jxb412/aurora/actions/runs/43617930882/job/132517017996)
-- [下载模拟器构建产物](https://github.com/jxb412/aurora/actions/runs/43617930882/artifacts/14122749347)：`yunqiao-ios-simulator`，内含 `YunQiaoAI-iOS-simulator.zip` 和 `App.app`
-- [下载未签名 iPhone 设备产物](https://github.com/jxb412/aurora/actions/runs/43617930882/artifacts/14123405186)：`yunqiao-ios-device-unsigned`，内含 `YunQiaoAI-iOS-device-unsigned.zip` 和 `App.app`
-- [查看两种目标的构建日志](https://github.com/jxb412/aurora/actions/runs/43617930882/artifacts/14122951333)
+- [查看成功的 iOS 构建任务](https://github.com/jxb412/yunqiao.me/actions/runs/43617930882/job/132517017996)
+- [下载模拟器构建产物](https://github.com/jxb412/yunqiao.me/actions/runs/43617930882/artifacts/14122749347)：`yunqiao-ios-simulator`，内含 `YunQiaoAI-iOS-simulator.zip` 和 `App.app`
+- [下载未签名 iPhone 设备产物](https://github.com/jxb412/yunqiao.me/actions/runs/43617930882/artifacts/14123405186)：`yunqiao-ios-device-unsigned`，内含 `YunQiaoAI-iOS-device-unsigned.zip` 和 `App.app`
+- [查看两种目标的构建日志](https://github.com/jxb412/yunqiao.me/actions/runs/43617930882/artifacts/14122951333)
 
-Actions 产物可能需要登录 GitHub，并受保留期限限制；后续构建见[工作流列表](https://github.com/jxb412/aurora/actions/workflows/build.yml)。模拟器 `.app` 用于 Mac 上的 iOS 模拟器，设备 `.app` 需要补签名后才能安装；**两者都不是可直接安装到 iPhone 的签名 IPA**。
+Actions 产物可能需要登录 GitHub，并受保留期限限制；后续构建见[工作流列表](https://github.com/jxb412/yunqiao.me/actions/workflows/build.yml)。模拟器 `.app` 用于 Mac 上的 iOS 模拟器，设备 `.app` 需要补签名后才能安装；**两者都不是可直接安装到 iPhone 的签名 IPA**。
 
 解压出 `App.app`，打开 Xcode 的 Simulator 后，可以将它拖入模拟器安装，或执行：
 

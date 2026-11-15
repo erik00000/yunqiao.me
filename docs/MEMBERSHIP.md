@@ -32,7 +32,9 @@ X-Aurora-Installation-Proof: 本机随机 32 字节的小写 hex（64 字符）
 Authorization: Bearer 本服务 sessionToken（登录后）
 ```
 
-安装秘密和会话令牌保存在操作系统安全存储中，不应进入供应商导出或通用配置备份。登录密码仅用于即时登录，不落盘。本服务短期保存加密的上游 access JWT（AES-256-GCM），会话最长一小时；不保存明文密码、不保存上游 refresh token。
+安装秘密和会话令牌保存在操作系统安全存储中，不进入供应商导出或通用配置备份。登录密码仅用于即时登录，不落盘。服务端使用 AES-256-GCM 保存上游访问令牌和平台提供的刷新令牌，分别记录访问令牌与安装会话的有效期；刷新成功后延长安装会话，最长保留至该次刷新后 30 天。上游凭据撤销、失效或长期未使用后仍需重新登录。
+
+客户端启动后约 5 秒、运行期间每 15 分钟，在已有加密登录和安装凭据时后台检查并按需续期；临时网络失败保留凭据，下次维护重试。服务端对同一会话的令牌轮换串行处理，新令牌先持久化，再核对原会员身份；没有验证成功前不处理分组、密钥或赠金操作。退出或切换账号不能被迟到请求恢复。刷新令牌不会发给客户端界面。旧会话因未保存刷新令牌，需要通过账号重新登录一次；手动绑定的访问令牌按自身有效期使用，不能自动续期。
 
 | action | JSON 参数 | 返回或效果 |
 | --- | --- | --- |
@@ -44,7 +46,7 @@ Authorization: Bearer 本服务 sessionToken（登录后）
 | `claim` | 无 | 固定 $10 申请、自动核销、确认凭据与余额 |
 | `groups` | 无 | `groups:[{id,name,platform,rateMultiplier}]` 当前用户可用的模型分组 |
 | `create-client-key` | `groupId` | 用户显式操作后返回其本人的 `apiKey,id,memberId,name,group,baseUrl,format` |
-| `logout` | 无 | 撤销本地会员会话 |
+| `logout` | 无 | 删除安装会话，并尽力撤销对应上游刷新凭据；网络失败不恢复已退出的本地登录 |
 
 注册、密码恢复、站点风控验证码通过 `accountUrl` 完成。`login` 支持转交 `turnstile_token`、`tencent_captcha_ticket`、`tencent_captcha_randstr`，不绕过上游风控。
 

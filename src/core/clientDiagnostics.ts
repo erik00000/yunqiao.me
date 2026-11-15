@@ -49,7 +49,7 @@ function inspectClient(deps: ActionDeps, payload: unknown): ClientDiagnosticRepo
     paths = adapter.configPaths();
     automatic = adapter.support === 'automatic';
     add('support', automatic ? 'ok' : 'info', '配置方式', sharedDesktop && automatic ? '可自动备份并写入用户级共享编程配置，遵循 CODEX_HOME；官方登录文件保持不变。' : automatic ? '此客户端提供自动配置适配。' : '此版本需要在客户端内配置，或尚未支持自动接入；请查看接入说明。');
-    if (sharedDesktop) add('desktop-capability', detected.supportsCodexConfig ? 'ok' : 'warning', '桌面程序能力', detected.supportsCodexConfig ? '已从桌面安装资源确认 Codex 编程配置能力；运行中的客户端仍需重启后验证。' : '尚未验证桌面程序是否读取 Codex 编程配置。此状态不阻止共享配置保存，也不表示纯聊天界面可以切换模型。');
+    if (sharedDesktop) add('desktop-capability', detected.supportsCodexConfig ? 'ok' : 'warning', '桌面程序能力', detected.supportsCodexConfig ? '已从桌面安装资源确认 Codex 配置能力；重启后客户端按配置的接口地址、认证和模型发送请求，实际请求仍需验证。' : '尚未确认桌面版本及其读取的配置。可先保存共享配置，再选择实际程序，并在重启后核对请求去向。');
     const locationError = (!sharedDesktop && detected.detectionError) || (automatic && !paths.length);
     add('location', locationError ? 'error' : paths.length ? 'ok' : 'info', '配置位置', locationError ? '无法唯一确认配置目录。请检查是否存在多个版本／配置目录，再重新检测；本次未改写文件。' : paths.length ? '已按当前系统和客户端配置规则确定检查位置。' : '此入口没有已验证的自动配置位置，请在客户端内核对手动配置。');
   } catch {
@@ -86,7 +86,7 @@ function inspectClient(deps: ActionDeps, payload: unknown): ClientDiagnosticRepo
       add('credential', official || local || provider.apiKeys.some(key => key.enabled && key.key) ? 'ok' : 'error', '凭据配置', official ? '当前选择使用本机官方登录，下方单独检查登录记录。' : local && !provider.apiKeys.some(key => key.enabled && key.key) ? '本地服务未设置 API Key，请确认服务允许匿名访问。' : provider.apiKeys.some(key => key.enabled && key.key) ? '至少存在一个已启用的 API Key；有效性与额度需在供应商页手动测试。' : '没有已启用且非空的 API Key，请在供应商页补全。');
       if (automatic && adapter.matchesConfiguration) {
         try {
-          const context: ConnectContext = { provider, model: state.model || '', modelMap: state.modelMap, mode: state.mode || 'gateway', authMode: state.authMode || 'api', gatewayUrl: deps.gatewayUrl(), token: deps.store.settings.read().gatewayToken, modelCatalogPath: path.join(deps.store.dir, 'codex-model-catalog.json') };
+          const context: ConnectContext = { provider, model: state.model || '', modelMap: state.modelMap, mode: state.mode || 'gateway', authMode: state.authMode || 'api', permissionMode: state.permissionMode || 'preserve', skipOnboarding: state.skipOnboarding, previousBackup: state.backupPath, gatewayUrl: deps.gatewayUrl(), token: deps.store.settings.read().gatewayToken, globalProxy: deps.store.settings.read().proxy, modelCatalogPath: path.join(deps.store.dir, 'codex-model-catalog.json') };
           const matches = adapter.matchesConfiguration(context);
           add('parameters', matches ? 'ok' : 'warning', '连接参数一致性', matches ? '受管理配置与当前供应商、模型、地址及凭据选择一致。' : '本地配置与当前选择不同，可能已更改端口、令牌或供应商。请重新预览；有外部编辑时先处理冲突。');
         } catch { add('parameters', 'error', '连接参数一致性', '无法按当前选择生成有效配置，请检查供应商、模型与配置目录，再重新预览。'); }

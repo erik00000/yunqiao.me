@@ -110,6 +110,10 @@ export interface AgentState {
   model?: string;
   mode?: 'gateway' | 'direct';
   authMode?: 'api' | 'coexist';
+  /** Explicit native execution policy choice; omitted preserves existing permissions. */
+  permissionMode?: 'preserve' | 'full-access';
+  /** Optional Claude Code first-run compatibility setting, never an official login. */
+  skipOnboarding?: boolean;
   /** Claude Code 的 opus / sonnet / haiku 分别用哪个模型 */
   modelMap?: Record<string, string>;
   configPath?: string;
@@ -195,6 +199,8 @@ export interface Settings {
   autoSyncModels: boolean;
   /** 上次看到的 Codex 桌面版版本，用于检测官方更新 */
   codexVersion?: string;
+  /** Last gateway connection-affecting change; display preferences do not advance it. */
+  connectionUpdatedAt?: string;
   updatedAt: string;
 }
 

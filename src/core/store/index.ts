@@ -22,6 +22,11 @@ import { applyContextDefaults, isValidContextWindow } from '../modelContext.js';
 export * from './types.js';
 export { JsonFile, JsonLines } from './jsonFile.js';
 
+export interface AgentStateSnapshot { states: Record<string, AgentState>; revision: string | null }
+
+const CONNECTION_SETTINGS = ['gatewayHost', 'gatewayPort', 'gatewayToken', 'proxy', 'lanShare', 'maskSecrets', 'autoTrimContext'] as const;
+const validTimestamp = (value: unknown): value is string => typeof value === 'string' && Number.isFinite(Date.parse(value));
+
 function validateProvider(provider: Provider): Provider {
   if (!provider || typeof provider.name !== 'string' || !provider.name.trim()) throw new Error('供应商名称不能为空');
   if (typeof provider.baseUrl !== 'string' || typeof provider.enabled !== 'boolean' || !Number.isFinite(provider.priority)) throw new Error('供应商地址、启用状态或优先级无效');
@@ -52,9 +57,21 @@ function validateProvider(provider: Provider): Provider {
 function validateGroup(group: RoutingGroup, providers: Provider[]): RoutingGroup {
   if (!group || typeof group.name !== 'string' || !group.name.trim() || !['order', 'rotate', 'weight', 'usage', 'pace', 'smart'].includes(group.mode)
       || typeof group.enabled !== 'boolean' || !Number.isInteger(group.retries) || group.retries < 0 || group.retries > 10 || !Array.isArray(group.members)) throw new Error('分组名称、路由策略或重试次数无效（重试为 0–10 次）');
-  if (group.members.some(member => !member || !providers.some(p => p.id === member.providerId) || !Number.isFinite(member.weight) || member.weight < 0
-      || (member.model !== null && member.model !== undefined && (typeof member.model !== 'string' || !member.model.trim())))) throw new Error('分组引用了不存在的供应商，或模型、权重无效');
-  return group;
+  if (group.name.trim().length > 80 || /[\\/?#\u0000-\u001f\u007f]/.test(group.name)) throw new Error('分组名称最多 80 字，不能包含斜线、问号、井号或控制字符');
+  if (group.members.some(member => !member || !providers.some(p => p.id === member.providerId) || !Number.isInteger(member.weight) || member.weight < 0 || member.weight > 1000
+      || (member.model !== null && member.model !== undefined && (typeof member.model !== 'string' || !member.model.trim() || /[\u0000-\u001f\u007f]/.test(member.model))))) throw new Error('分组引用了不存在的供应商，或模型、权重无效（权重为 0–1000 的整数）');
+  // Catalogs may change after a group was saved. Keep such groups editable and
+  // switchable; routing excludes removed explicit models until they are fixed.
+  return { ...group, name: group.name.trim() };
+}
+
+function uniqueGroupNames(groups: RoutingGroup[]): void {
+  const names = new Set<string>();
+  for (const group of groups) {
+    const name = group.name.trim().toLowerCase();
+    if (names.has(name) || groups.some(other => other.id !== group.id && other.id.toLowerCase() === name)) throw new Error('分组名称已存在或与其他分组 ID 冲突，请使用不同名称');
+    names.add(name);
+  }
 }
 
 function validUsageRecord(record: any): record is UsageRecord {
@@ -109,6 +126,7 @@ export const DEFAULT_SETTINGS = (): Settings => ({
   autoCheckUpdate: true,
   adminUrl: 'https://ai.haowucm.cn/',
   autoSyncModels: true,
+  connectionUpdatedAt: nowIso(),
   updatedAt: nowIso(),
 });
 
@@ -243,6 +261,7 @@ export class AuroraStore {
       const idx = list.findIndex((g) => g.id === input.id);
       if (idx >= 0) {
         list[idx] = validateGroup({ ...list[idx], ...input } as RoutingGroup, this.listProviders());
+        uniqueGroupNames(list);
         this.groups.write([...list]);
         return list[idx];
       }
@@ -258,9 +277,10 @@ export class AuroraStore {
       notes: input.notes,
       createdAt: nowIso(),
     };
-    validateGroup(created, this.listProviders());
-    this.groups.write([...list, created]);
-    return created;
+    const valid = validateGroup(created, this.listProviders());
+    uniqueGroupNames([...list, valid]);
+    this.groups.write([...list, valid]);
+    return valid;
   }
 
   deleteGroup(id: string): void {
@@ -273,8 +293,14 @@ export class AuroraStore {
     const stored = this.settings.read();
     const settings = { ...DEFAULT_SETTINGS(), ...stored, updateUrl: GITHUB_RELEASE_API, autoSyncModels: true };
     let migrated = stored.updateUrl !== GITHUB_RELEASE_API || stored.autoSyncModels !== true;
+    if (!validTimestamp(stored.connectionUpdatedAt)) {
+      settings.connectionUpdatedAt = validTimestamp(stored.updatedAt) ? stored.updatedAt : nowIso();
+      migrated = true;
+    }
+    if (!validTimestamp(stored.updatedAt)) { settings.updatedAt = settings.connectionUpdatedAt!; migrated = true; }
     if (typeof stored.gatewayToken !== 'string' || !stored.gatewayToken.trim()) {
       settings.gatewayToken = randomBytes(24).toString('hex');
+      settings.connectionUpdatedAt = nowIso();
       migrated = true;
     }
     if (migrated) this.settings.write(settings);
@@ -282,7 +308,11 @@ export class AuroraStore {
   }
 
   saveSettings(patch: Partial<Settings>): Settings {
-    const next = { ...this.getSettings(), ...patch, updateUrl: GITHUB_RELEASE_API, autoSyncModels: true, updatedAt: nowIso() };
+    const before = this.getSettings();
+    const next = { ...before, ...patch, updateUrl: GITHUB_RELEASE_API, autoSyncModels: true, updatedAt: nowIso() };
+    // This revision is application-owned; an IPC payload cannot reuse old
+    // successes by backdating it or invalidate connections with a theme change.
+    next.connectionUpdatedAt = CONNECTION_SETTINGS.some(key => next[key] !== before[key]) ? next.updatedAt : before.connectionUpdatedAt;
     this.validateSettings(next);
     this.settings.write(next);
     return next;
@@ -324,6 +354,29 @@ export class AuroraStore {
     const lastSyncAt = nowIso();
     for (const state of states) all[state.id] = { ...all[state.id], ...state, lastSyncAt };
     this.agents.write(all);
+    return states.map(state => all[state.id]);
+  }
+
+  /** Read a fresh disk snapshot for reviewed client operations, including other clients. */
+  readAgentSnapshot(): AgentStateSnapshot {
+    const initialRevision = this.agents.revision();
+    this.agents.invalidate();
+    const states = structuredClone(this.agents.read());
+    // Validate that the parsed snapshot still describes the complete file.
+    // A concurrent edit invalidates the cache and stops the caller's preview.
+    const revision = this.agents.revision(states);
+    if (revision !== initialRevision) {
+      this.agents.invalidate();
+      throw new Error('客户端连接记录在读取期间已变化，请重新预览');
+    }
+    return { states, revision };
+  }
+
+  /** Selective permission recovery must never overwrite another client's new state. */
+  saveAgentsIfUnchanged(states: AgentState[], snapshot: AgentStateSnapshot): AgentState[] {
+    const all = { ...snapshot.states }, lastSyncAt = nowIso();
+    for (const state of states) all[state.id] = { ...all[state.id], ...state, lastSyncAt };
+    this.agents.writeIfUnchanged(all, snapshot.revision);
     return states.map(state => all[state.id]);
   }
 
@@ -439,7 +492,9 @@ export class AuroraStore {
       if (group.members.some(m => !m || !providers.some((p: Provider) => p.id === m.providerId) || !Number.isFinite(m.weight) || m.weight < 0)) throw new Error('路由分组引用了不存在的供应商或权重无效');
       validateGroup(group, providers);
     }
-    const settings: Settings = { ...DEFAULT_SETTINGS(), ...data.settings, updateUrl: GITHUB_RELEASE_API, autoSyncModels: true, updatedAt: nowIso() };
+    uniqueGroupNames(groups);
+    const importedAt = nowIso();
+    const settings: Settings = { ...DEFAULT_SETTINGS(), ...data.settings, updateUrl: GITHUB_RELEASE_API, autoSyncModels: true, connectionUpdatedAt: importedAt, updatedAt: importedAt };
     if (!settings.gatewayToken) settings.gatewayToken = randomBytes(24).toString('hex');
     this.validateSettings(settings);
     const plugins = data.plugins as PluginRecord[];
@@ -454,8 +509,10 @@ export class AuroraStore {
     for (const [id, value] of Object.entries(data.agents || {})) {
       const state = value as AgentState;
       if (!validId(id) || !state || typeof state !== 'object') throw new Error('备份中的客户端信息无效');
+      if (state.permissionMode !== undefined && state.permissionMode !== 'preserve' && state.permissionMode !== 'full-access') throw new Error('备份中的客户端权限模式无效');
+      if (state.skipOnboarding !== undefined && typeof state.skipOnboarding !== 'boolean') throw new Error('备份中的首次登录引导选项无效');
       const local = localAgents[id];
-      agents[id] = { id: id as AgentState['id'], connected: false, providerId: state.providerId, model: state.model, modelMap: state.modelMap, mode: state.mode,
+      agents[id] = { id: id as AgentState['id'], connected: false, providerId: state.providerId, model: state.model, modelMap: state.modelMap, mode: state.mode, authMode: state.authMode, permissionMode: state.permissionMode, skipOnboarding: state.skipOnboarding,
         backupPath: local?.backupPath, configPath: local?.configPath, pendingReapply: !!(local?.backupPath && (local.connected || local.pendingReapply)) };
     }
     const before = this.exportAll();

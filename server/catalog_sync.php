@@ -207,7 +207,7 @@ final class CatalogSyncService
             catch (Throwable $error) {
                 // The public catalog is already committed (or the selected models already
                 // existed). Report that outcome accurately; a retry only repairs metadata.
-                error_log('Aurora curated catalog committed; audit write failed: ' . get_class($error));
+                error_log('yunqiao.me curated catalog committed; audit write failed: ' . get_class($error));
                 return ['ok' => true, 'added' => $added, 'version' => $catalog['version'] ?? 0, 'auditSaved' => false,
                     'warning' => '精选目录已生效，但同步审计未保存。请检查数据目录写入权限或磁盘空间，再选择相同模型重试补记；不会重复添加模型。'];
             }

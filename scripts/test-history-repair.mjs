@@ -93,6 +93,47 @@ try {
   const selectedArchive = await alternate.service.preview({ scope: 'archived' });
   check('Empty scopes are reported honestly without creating backups', () => assert.equal(selectedArchive.summary.selected, 0));
 
+  const renamed = fixture('yunqiao-provider');
+  const renamedConfig = 'model_provider = "yunqiao"\n[model_providers.yunqiao]\nname = "云桥 AI"\n[model_providers.aurora]\nname = "Legacy provider"\n';
+  write(path.join(renamed.home, 'config.toml'), renamedConfig);
+  const legacy = renamed.add(80, { provider: 'aurora', catalog: true });
+  const legacyArchived = renamed.add(81, { provider: 'aurora', archived: true });
+  const official = renamed.add(82, { provider: 'openai' });
+  renamed.db.prepare('UPDATE local_thread_catalog SET model_provider=? WHERE host_id=? AND thread_id=?').run('aurora', 'local-machine', legacy.id);
+  const renamedInventory = await renamed.service.providers();
+  const renamedPreview = await renamed.service.preview({ sourceProvider: 'aurora', targetProvider: 'yunqiao', scope: 'all' });
+  check('New yunqiao configuration discovers legacy aurora histories without changing them during preview', () => {
+    assert(renamedInventory.ok, renamedInventory.message); assert.equal(renamedInventory.currentProvider, 'yunqiao');
+    assert(renamedInventory.targets.some(t => t.id === 'yunqiao' && t.current));
+    assert.equal(renamedInventory.sources.find(s => s.id === 'aurora').count, 2);
+    assert(renamedPreview.ok, renamedPreview.message); assert.equal(renamedPreview.summary.repairable, 2);
+    assert.equal(read(legacy.file), legacy.source); assert.equal(read(legacyArchived.file), legacyArchived.source);
+    assert.equal(renamed.db.prepare('SELECT model_provider FROM threads WHERE id=?').get(legacy.id).model_provider, 'aurora');
+  });
+  const renamedApplied = await renamed.service.apply({ ...renamedPreview.options, revision: renamedPreview.revision });
+  check('Explicit aurora to yunqiao migration updates active/archive indexes and preserves official history and message bytes', () => {
+    assert(renamedApplied.ok, renamedApplied.message); assert.equal(renamedApplied.updated, 2);
+    for (const session of [legacy, legacyArchived]) {
+      assert.equal(JSON.parse(read(session.file).split('\r\n')[0]).payload.model_provider, 'yunqiao');
+      assert.equal(read(session.file).split('\r\n').slice(1).join('\r\n'), session.source.split('\r\n').slice(1).join('\r\n'));
+      assert.equal(renamed.db.prepare('SELECT model_provider FROM threads WHERE id=?').get(session.id).model_provider, 'yunqiao');
+    }
+    assert.equal(renamed.db.prepare('SELECT model_provider FROM local_thread_catalog WHERE host_id=? AND thread_id=?').get('local-machine', legacy.id).model_provider, 'yunqiao');
+    assert.equal(read(official.file), official.source); assert.equal(renamed.db.prepare('SELECT model_provider FROM threads WHERE id=?').get(official.id).model_provider, 'openai');
+    assert.equal(read(path.join(renamed.home, 'config.toml')), renamedConfig);
+  });
+  const renamedRestore = await renamed.service.restorePreview({ backupId: renamedApplied.backupId });
+  const renamedRestored = await renamed.service.restore({ backupId: renamedApplied.backupId, revision: renamedRestore.revision });
+  check('Provider rename migration restores the exact legacy files and indexes', () => {
+    assert(renamedRestored.ok, renamedRestored.message);
+    for (const session of [legacy, legacyArchived]) {
+      assert.equal(read(session.file), session.source);
+      assert.equal(renamed.db.prepare('SELECT model_provider FROM threads WHERE id=?').get(session.id).model_provider, 'aurora');
+    }
+    assert.equal(renamed.db.prepare('SELECT model_provider FROM local_thread_catalog WHERE host_id=? AND thread_id=?').get('local-machine', legacy.id).model_provider, 'aurora');
+  });
+  renamed.db.close();
+
   const regions = fixture('provider-regions');
   const configFile = path.join(regions.home, 'config.toml');
   const config = `\uFEFFprofile = "工作区"\nmodel_provider = "aurora"\n[model_providers.aurora]\nname = "Aurora"\n[model_providers."国内.中转"]\nname = "国内模型"\n[model_providers.codex_plus_managed]\nname = "Internal"\n[model_providers]\nbroken = "not a provider table"\n[profiles."工作区"]\nmodel_provider = "profile.relay"\n[profiles."工作区".model_providers."profile.relay"]\nname = "工作供应商"\n[profiles.inactive.model_providers.hidden]\nname = "不可选"\n`;

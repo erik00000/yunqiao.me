@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import vm from 'node:vm';
+import { spawnSync } from 'node:child_process';
 import { build } from 'esbuild';
 
 // These tests mock macOS system APIs. Passing on another OS is not native macOS validation.
@@ -12,7 +13,7 @@ let checks = 0;
 const check = async (name, run) => { await run(); checks++; console.log(`PASS ${name}`); };
 try {
   const output = path.join(temporary, 'mac.cjs');
-  await build({ stdin: { contents: "export * from './src/main/clientLifecycleMac.ts'; export { resolveMacApplication } from './src/core/desktopDetection.ts';", resolveDir: process.cwd(), loader: 'ts' }, outfile: output, bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent' });
+  await build({ stdin: { contents: "export * from './src/main/clientLifecycleMac.ts'; export { resolveMacApplication } from './src/core/desktopDetection.ts'; export { getAdapter } from './src/core/agents/adapters.ts';", resolveDir: process.cwd(), loader: 'ts' }, outfile: output, bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent' });
   const api = createRequire(import.meta.url)(output);
   const definition = { kind: 'desktop', name: 'Claude', binaries: ['Claude'] };
   let sequence = 0;
@@ -106,13 +107,49 @@ try {
     const f = fixture(); const target = await f.driver.resolveTarget('claude-desktop', definition, { installed: true, configured: false, command: f.bundle });
     await f.driver.startDesktop(target); assert.deepEqual(f.state.calls, [{ file: '/usr/bin/open', args: ['-n', '-a', target.bundlePath] }]);
   });
-  await check('Terminal receives only a literal home-directory change and fixed executable', async () => {
+  await check('Terminal receives literal paths and the isolated native configuration directory', async () => {
     const f = fixture(); const command = path.join(f.home, 'codex'); fs.writeFileSync(command, '#!/bin/sh\nexit 0\n', { mode: 0o700 });
     const target = await f.driver.resolveTarget('codex-cli', { kind: 'cli', name: 'Codex', binaries: ['codex'] }, { installed: true, configured: false, command });
-    await f.driver.openTerminal(target, f.home); const request = JSON.parse(f.state.calls[0].args.at(-1)); assert.equal(request.terminal, '/System/Applications/Utilities/Terminal.app'); assert.equal(request.command, api.macTerminalCommand(fs.realpathSync(command), f.home));
+    await f.driver.openTerminal(target, f.home); const request = JSON.parse(f.state.calls[0].args.at(-1)); assert.equal(request.terminal, '/System/Applications/Utilities/Terminal.app'); assert.equal(request.command, api.macTerminalCommand(fs.realpathSync(command), f.home, { CODEX_HOME: path.join(f.home, '.codex') }));
     assert(request.command.includes("'\"'\"'")); assert(!request.command.includes('kill')); assert(!request.command.includes('--resume'));
     assert.equal(api.macTerminalCommand('/tmp/a;$(touch bad)/codex', '/tmp/a b'), "cd -- '/tmp/a b' && '/tmp/a;$(touch bad)/codex'");
     assert.throws(() => api.macTerminalCommand('/tmp/codex\nwhoami', f.home));
+  });
+  await check('Terminal pins custom and default config directories without exposing credentials or unrelated overrides', async () => {
+    for (const [agentId, binary, key, folder] of [['codex-cli', 'codex', 'CODEX_HOME', '.codex'], ['claude-code', 'claude', 'CLAUDE_CONFIG_DIR', '.claude']]) {
+      const f = fixture({ isolatedHome: () => undefined });
+      const command = path.join(f.home, binary); fs.writeFileSync(command, '#!/bin/sh\nexit 0\n', { mode: 0o700 });
+      const target = await f.driver.resolveTarget(agentId, { kind: 'cli', name: binary, binaries: [binary] }, { installed: true, configured: false, command });
+      const custom = path.join(f.home, "custom ' config; $(touch no) `id`");
+      f.host.configurationEnvironment = () => ({ [key]: custom, OPENAI_API_KEY: 'fixture-secret-api-key', ANTHROPIC_AUTH_TOKEN: 'fixture-secret-auth', GEMINI_CLI_HOME: '/unrelated/gemini' });
+      await f.driver.openTerminal(target, f.home);
+      let request = JSON.parse(f.state.calls.at(-1).args.at(-1));
+      assert.equal(request.command, api.macTerminalCommand(fs.realpathSync(command), f.home, { ...(agentId === 'claude-code' ? { HOME: f.home } : {}), [key]: custom }));
+      assert(!request.command.includes('fixture-secret')); assert(!request.command.includes('GEMINI_CLI_HOME'));
+      f.host.configurationEnvironment = () => ({}); await f.driver.openTerminal(target, f.home);
+      request = JSON.parse(f.state.calls.at(-1).args.at(-1));
+      assert.equal(request.command, api.macTerminalCommand(fs.realpathSync(command), f.home, agentId === 'claude-code' ? { HOME: f.home, CLAUDE_CONFIG_DIR: undefined } : { [key]: path.join(f.home, folder) }));
+      if (agentId === 'claude-code') {
+        for (const isolated of [undefined, f.home]) {
+          f.host.isolatedHome = () => isolated; f.host.configurationEnvironment = () => ({ CLAUDE_CONFIG_DIR: isolated ? custom : path.join(f.home, '.claude') });
+          await f.driver.openTerminal(target, f.home); const defaultRequest = JSON.parse(f.state.calls.at(-1).args.at(-1));
+          assert.equal(defaultRequest.command, api.macTerminalCommand(fs.realpathSync(command), f.home, { HOME: f.home, CLAUDE_CONFIG_DIR: undefined }));
+          const adapterEnvironment = { HOME: f.home, USERPROFILE: f.home, ...(isolated ? { AURORA_CLIENT_HOME: isolated, CLAUDE_CONFIG_DIR: custom } : { CLAUDE_CONFIG_DIR: path.join(f.home, '.claude') }) };
+          const adapterPaths = spawnSync(process.execPath, ['-e', 'process.stdout.write(JSON.stringify(require(process.argv[1]).getAdapter("claude-code").configPaths()))', output], { env: adapterEnvironment, encoding: 'utf8', windowsHide: true });
+          assert.equal(adapterPaths.status, 0, adapterPaths.stderr);
+          assert.deepEqual(JSON.parse(adapterPaths.stdout), [path.join(f.home, '.claude', 'settings.json'), path.join(f.home, '.claude.json')]);
+        }
+        f.host.isolatedHome = () => undefined;
+        const customPaths = spawnSync(process.execPath, ['-e', 'process.stdout.write(JSON.stringify(require(process.argv[1]).getAdapter("claude-code").configPaths()))', output], { env: { HOME: f.home, USERPROFILE: f.home, CLAUDE_CONFIG_DIR: custom }, encoding: 'utf8', windowsHide: true });
+        assert.equal(customPaths.status, 0, customPaths.stderr);
+        assert.deepEqual(JSON.parse(customPaths.stdout), [path.join(custom, 'settings.json'), path.join(custom, '.claude.json')]);
+      }
+      f.host.configurationEnvironment = () => ({ [key]: 'relative-private-path' }); const count = f.state.calls.length;
+      await assert.rejects(() => f.driver.openTerminal(target, f.home), error => /配置目录无效/.test(error.message) && !error.message.includes('private'));
+      assert.equal(f.state.calls.length, count);
+    }
+    assert.equal(api.macTerminalCommand('/tmp/codex', '/tmp/a b', { CODEX_HOME: "/tmp/config ' quoted;$(id)" }), "cd -- '/tmp/a b' && /usr/bin/env 'CODEX_HOME=/tmp/config '\"'\"' quoted;$(id)' '/tmp/codex'");
+    for (const configuration of [{ OPENAI_API_KEY: '/must-not-export' }, { CODEX_HOME: '/tmp/line\nbreak' }, { CLAUDE_CONFIG_DIR: 'relative' }]) assert.throws(() => api.macTerminalCommand('/tmp/codex', '/tmp', configuration));
   });
   await check('Automation denial is explicit and never exposes native exception content', async () => {
     const f = fixture(); const command = path.join(f.home, 'codex'); fs.writeFileSync(command, '#!/bin/sh\n', { mode: 0o700 });

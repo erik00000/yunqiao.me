@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { memo, startTransition, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import type { PageProps } from '../App';
 import { Btn, Empty, Ico, useToast, copyText } from '../components/ui';
 import { SessionSummary, call, fmtBytes, fmtTime } from '../lib/api';
@@ -10,12 +10,22 @@ interface Msg {
   model?: string;
   ts?: string;
 }
+const Message = memo(function Message({ message }: { message: Msg }) {
+  const [expanded, setExpanded] = useState(false);
+  const long = message.text.length > 5000;
+  return <div className={`chat-msg ${message.role}`} style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 120px' }}>
+    <div className="who">{message.role === 'user' ? '用户' : message.role === 'assistant' ? '助手' : message.role}{message.ts ? ' · ' + fmtTime(message.ts) : ''}</div>
+    {long && !expanded ? message.text.slice(0, 5000) : message.text}
+    {long && <div style={{ marginTop: 10 }}><Btn size="sm" onClick={() => setExpanded(value => !value)}>{expanded ? '收起长消息' : `展开完整消息（${message.text.length} 字符）`}</Btn></div>}
+  </div>;
+});
 
 export default function Sessions({}: PageProps) {
   const toast = useToast();
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState('');
+  const deferredQuery = useDeferredValue(q);
   const [active, setActive] = useState<SessionSummary | null>(null);
   const [repairing, setRepairing] = useState(false);
   const [messages, setMessages] = useState<Msg[]>([]);
@@ -24,6 +34,7 @@ export default function Sessions({}: PageProps) {
   const [providerFilter, setProviderFilter] = useState('');
   const [sessionKind, setSessionKind] = useState<'main' | 'subagent' | 'all'>('main');
   const [visible, setVisible] = useState(100);
+  const [visibleMessages, setVisibleMessages] = useState(50);
   const readingPath = useRef('');
   const readSequence = useRef(0);
   const scanSequence = useRef(0);
@@ -34,7 +45,7 @@ export default function Sessions({}: PageProps) {
     try {
       const next = await call<SessionSummary[]>('sessions.scan');
       if (sequence !== scanSequence.current) return;
-      setSessions(next);
+      startTransition(() => setSessions(next));
       const selected = next.find(session => session.path === readingPath.current) || null;
       setActive(selected);
       if (!selected) {
@@ -57,7 +68,7 @@ export default function Sessions({}: PageProps) {
   }, []);
 
   const matching = useMemo(() => {
-    const key = q.trim().toLowerCase();
+    const key = deferredQuery.trim().toLowerCase();
     return sessions.filter(
       (s) => (agentFilter === 'all' || s.agent === agentFilter) && (!providerFilter || s.modelProvider === providerFilter) && (!key ||
         s.title.toLowerCase().includes(key) ||
@@ -67,8 +78,8 @@ export default function Sessions({}: PageProps) {
         (s.subagentId || '').toLowerCase().includes(key) ||
         s.id.toLowerCase().includes(key)),
     );
-  }, [sessions, q, agentFilter, providerFilter]);
-  const subagentCount = matching.filter(s => s.isSubagent).length;
+  }, [sessions, deferredQuery, agentFilter, providerFilter]);
+  const subagentCount = useMemo(() => matching.filter(s => s.isSubagent).length, [matching]);
   const list = useMemo(() => matching.filter(s => sessionKind === 'all' || !!s.isSubagent === (sessionKind === 'subagent')), [matching, sessionKind]);
   useEffect(() => setVisible(100), [q, agentFilter, providerFilter, sessionKind]);
   const providerCounts = useMemo(() => sessions.reduce<Record<string, number>>((counts, session) => {
@@ -80,11 +91,12 @@ export default function Sessions({}: PageProps) {
     const sequence = ++readSequence.current;
     setActive(s);
     setMessages([]);
+    setVisibleMessages(50);
     setReading(true);
     readingPath.current = s.path;
     try {
       const next = await call<Msg[]>('sessions.read', { path: s.path });
-      if (sequence === readSequence.current) setMessages(next);
+      if (sequence === readSequence.current) startTransition(() => setMessages(next));
     } catch (e: any) {
       if (sequence === readSequence.current) toast.push('读取失败：' + e.message, 'bad');
     } finally {
@@ -92,7 +104,7 @@ export default function Sessions({}: PageProps) {
     }
   }
 
-  const parents = active?.parentSessionId ? sessions.filter(s => s.agent === active.agent && s.id === active.parentSessionId && s.path !== active.path && (active.agent !== 'Claude Code' || !s.isSubagent)) : [];
+  const parents = useMemo(() => active?.parentSessionId ? sessions.filter(s => s.agent === active.agent && s.id === active.parentSessionId && s.path !== active.path && (active.agent !== 'Claude Code' || !s.isSubagent)) : [], [active, sessions]);
   // Duplicate IDs can exist across projects or imported logs. Never pick an arbitrary parent.
   const parent = parents.length === 1 ? parents[0] : undefined;
   const parentLabel = active?.agent === 'Claude Code' ? '所属主会话' : '父会话';
@@ -106,10 +118,10 @@ export default function Sessions({}: PageProps) {
     open(parent);
   }
 
-  const byAgent = sessions.reduce<Record<string, number>>((a, s) => {
+  const byAgent = useMemo(() => sessions.reduce<Record<string, number>>((a, s) => {
     a[s.agent] = (a[s.agent] ?? 0) + 1;
     return a;
-  }, {});
+  }, {}), [sessions]);
 
   return (
     <>
@@ -229,15 +241,8 @@ export default function Sessions({}: PageProps) {
                 </Btn>
               </div>
               <div className="scroll-y" style={{ maxHeight: '60vh' }}>
-                {messages.map((m, i) => (
-                  <div key={i} className={`chat-msg ${m.role}`}>
-                    <div className="who">
-                      {m.role === 'user' ? '用户' : m.role === 'assistant' ? '助手' : m.role}
-                      {m.ts ? ' · ' + fmtTime(m.ts) : ''}
-                    </div>
-                    {m.text}
-                  </div>
-                ))}
+                {messages.slice(0, visibleMessages).map((message, index) => <Message key={`${active.path}:${index}`} message={message} />)}
+                {messages.length > visibleMessages && <Btn size="sm" onClick={() => setVisibleMessages(count => count + 50)}>继续显示消息（还剩 {messages.length - visibleMessages} 条）</Btn>}
                 {messages.length === 0 && <div style={{ color: 'var(--muted)', fontSize: 12 }}>{reading ? '读取中…' : '此文件中没有可显示的文本消息'}</div>}
               </div>
             </>

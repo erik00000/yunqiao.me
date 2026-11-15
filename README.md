@@ -1,105 +1,74 @@
 # 云桥 AI · yunqiao.me
 
-以客户端为起点的 AI 工作空间：**选客户端 → 连接供应商 → 选择模型 → 预览并应用**。
+**解锁桌面插件市场，把客户端、供应商、模型和历史会话放进一个中文工作空间。**
 
-Windows / macOS 桌面端使用 Electron + React + TypeScript；iOS 为 Capacitor 伴侣端，连接电脑或服务器上的网关。0.6.0 正在本地功能验证，公开下载为 0.5.0 预览版。
+从你正在使用的客户端开始：选择 Claude Code、兼容的 ChatGPT 桌面版或 Codex CLI，连接自己的 API 供应商，选好模型，预览后应用。支持国内外模型服务与自定义中转地址，提供浅色、深色和跟随系统的界面。
 
-最新调试入口及双平台验证范围见 [Windows / macOS 兼容性](docs/DESKTOP-PLATFORMS.md)；此前记录见 [Windows 本地功能验收](docs/LOCAL-VALIDATION-0.6.0.md)。 本轮修复及后续优先级见 [工程审查记录](docs/ENGINEERING-AUDIT-2026-11-15.md)。
+[下载](https://github.com/jxb412/yunqiao.me/releases) · [安装说明](INSTALLATION.md) · [使用指南](USER-GUIDE.md) · [反馈问题](https://github.com/jxb412/yunqiao.me/issues) · [用户讨论](https://github.com/jxb412/yunqiao.me/discussions)
 
-公开仓库：[jxb412/aurora](https://github.com/jxb412/aurora) · [下载预览版 0.5.0](https://github.com/jxb412/aurora/releases/tag/v0.5.0) · [构建记录](https://github.com/jxb412/aurora/actions) · [用户讨论](https://github.com/jxb412/aurora/discussions)
+> 文档更新于 **2026 年 11 月 16 日**，介绍 **0.6.0** 的功能。Windows 与 macOS 构建产物将在 [GitHub Actions](https://github.com/jxb412/yunqiao.me/actions/workflows/build.yml) 成功完成后提供下载；正式 Release 与公开版本以[下载页](https://github.com/jxb412/yunqiao.me/releases)为准。旧版可能不包含下文全部功能。
 
-![客户端工作台](docs/images/clients-v0.6.png)
+![云桥 AI 客户端工作台](docs/images/clients-v0.6.png)
 
-## 已实现
+## 能做什么
 
-- **已有配置自动发现**：启动、运行期间及回到窗口时识别已支持客户端的 API 配置，去重加入供应商，标明来源；保留手工编辑与删除选择。官方 OAuth 单独显示为本机账号，不转换为通用 API Key。
-- **官方账号与中转共存**：含 Codex 配置能力的 ChatGPT 桌面版和 Codex CLI 可保留官方身份，在同一目录选择官方或第三方模型。官方请求直达固定官方后端，第三方请求重建供应商认证；本机 auth 文件始终由原客户端维护。需先存在可信的本机官方模型目录。
-- **客户端工作台**：分类、搜索、本地检测；向导内新增供应商、拉取远端预设、选择模型、测试连接、查看脱敏配置差异、自动备份、恢复原配置。共享编程配置可直接应用，无需先定位桌面程序；重启和增强另行检测。见 [配置目录与接入流程](docs/CLIENT-CONFIGURATION.md)。
-- **厂商与供应商**：首次启动拉取官方 Web 目录，后续启动共用缓存并后台刷新；接入向导、添加供应商和厂商页共用同一列表。支持搜索、地区筛选、批量导入、多密钥和冷却。默认模型有逐项官方来源记录。
-- **模型管理**：跨供应商批量选择、编辑能力/价格/上下文、预览删除影响、保护正在使用的客户端与分组引用；修改前保留备份。应用到 ChatGPT / Codex 编程配置时，自动压缩阈值按上下文的 90% 同步，单项与批量编辑均可预览计算值。未知价格保持未知。
-- **本地网关**：Anthropic Messages、OpenAI Chat、OpenAI Responses、Gemini；同协议原生透传，跨协议转换；分组路由、重试和请求统计。
-- **历史会话**：阅读/搜索/导出，按原生 `model_provider` 区域筛选；选择来源和目标区域迁移部分或批量会话，同步日志与本地索引，支持当前/归档范围、变更预览、备份恢复和冲突保护。另提供原生消息索引修复。详见 [区域迁移](docs/HISTORY-PROVIDER-MIGRATION.md)。
-- **扩展**：提供 32 项内置增强及 5 个完整拓展包，连接兼容桌面后按实际状态启用；公开/完整插件市场、插件入口解锁、主题、用量状态栏及原生资源管理。已安装版本、更新、缺失及下架状态分别展示。网关中间件支持参数校验、执行失败保护和实际运行状态；另有 MCP、Skills 和提示词工作台。每项标明兼容性，未适配项不能假开启。
-- **实时用量**：进行中的请求、输入/输出、缓存读写与命中率、完成日志；原生桌面用量取自实际 token_count。上游未报告的数据不显示为零。
-- **云桥会员**：平台登录/两步验证、客户端安装绑定、首次使用 $10 赠金、选择会员分组并添加 API 供应商；后端固定金额、账户/安装唯一约束、幂等核销与管理员核对。
-- **设置**：浅色/深色/跟随系统、强调色、托盘、自启、网关与代理、访问令牌、更新检查、导入导出配置。
-- **远程管理**：认证后的 Web 控制台与 iOS 内置伴侣 UI；公开目录不包含个人密钥，远程管理返回值脱敏。
+1. **插件市场解锁。** 为兼容的桌面客户端开放插件入口，浏览公开市场和完整索引，安装、更新与启停插件。提供中文界面、主题、模型分组、会话导出、历史轮次补全等增强，并显示每项插件是否真正生效。需要服务授权的插件仍按其要求登录。
+2. **按客户端配置中转。** 先选客户端，再选或添加供应商和模型。向导支持已有配置发现、云端厂商预设、上游测试、本地网关测试、配置预览、自动备份和恢复；WorkBuddy、CodeBuddy、Kimi、OpenCode 和 Qwen 提供各自的手动接入步骤与示例。
+3. **网关与直连任选。** 本地网关支持常用模型协议转换、多密钥轮换、路由分组和用量统计；符合条件时可直连供应商。兼容的 ChatGPT / Codex 编程客户端还可保留官方账号，与第三方模型共存。
+4. **查看当前连接与权限。** 首页显示客户端、供应商、模型、可观测的最近成功请求和余额；桌面应用可重新启动，命令行工具可在新终端打开。支持的编程客户端可预览并单独恢复原执行权限，保留供应商连接。
+5. **找回与整理历史。** 搜索、阅读和导出本机会话，区分主会话与子任务；对 Codex 编程会话提供供应商区域迁移、路径检查和消息索引修复，执行前可预览，执行后可按备份恢复。
+6. **统一管理模型、余额和使用量。** 厂商目录优先展示 OpenAI、Anthropic、Google，再展示其他国际、国内、中转和本地服务。同步供应商模型，分页查找并批量编辑能力、价格与上下文；查询支持接口的供应商余额和各 Key 额度，查看实时请求、Token、缓存命中与估算费用。
+7. **按自己的习惯使用。** 管理 MCP、Skills 与全局提示词，调整外观、托盘、自启、代理和网关设置，导入导出配置；通过远程控制台查看电脑上的工作空间。
+8. **会员登录自动续期。** 用邮箱和密码登录、完成所需验证后，在平台支持时后台续期，无需因短期访问令牌到期而反复登录。页面会说明续期状态，手动绑定访问令牌的方式需到期后重新绑定；会员活动和额度以平台实时结果为准。
 
-## 客户端能力
+本地客户端识别、历史与资源扫描在后台进行，扫描期间可继续切换页面。模型列表分页展示，长会话分批显示并可展开完整消息；桌面工作台按当前标签读取内容，减少进入页面时的等待。
 
-| 客户端 | 当前接入方式 |
+需要多家服务共同提供一个模型入口时，在 **路由分组** 创建分组并按 **接入参数** 配置客户端，模型名使用 `group/分组名`。可选依次、轮换、按权重、用得少的优先、额度余量优先、健康与优先级六种策略；生效条件与重试边界见[使用指南](USER-GUIDE.md#7-路由mcpskills-与提示词)。
+
+## 第一次使用
+
+1. 安装并打开云桥 AI，进入 **客户端接入**，点击目标客户端的 **开始配置**。
+2. 选择已有供应商，或填写供应商给出的 API 地址、API Key 和模型。厂商目录可帮助填写预设。
+3. 选择模型和接入方式。通常使用 **本地网关**；不需要网关功能时，可选择界面允许的 **直连供应商**。
+4. 测试后点击 **预览配置**。自动配置的客户端点击 **备份并应用配置**；手动接入的客户端按专属指南选择版本、复制参数或配置示例，在原客户端完成设置。测试可能产生少量费用。
+5. 重新启动客户端，发起一条对话。使用本地网关时，保持云桥 AI 运行。
+
+要使用插件，保存工作并完全退出原客户端，在 **插件中心 → 桌面插件与市场** 顶部的 **插件市场解锁** 中点击 **启用并连接**。确认 **已生效** 后点击 **浏览插件市场**。完整操作见[使用指南](USER-GUIDE.md)。
+
+## 支持哪些客户端
+
+| 客户端 | 使用方式 |
 | --- | --- |
-| Claude Code | 自动配置 settings.json，保留其他设置 |
-| Claude Desktop | 支持第三方配置的版本：写入 Claude-3p profile；具体平台/版本须支持该入口 |
-| Codex CLI | 自动配置共享的 Codex 配置，正确写入 TOML 顶层键与供应商表 |
-| ChatGPT 桌面版 | 自动备份并写入共享的 `.codex/config.toml`，遵循 `CODEX_HOME`；程序位置未知不阻止保存。桌面版本是否读取此配置另行验证，扩展需经本机调试接口验证 |
-| Gemini CLI | 自动配置环境文件，使用原生 Gemini 网关接口 |
-| WorkBuddy / DeepSeek API / Qwen / Kimi / OpenCode 等 | 按能力给出手动参数与文档；不猜测未证实的配置文件，也不把手动参数标记成自动接入成功 |
-| 不具备编程配置接口的 ChatGPT 纯聊天版 | 不读取上述共享编程配置；保存配置不表示纯聊天界面已接入第三方 API |
+| Claude Code | 自动配置 API 地址、密钥和模型，支持备份恢复 |
+| Claude Desktop | 支持第三方推理配置的版本可自动接入；以本机检测结果为准 |
+| Codex CLI | 自动配置 API、模型和上下文，可使用官方账号共存模式 |
+| ChatGPT 桌面版 / 原 Codex 桌面版 | 支持 Codex 编程配置的版本可配置第三方模型；桌面插件按版本检测兼容性 |
+| Gemini CLI | 自动配置 Gemini 接口和模型 |
+| WorkBuddy / CodeBuddy | WorkBuddy 提供自定义模型界面步骤，CodeBuddy CLI / IDE 提供独立配置示例 |
+| Kimi、OpenCode、Qwen Code | 提供对应协议、配置文件与启动步骤；OpenCode 区分 V1 / V2，Kimi 核对实际上下文容量 |
+| DeepSeek API 与其他兼容客户端 | 生成标准连接参数，需在支持自定义 API 的应用中手动填写 |
 
-客户端界面会展示自动配置、手动接入或官方登录状态，以及版本限制。厂商同名模型也可能具有不同能力，连接测试需要用户自己的有效 API Key。
+桌面客户端的第三方 API 和插件能力以实际版本为准。应用配置后请重启客户端并发起对话验证；专属工具、思考内容和旧会话续聊能力也取决于模型与客户端。详细说明见[使用指南](USER-GUIDE.md)。
 
-## 使用与构建
+## 下载与安装
 
-安装依赖后：
+| 平台 | 0.6.0 构建包 |
+| --- | --- |
+| Windows x64 | 安装版 `win-x64-setup.exe`、免安装版 `win-x64-portable.exe`、完整解压版 `win-x64.zip` |
+| macOS Apple Silicon | `mac-arm64.dmg`，适用于 Apple M 系列芯片 |
+| macOS Intel | `mac-x64.dmg`，适用于 Intel 处理器 |
+| iPhone / iPad | 目前没有可直接安装的正式 App，可通过浏览器连接电脑端 |
 
-```powershell
-pnpm install --frozen-lockfile
-npm run dev
-npm run build
-npm run package:win
-```
+在 [GitHub Actions](https://github.com/jxb412/yunqiao.me/actions/workflows/build.yml) 中选择成功完成的构建，下载 Windows 或对应芯片的 macOS 产物；正式安装包以[下载页](https://github.com/jxb412/yunqiao.me/releases)公布为准。Actions 下载的外层压缩包需先解压，具体文件名和步骤见[安装说明](INSTALLATION.md)。
 
-平台适配范围与原生验证见 [Windows / macOS 兼容性](docs/DESKTOP-PLATFORMS.md)。macOS 在 Mac 上执行 `npm run package:mac`，分别生成 Intel x64 和 Apple Silicon arm64 的 DMG；GitHub Actions 可选择 `macos` 构建。当前未配置 Apple Developer ID 签名与公证。
+Windows ZIP 版需完整解压后双击同目录的 `YunQiaoAI.exe`；portable 启动会显示准备提示。macOS 将应用拖入“应用程序”，未签名包的首次打开方法见[安装说明](INSTALLATION.md#安装和首次打开)。更新或切换包形式会保留已有本机数据。
 
-Windows 产物位于 `release/`：`YunQiaoAI-0.6.0-win-x64-setup.exe` 与 `YunQiaoAI-0.6.0-win-x64-portable.exe`。未配置代码签名证书。
+电脑端已运行时，可用手机浏览器访问远程控制台。局域网连接方法见[使用指南](USER-GUIDE.md)。
 
-无界面网关：
+## 数据与反馈
 
-```powershell
-npm run build
-node dist/main/gateway-cli.cjs --data ./gateway-data --port 3425
-```
+供应商密钥和配置保存在本机。云端目录提供公开的厂商信息；模型请求发送到你选择的服务。导出的配置包含密钥，请妥善保管。余额以供应商返回为准，用量费用按配置价格估算。
 
-令牌保存在该数据目录的 `settings.json`。Web 控制台与模型接口都需要令牌，API 使用 `Authorization: Bearer <gatewayToken>`；Anthropic/Gemini 兼容各自密钥头。公共 `/health` 只显示服务健康信息。
+遇到问题可提交[问题反馈](https://github.com/jxb412/yunqiao.me/issues)。请提供云桥版本、系统、客户端名称和版本、所选接入方式及错误提示，并遮住 API Key、访问令牌和个人会话内容。
 
-模型路由支持 `模型ID`、`供应商ID/模型ID`、`group/分组名`。向导写入明确供应商 ID，避免选好供应商后请求被同名模型误路由。
-
-## iOS
-
-见 [移动端说明](mobile/README.md)。移动界面内置于 App，可查看和管理已连接电脑上的客户端、供应商、会话及用量；API Key 留在电脑端，手机访问令牌仅保留当前运行会话。
-
-```bash
-cd mobile
-npm ci
-npm test
-npm run sync:ios
-npx cap open ios
-```
-
-原生编译必须使用 **macOS + Xcode**。仓库工作流在 macOS 上构建模拟器 `.app`，不会把源码或模拟器 ZIP 伪称可安装到 iPhone 的 IPA。真机分发还需要 Apple 开发者签名和描述文件。当前 Windows 工作区能生成 iOS 工程、构建 Web 资源，不能独立完成苹果原生编译。
-
-历史 0.5.0 已通过 [GitHub macOS 原生构建](https://github.com/jxb412/aurora/actions/runs/43617930882)，实际产出包含有效 Mach-O 的 iOS 16+ 模拟器应用及 iPhoneOS 未签名设备应用。设备 ZIP 需要签名后才能安装，不是已签名 IPA。Actions 手动运行可选 `ios`、`windows`、`macos` 或 `all`。
-
-## 验证
-
-```powershell
-npm run typecheck
-npm test
-node scripts/test-extensions.mjs --renderer
-npm run build
-node scripts/smoke.mjs
-python scripts/test-ui.py
-```
-
-客户端测试使用隔离的临时 home；网关测试使用本地模拟上游。UI 测试需要 Python Playwright，使用 Electron 与隔离数据目录，验证实际的配置、恢复、会话下载和认证流程。它们不会证明所有服务商或所有客户端版本都已通过真实付费 API 联调。
-
-0.6.0 的平台基础功能已通过 Windows 本地回归，以及 [Intel / Apple Silicon Mac 原生验证](https://github.com/jxb412/aurora/actions/runs/43689616128)，覆盖完整核心测试、原生启动/重启、界面和实际应用包。最新共享配置修复另见 [配置流程验证](docs/CLIENT-CONFIGURATION-VALIDATION.json)。本轮未发布新版或切换客户端下载指向。
-
-## 当前边界
-
-- 同协议原生路径尽量保留供应商专属字段。开启转换、隐私遮蔽或通用请求插件后，专属 hosted tools、加密 reasoning 和部分多模态能力不保证跨协议可用；不同供应商的思考签名不能伪造。
-- 历史可阅读不等于可以跨账号无损续聊。读取有大小/消息数量边界；没有永久后台全文索引。
-- 用量费用依据本地价格估算，额度策略依据已配置额度，不等同实时官方账单。
-- 桌面插件依赖实际版本的原生接口。收录全部上游入口不等于每项都适配；需要额外后台或尚未适配的项目会禁用并展示原因。具体兼容状态以界面提示为准。
-- 远程管理限制文件写入、自定义代码、密钥与敏感设置；这些操作需要桌面端完成。
+本项目按 [AGPL-3.0-only](LICENSE) 开源。[查看源码](https://github.com/jxb412/yunqiao.me) · [第三方许可](THIRD_PARTY_NOTICES.md)

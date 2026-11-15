@@ -13,14 +13,20 @@ export default function Usage({ state }: PageProps) {
   const [liveError, setLiveError] = useState('');
   const loadSequence = useRef(0);
   const mounted = useRef(false);
+  const summaryFlight = useRef<Promise<void> | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback((): Promise<void> => {
+    if (summaryFlight.current) return summaryFlight.current;
     const sequence = ++loadSequence.current;
-    const [sum, requests] = await Promise.allSettled([call<UsageSummary>('usage.summary', { days }), call<UsageRecord[]>('usage.recent')]);
-    if (!mounted.current || sequence !== loadSequence.current) return;
-    if (sum.status === 'fulfilled') setSummary(sum.value);
-    if (requests.status === 'fulfilled') setRecent(requests.value);
-    setSummaryError([sum.status === 'rejected' ? `用量统计：${sum.reason?.message || '读取失败'}` : '', requests.status === 'rejected' ? `请求日志：${requests.reason?.message || '读取失败'}` : ''].filter(Boolean).join('；'));
+    const flight = (async () => {
+      const [sum, requests] = await Promise.allSettled([call<UsageSummary>('usage.summary', { days }), call<UsageRecord[]>('usage.recent')]);
+      if (!mounted.current || sequence !== loadSequence.current) return;
+      if (sum.status === 'fulfilled') setSummary(sum.value);
+      if (requests.status === 'fulfilled') setRecent(requests.value);
+      setSummaryError([sum.status === 'rejected' ? `用量统计：${sum.reason?.message || '读取失败'}` : '', requests.status === 'rejected' ? `请求日志：${requests.reason?.message || '读取失败'}` : ''].filter(Boolean).join('；'));
+    })().finally(() => { if (summaryFlight.current === flight) summaryFlight.current = null; });
+    summaryFlight.current = flight;
+    return flight;
   }, [days]);
 
   useEffect(() => {
@@ -35,7 +41,7 @@ export default function Usage({ state }: PageProps) {
     const summaryTimer = setInterval(() => { if (!document.hidden) void load(); }, 8000);
     const off = window.aurora?.onUsage(() => { if (!document.hidden) void load(); });
     document.addEventListener('visibilitychange', refreshVisible);
-    return () => { alive = false; mounted.current = false; loadSequence.current++; off?.(); clearInterval(liveTimer); clearInterval(summaryTimer); document.removeEventListener('visibilitychange', refreshVisible); };
+    return () => { alive = false; mounted.current = false; loadSequence.current++; summaryFlight.current = null; off?.(); clearInterval(liveTimer); clearInterval(summaryTimer); document.removeEventListener('visibilitychange', refreshVisible); };
   }, [load]);
 
   const maxCost = Math.max(0.01, ...(summary?.byDay ?? []).map((d) => d.cost));

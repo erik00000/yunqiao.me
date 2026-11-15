@@ -13,7 +13,8 @@ import { extensionOperation } from './operations.js';
 import { planned } from '../agents/configFiles.js';
 function sourceKey(id:string):{source:MarketSource;id:string}|null{const m=/^(public|full):(.+)$/.exec(id);return m?{source:m[1] as MarketSource,id:m[2]}:null;}
 export async function listExtensions(store:AuroraStore,payload:any={}):Promise<any>{
-  const state=loadState(store),rt=runtimeFor(store),runtime=await rt.status(),client=await desktopInfo(state.connection.lastVersion,state.connection.exePath,state.connection.port);
+  const state=loadState(store),rt=runtimeFor(store);
+  const [runtime,client]=await Promise.all([rt.status(),desktopInfo(state.connection.lastVersion,state.connection.exePath,state.connection.port)]);
   const upstream=JSON.parse(fs.readFileSync(path.join(resourceRoot(),'UPSTREAM.json'),'utf8'));const applied=new Set(runtime.applied),errors=new Map(runtime.errors.map(e=>[e.id,e.message]));
   const missingConfig=new Map<string,string>(),dictation=dictationConfiguration(store).status,stepwise=stepwiseSettings(store).settings;
   if(dictation.enabled&&!dictation.configured)missingConfig.set('builtin:dictation',dictation.message);

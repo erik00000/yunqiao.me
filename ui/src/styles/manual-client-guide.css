@@ -1,0 +1,35 @@
+.manual-client-guide { display: grid; gap: 16px; min-width: 0; margin-top: 14px; }
+.manual-guide-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.manual-guide-heading h3 { margin: 4px 0 0; font-size: 17px; }
+.manual-guide-eyebrow { color: var(--muted); font-size: 12px; }
+.manual-guide-protocol { color: var(--accent); background: var(--panel-hi); border: 1px solid var(--stroke); padding: 5px 9px; border-radius: 8px; font-size: 11px; }
+.manual-guide-choice { display: grid; gap: 7px; color: var(--text-2); }
+.manual-guide-steps { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
+.manual-guide-steps li { display: flex; gap: 10px; align-items: flex-start; }
+.manual-guide-steps li > span { display: grid; place-items: center; flex: 0 0 24px; height: 24px; border-radius: 50%; color: var(--accent); background: var(--panel-hi); font-size: 12px; }
+.manual-guide-steps p { margin: 1px 0 0; color: var(--text-2); }
+.manual-guide-path, .manual-guide-command { padding: 12px; border: 1px solid var(--stroke); border-radius: 10px; display: grid; gap: 7px; min-width: 0; }
+.manual-guide-path > span, .manual-guide-command > span { color: var(--muted); font-size: 12px; }
+.manual-guide-path code, .manual-guide-command code { overflow-wrap: anywhere; white-space: pre-wrap; }
+.manual-guide-command .btn { justify-self: start; }
+.manual-guide-path p { margin: 0; }
+.manual-guide-fields { display: grid; border: 1px solid var(--stroke); border-radius: 12px; overflow: hidden; }
+.manual-guide-field { display: grid; grid-template-columns: 130px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--stroke); }
+.manual-guide-field:last-child { border: 0; }
+.manual-guide-field > span { color: var(--muted); font-size: 12px; }
+.manual-guide-field code { overflow-wrap: anywhere; font-size: 12px; }
+.manual-guide-document { display: grid; gap: 10px; min-width: 0; }
+.manual-guide-document-title { display: flex; justify-content: space-between; gap: 10px; }
+.manual-guide-document-title > span { font-size: 11px; color: var(--muted); }
+.manual-guide-document pre { max-height: 330px; overflow: auto; margin: 0; padding: 14px; border-radius: 10px; border: 1px solid var(--stroke); background: var(--bg-2); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.manual-guide-document p, .manual-client-guide > .hint { margin: 0; }
+.manual-guide-notices { margin: 0; padding-left: 18px; color: var(--muted); font-size: 12px; display: grid; gap: 6px; }
+.manual-guide-docs { display: flex; gap: 14px; flex-wrap: wrap; }
+.manual-guide-docs a { display: inline-flex; align-items: center; gap: 5px; color: var(--accent); font-size: 12px; }
+.manual-client-guide .notice { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 540px) {
+  .manual-guide-field { grid-template-columns: minmax(0, 1fr) auto; }
+  .manual-guide-field > span { grid-column: 1 / -1; }
+  .manual-guide-heading { align-items: flex-start; }
+  .manual-guide-document .btn { white-space: normal; }
+}

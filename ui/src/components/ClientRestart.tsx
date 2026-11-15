@@ -5,8 +5,8 @@ import { call, type AgentCatalogItem } from '../lib/api';
 import { Btn, Ico, Modal } from './ui';
 
 /** A desktop-only action. The host selects the executable and process scope. */
-export default function ClientRestart({ agent, onActiveChange }: {
-  agent: AgentCatalogItem; onActiveChange?: (active: boolean) => void;
+export default function ClientRestart({ agent, onActiveChange, primary = false }: {
+  agent: AgentCatalogItem; onActiveChange?: (active: boolean) => void; primary?: boolean;
 }) {
   const [checking, setChecking] = useState(false);
   const [executing, setExecuting] = useState(false);
@@ -62,7 +62,7 @@ export default function ClientRestart({ agent, onActiveChange }: {
 
   const close = () => { if (!working.current) setConfirmation(false); };
   return <div className="client-restart">
-    <div className="client-restart-row"><Btn size="sm" variant="ghost" disabled={active} onClick={() => { void check(); }}><Ico name={cli ? 'play' : 'refresh'} size={13} />{checking ? '正在检查…' : label}</Btn>{cli && <span className="hint">保留当前终端与会话</span>}</div>
+    <div className="client-restart-row"><Btn size="sm" variant={primary ? 'primary' : 'ghost'} disabled={active} onClick={() => { void check(); }}><Ico name={cli ? 'play' : 'refresh'} size={13} />{checking ? '正在检查…' : label}</Btn>{cli && <span className="hint">保留当前终端与会话</span>}</div>
     {error && !confirmation && <div className="client-restart-error" role="alert"><span>{error}</span><Btn size="sm" disabled={checking || executing} onClick={() => { void check(); }}>重新检查</Btn></div>}
     {message && <p className="client-restart-message" role="status">{message}</p>}
     {confirmation && createPortal(<Modal title={cli ? `在新终端打开 ${agent.name}` : `重新启动 ${agent.name}`} onClose={close} width={460} foot={<>

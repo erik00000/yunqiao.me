@@ -1,17 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import HistoryRepair from '../components/HistoryRepair';
 import ContextCompactHint from '../components/ContextCompactHint';
 import { defaultAutoCompactTokenLimit } from '../../../src/core/modelContext';
 import type { PageProps } from '../App';
-import { Btn, Empty, Field, Ico, Modal, Stat, Toggle, useToast } from '../components/ui';
+import { Btn, Empty, Field, Ico, Modal, Toggle, useToast } from '../components/ui';
 import { call, isWebMode } from '../lib/api';
 
-interface Diagnosis {
-  ok: boolean; message?: string; dbPath: string; dbExists: boolean; total: number;
-  currentProvider?: string; byProvider: Array<{ provider: string; count: number }>;
-  mismatch: number; missingRollouts: number;
-  samples: Array<{ id: string; title: string; provider: string; updatedAt: string; missing: boolean }>;
-}
 interface Asset { id: string; kind: 'plugin' | 'skill' | 'prompt' | 'mcp'; name: string; path?: string; description?: string; enabled: boolean; mutable?: boolean; }
 interface Flag { key: string; label: string; type: string; hint: string; options?: string[]; }
 const kinds = { skill: { label: 'Skills 技能', icon: 'bolt', hint: '发现本机已安装的 Codex 技能。', docs: 'https://github.com/openai/skills' }, mcp: { label: 'MCP 服务器', icon: 'plug', hint: '查看 Codex 已配置的工具服务。', docs: 'https://developers.openai.com/codex/mcp/' }, prompt: { label: '全局提示词', icon: 'chat', hint: '维护 AGENTS.md 中的工作约定。', docs: 'https://developers.openai.com/codex/guides/agents-md/' }, plugin: { label: '客户端插件', icon: 'puzzle', hint: '查看本机 ChatGPT / Codex 插件目录。', docs: 'https://developers.openai.com/codex/' } };
@@ -20,44 +14,61 @@ export default function CodexEnhance({ go }: PageProps) {
   const toast = useToast();
   const remote = isWebMode();
   const [tab, setTab] = useState<'assets' | 'diagnosis' | 'advanced'>('assets');
-  const [diag, setDiag] = useState<Diagnosis | null>(null);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [flags, setFlags] = useState<{ flags: Record<string, string | undefined>; schema: Flag[] } | null>(null);
   const [flagDrafts, setFlagDrafts] = useState<Record<string, string>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [loading, setLoading] = useState(false);
+  const [loadingTabs, setLoadingTabs] = useState<Record<string, boolean>>({});
+  const loading = !!loadingTabs[tab];
+  const loaded = useRef(new Set<string>());
+  const flights = useRef(new Map<string, Promise<void>>());
+  const lifecycle = useRef(0);
+  const alive = useRef(true);
   const [busy, setBusy] = useState('');
   const [search, setSearch] = useState('');
   const [editAgents, setEditAgents] = useState<string | null>(null);
   const [confirmRepair, setConfirmRepair] = useState(false);
 
-  async function load() {
-    if (remote) return;
-    setLoading(true);
-    const tasks = ['codex.assets', 'codex.diagnose', 'codex.flags'];
-    const results = await Promise.allSettled(tasks.map(action => call(action)));
-    const failures: Record<string, string> = {};
-    results.forEach((r, i) => {
-      if (r.status === 'rejected') { failures[tasks[i]] = String(r.reason?.message || r.reason); return; }
-      if (r.value?.ok === false) { failures[tasks[i]] = r.value.message || '读取失败，请重试'; return; }
-      if (i === 0) setAssets(r.value.assets || []);
-      if (i === 1) setDiag(r.value);
-      if (i === 2) { setFlags({ flags: r.value.flags || {}, schema: r.value.schema || [] }); setFlagDrafts(Object.fromEntries(Object.entries(r.value.flags || {}).map(([k, v]) => [k, String(v ?? '')]))); }
-    });
-    setErrors(failures); setLoading(false);
+  async function load(target = tab) {
+    if (remote || !alive.current || target === 'diagnosis') return;
+    const existing = flights.current.get(target);
+    if (existing) return existing;
+    const action = target === 'assets' ? 'codex.assets' : 'codex.flags', epoch = lifecycle.current;
+    setLoadingTabs(previous => ({ ...previous, [target]: true }));
+    let flight!: Promise<void>;
+    flight = (async () => {
+      try {
+        const result = await call(action);
+        if (!alive.current || lifecycle.current !== epoch) return;
+        if (result?.ok === false) throw new Error(result.message || '读取失败，请重试');
+        if (target === 'assets') setAssets(result.assets || []);
+        else { setFlags({ flags: result.flags || {}, schema: result.schema || [] }); setFlagDrafts(Object.fromEntries(Object.entries(result.flags || {}).map(([key, value]) => [key, String(value ?? '')]))); }
+        loaded.current.add(target);
+        setErrors(previous => { const next = { ...previous }; delete next[action]; return next; });
+      } catch (error: any) {
+        if (alive.current && lifecycle.current === epoch) setErrors(previous => ({ ...previous, [action]: error.message || '读取失败，请重试' }));
+      } finally {
+        if (flights.current.get(target) === flight) flights.current.delete(target);
+        if (alive.current && lifecycle.current === epoch) setLoadingTabs(previous => ({ ...previous, [target]: false }));
+      }
+    })();
+    flights.current.set(target, flight);
+    return flight;
   }
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; lifecycle.current++; flights.current.clear(); loaded.current.clear(); }; }, []);
+  useEffect(() => { if (!loaded.current.has(tab)) void load(tab); }, [tab]);
   async function perform(key: string, action: string, payload: unknown = {}, reload = true) {
     if (remote || busy) return;
     setBusy(key);
     try {
       const result = await call(action, payload);
+      if (!alive.current) return null;
       if (result?.ok === false) throw new Error(result.message || '操作未完成');
       if (result?.message) toast.push(result.message, 'ok');
       if (reload) await load();
       return result;
-    } catch (e: any) { toast.push(e.message || '操作未完成', 'bad'); return null; }
-    finally { setBusy(''); }
+    } catch (e: any) { if (alive.current) toast.push(e.message || '操作未完成', 'bad'); return null; }
+    finally { if (alive.current) setBusy(''); }
   }
   async function editPrompt() { const r = await perform('prompt-read', 'codex.readAgents', {}, false); if (r) setEditAgents(r.text || ''); }
   async function saveFlag(f: Flag) {
@@ -73,7 +84,7 @@ export default function CodexEnhance({ go }: PageProps) {
     return draft.trim() ? defaultAutoCompactTokenLimit(Number(draft)) === Number(savedLimit) : !savedLimit?.trim();
   }
   return <>
-    <div className="page-head"><div><div className="eyebrow">DESKTOP WORKSPACE</div><h1>桌面工作台</h1><p>管理本机扩展与工作约定，查看会话状态和客户端配置。</p></div><div className="actions"><Btn onClick={() => go('sessions')}><Ico name="chat" size={14} /> 历史会话</Btn><Btn disabled={remote || loading || !!busy} onClick={load}><Ico name="refresh" size={14} /> {loading ? '检测中…' : '重新检测'}</Btn></div></div>
+    <div className="page-head"><div><div className="eyebrow">DESKTOP WORKSPACE</div><h1>桌面工作台</h1><p>管理本机扩展与工作约定，查看会话状态和客户端配置。</p></div><div className="actions"><Btn onClick={() => go('sessions')}><Ico name="chat" size={14} /> 历史会话</Btn><Btn disabled={remote || loading || !!busy || tab === 'diagnosis'} onClick={() => { void load(); }}><Ico name="refresh" size={14} /> {loading ? '检测中…' : '重新检测'}</Btn></div></div>
     {remote ? <div className="card"><Empty icon="⌘" title="在电脑客户端管理本地资源" hint="远程控制台不开放本机插件、提示词和数据库写入。请在电脑上的云桥 AI 打开此页；远程查看会话可使用「历史会话」。" /></div> : <>
       <div className="row" style={{ marginBottom: 20, gap: 8 }}>{([['assets', '资源库', 'puzzle'], ['diagnosis', '会话诊断', 'chat'], ['advanced', '高级设置', 'gear']] as const).map(([id, title, icon]) => <Btn key={id} variant={tab === id ? 'primary' : 'default'} onClick={() => setTab(id)}><Ico name={icon} size={14} /> {title}</Btn>)}</div>
       {tab === 'assets' && <>
@@ -104,6 +115,6 @@ export default function CodexEnhance({ go }: PageProps) {
       </>}
     </>}
     {editAgents !== null && <Modal title="AGENTS.md · 全局提示词" sub="写下团队约定、输出语言和常用命令。已有文件会先备份，作用范围由 Codex 的指令规则决定。" onClose={() => !busy && setEditAgents(null)} width={760} foot={<><Btn disabled={!!busy} onClick={() => setEditAgents(null)}>取消</Btn><Btn variant="primary" disabled={!!busy} onClick={async () => { if (await perform('prompt-save', 'codex.writeAgents', { text: editAgents })) setEditAgents(null); }}>保存提示词</Btn></>}><textarea className="textarea mono" style={{ minHeight: 320 }} value={editAgents} onChange={e => setEditAgents(e.target.value)} placeholder={'# 工作约定\n- 使用简体中文回答\n- 修改代码前先了解项目规范'} /></Modal>}
-    {confirmRepair && <HistoryRepair onClose={() => setConfirmRepair(false)} onRepaired={load} />}
+    {confirmRepair && <HistoryRepair onClose={() => setConfirmRepair(false)} onRepaired={() => load()} />}
   </>;
 }

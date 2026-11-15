@@ -27,7 +27,7 @@ try {
 } catch (Throwable $error) {
     $errorMessage = '会员存储或配置不可用，请检查 PHP 扩展、配置文件权限与服务器日志。';
     $overview = ['enabled' => false, 'totals' => ['claimed' => 0, 'pending' => 0, 'review' => 0, 'amountUsd' => 0], 'grants' => []];
-    error_log('Aurora member administration failure: ' . get_class($error));
+    error_log('yunqiao.me member administration failure: ' . get_class($error));
 }
 function member_h($value): string { return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8'); }
 $labels = ['pending' => '待确认', 'claimed' => '已到账', 'review' => '待核对'];
@@ -48,5 +48,5 @@ $labels = ['pending' => '待确认', 'claimed' => '已到账', 'review' => '待�
 </td></tr><?php endforeach; ?>
 <?php if (!$overview['grants']): ?><tr><td colspan="6" class="empty">暂无赠金申请。会员首次在客户端领取后会显示在这里。</td></tr><?php endif; ?>
 </tbody></table></div></section><p class="footer small">余额和最终核销结果以云桥会员站点为准。此页面不会显示管理员密钥、登录令牌或客户 API Key。</p>
-</main><footer style="text-align:center;padding:20px;color:#7b8595;font-size:12px"><a href="https://github.com/jxb412/aurora/tree/v0.6.0" target="_blank" rel="noopener noreferrer">yunqiao.me · v0.6.0 对应源码</a> · <a href="https://github.com/jxb412/aurora/blob/v0.6.0/LICENSE" target="_blank" rel="noopener noreferrer">AGPL-3.0 许可</a></footer>
+</main><footer style="text-align:center;padding:20px;color:#7b8595;font-size:12px"><a href="https://github.com/jxb412/yunqiao.me/tree/main" target="_blank" rel="noopener noreferrer">yunqiao.me · 项目源码</a> · <a href="https://github.com/jxb412/yunqiao.me/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">AGPL-3.0 许可</a></footer>
 </body></html>

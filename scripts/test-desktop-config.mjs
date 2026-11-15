@@ -11,6 +11,9 @@ const scratch = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'aurora-de
 try {
   const bundle = path.join(scratch, 'api.cjs');
   await build({ stdin: { contents: "export * from './src/core/actions.ts'; export * from './src/core/store/index.ts'; export * from './src/core/agents/adapters.ts'; export { codexHome } from './src/core/codex.ts';", resolveDir: workspace, loader: 'ts' }, bundle: true, outfile: bundle, platform: 'node', format: 'cjs', logLevel: 'silent' });
+  for (const [input, output] of [['src/core/readOnlyWorker.ts', 'read-only-worker.cjs'], ['src/core/agents/detectionWorker.ts', 'detection-worker.cjs']]) {
+    await build({ entryPoints: [path.join(workspace, input)], outfile: path.join(scratch, output), bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent', banner: { js: "for(const method of ['execFileSync','execSync','spawnSync','spawn','exec','execFile'])require('node:child_process')[method]=()=>{throw new Error('Fixture blocks host processes')};" } });
+  }
   const worker = path.join(scratch, 'worker.cjs');
   fs.writeFileSync(worker, String.raw`
 const assert = require('node:assert/strict');
@@ -62,7 +65,7 @@ const test = async (label, fn) => { await fn(); passed++; console.log('PASS ' + 
   });
   await test('action applies config and synchronizes all shared client states without changing auth', async () => {
     const result = await call('agent.connect', { ...selected, revision: preview.revision }); assert(result.ok, result.message);
-    const text = read(file); assert(text.includes('model_provider = "aurora"')); assert(text.includes('model_context_window = 123456')); assert(text.includes('[mcp_servers.keep]')); assert(text.includes('# preserve comments')); assert(text.includes('requires_openai_auth = false'));
+    const text = read(file); assert(text.includes('model_provider = "yunqiao"')); assert(text.includes('model_context_window = 123456')); assert(text.includes('[mcp_servers.keep]')); assert(text.includes('# preserve comments')); assert(text.includes('requires_openai_auth = false'));
     for (const id of ['codex-cli', 'chatgpt-desktop', 'codex-desktop']) { const state = store.listAgents()[id]; assert.equal(state.connected, true); assert.equal(state.configPath, file); assert.equal(state.backupPath, result.backup); }
     const manifest = JSON.parse(read(result.backup)); assert.deepEqual(manifest.files.map(item => item.path), [file]); assertPrivateFiles();
   });

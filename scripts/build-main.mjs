@@ -25,6 +25,8 @@ const entries = [
   { in: 'src/main/index.ts', out: 'dist/main/main.cjs', external: ['electron'] },
   { in: 'src/preload/index.ts', out: 'dist/main/preload.cjs', external: ['electron'] },
   { in: 'src/main/gateway-cli.ts', out: 'dist/main/gateway-cli.cjs', external: ['electron'] },
+  { in: 'src/core/agents/detectionWorker.ts', out: 'dist/main/detection-worker.cjs', external: ['electron'] },
+  { in: 'src/core/readOnlyWorker.ts', out: 'dist/main/read-only-worker.cjs', external: ['electron'] },
 ];
 
 for (const e of entries) {

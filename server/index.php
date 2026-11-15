@@ -693,7 +693,7 @@ document.querySelector('[data-tab="stats"]').addEventListener('click', loadStats
 reload();
 </script>
 <?php endif; ?>
-<footer style="text-align:center;padding:20px;color:#7b8595;font-size:12px"><a href="https://github.com/jxb412/aurora/tree/v0.6.0" target="_blank" rel="noopener noreferrer">yunqiao.me · v0.6.0 对应源码</a> · <a href="https://github.com/jxb412/aurora/blob/v0.6.0/LICENSE" target="_blank" rel="noopener noreferrer">AGPL-3.0 许可</a></footer>
+<footer style="text-align:center;padding:20px;color:#7b8595;font-size:12px"><a href="https://github.com/jxb412/yunqiao.me/tree/main" target="_blank" rel="noopener noreferrer">yunqiao.me · 项目源码</a> · <a href="https://github.com/jxb412/yunqiao.me/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">AGPL-3.0 许可</a></footer>
 </body>
 </html>
 

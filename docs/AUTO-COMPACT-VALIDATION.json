@@ -51,7 +51,7 @@
     }
   },
   "macOS": {
-    "workflow": "https://github.com/jxb412/aurora/actions/runs/43699763727",
+    "workflow": "https://github.com/jxb412/yunqiao.me/actions/runs/43699763727",
     "status": "passed",
     "architectures": [
       "x64",

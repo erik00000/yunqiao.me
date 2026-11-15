@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { randomBytes, createCipheriv, createDecipheriv } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { build } from 'esbuild';
 
 const workspace = path.resolve(import.meta.dirname, '..');
@@ -52,7 +53,7 @@ function fixture(label) {
     assert.match(options.headers['X-Aurora-Installation'], /^[a-f\d-]{36}$/); assert.match(options.headers['X-Aurora-Installation-Proof'], /^[a-f\d]{64}$/);
     if (['login', 'login2fa', 'bind'].includes(action)) {
       if (body.password === 'two-factor') return respond({ ok: true, requires2fa: true, tempToken: 'challenge-token', emailMasked: 'u***@test.invalid' });
-      return respond({ ok: true, sessionToken: String(control.activeUser).repeat(64), accessToken: 'upstream-access-must-stay-private', refreshToken: 'upstream-refresh-must-stay-private', expiresAt: new Date(Date.now() + 3600000).toISOString(), member: { id: control.activeUser, email: 'u@test.invalid', balance: 0 }, gift: { status: 'eligible', amountUsd: 10 } });
+      return respond({ ok: true, sessionToken: String(control.activeUser).repeat(64), accessToken: 'upstream-access-must-stay-private', refreshToken: 'upstream-refresh-must-stay-private', access_token: 'upstream-access-alias-private', refresh_token: 'upstream-refresh-alias-private', canRefresh: action !== 'bind', expiresAt: new Date(Date.now() + 3600000).toISOString(), member: { id: control.activeUser, email: 'u@test.invalid', balance: 0 }, gift: { status: 'eligible', amountUsd: 10 } });
     }
     assert.equal(options.headers.authorization, 'Bearer ' + String(control.activeUser).repeat(64));
     if (action === 'status') return respond({ ok: true, member: { id: control.activeUser, balance: 10 }, gift: { status: 'claimed', amountUsd: 10 } });
@@ -72,11 +73,18 @@ function fixture(label) {
 }
 async function test(label, run) { await run(); passed++; console.log(`PASS ${label}`); }
 const login = async f => f.api.memberAction(f.store, 'member.login', { email: ' user@test.invalid ', password: 'login-password-private' });
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function until(check, message) {
+  const deadline = Date.now() + 3000;
+  while (!check()) { assert(Date.now() < deadline, message); await pause(5); }
+}
+const maintenance = f => f.api.startMemberSessionMaintenance({ initialDelayMs: 5, intervalMs: 20 });
 
 try {
   await test('installation and session encrypted, credentials never reach renderer or backup', async () => {
     const f = fixture('encrypted'); const result = await login(f);
     assert(!('sessionToken' in result)); assert(!('accessToken' in result)); assert(!('refreshToken' in result));
+    assert(!('access_token' in result)); assert(!('refresh_token' in result)); assert.equal(result.canRefresh, true);
     const req = f.control.requests.find(r => r.action === 'login'); assert.equal(req.body.email, 'user@test.invalid');
     const installation = fs.readFileSync(path.join(f.directory, 'member-installation.enc'));
     const persisted = fs.readFileSync(path.join(f.directory, 'member-session.enc'));
@@ -85,6 +93,7 @@ try {
     }
     assert(!fs.existsSync(path.join(f.directory, 'member-installation.json')));
     assert.equal(f.safeStorage.decryptString(persisted), '1'.repeat(64));
+    assert(!fs.readdirSync(f.directory).some(file => file.endsWith('.tmp')));
   });
   await test('restart preserves both installation proof and encrypted member session', async () => {
     const f = fixture('restart'); await login(f); const previous = f.control.requests.at(-1).headers;
@@ -200,6 +209,60 @@ try {
     const result = await f.api.memberAction(f.store, 'member.logout', {}); assert(result.ok); assert.match(result.message, /远端会话/);
     assert(!fs.existsSync(path.join(f.directory, 'member-session.enc'))); assert.equal((await f.api.memberAction(f.store, 'member.status', {})).loggedIn, false);
   });
+  await test('server-side renewal keeps the encrypted desktop session stable and does not reveal upstream tokens', async () => {
+    const f = fixture('renewal'); await login(f);
+    const before = fs.readFileSync(path.join(f.directory, 'member-session.enc'));
+    const mockFetch = globalThis.fetch;
+    globalThis.fetch = async (url, options) => {
+      const response = await mockFetch(url, options);
+      if (new URL(url).searchParams.get('a') !== 'status') return response;
+      return new Response(JSON.stringify({ ...await response.json(), canRefresh: true, expiresAt: '2027-01-01T00:00:00Z', accessExpiresAt: '2026-12-02T00:00:00Z', access_token: 'renewed-upstream-access-private', refresh_token: 'rotated-upstream-refresh-private' }));
+    };
+    const results = await Promise.all([f.api.memberAction(f.store, 'member.status', {}), f.api.memberAction(f.store, 'member.status', {})]);
+    for (const result of results) { assert(result.loggedIn && result.canRefresh); assert.equal(result.expiresAt, '2027-01-01T00:00:00Z'); assert(!JSON.stringify(result).includes('private')); }
+    assert.deepEqual(fs.readFileSync(path.join(f.directory, 'member-session.enc')), before);
+    const restarted = freshApi(); assert((await restarted.memberAction(f.store, 'member.status', {})).loggedIn);
+    assert(!JSON.stringify(f.store.exportAll()).includes('rotated-upstream'));
+  });
+  await test('transient renewal failures retain login and never replay a credit request', async () => {
+    const f = fixture('renewal-transient'); await login(f);
+    const before = fs.readFileSync(path.join(f.directory, 'member-session.enc'));
+    const mockFetch = globalThis.fetch; const actions = [];
+    globalThis.fetch = async (url, options) => {
+      const action = new URL(url).searchParams.get('a'); actions.push(action);
+      if (['status', 'claim'].includes(action)) return new Response(JSON.stringify({ ok: false, code: 'SESSION_BUSY', error: '会员登录正在续期，请稍后重试' }), { status: 503 });
+      return mockFetch(url, options);
+    };
+    await assert.rejects(() => f.api.memberAction(f.store, 'member.status', {}), /正在续期/);
+    await assert.rejects(() => f.api.memberAction(f.store, 'member.claim', {}), /正在续期/);
+    assert.equal(actions.filter(action => action === 'claim').length, 1);
+    assert.deepEqual(fs.readFileSync(path.join(f.directory, 'member-session.enc')), before);
+    globalThis.fetch = mockFetch; assert((await f.api.memberAction(f.store, 'member.status', {})).loggedIn);
+  });
+  await test('an unsolicited session token in a status response cannot replace the saved login', async () => {
+    const f = fixture('renewal-unexpected'); await login(f);
+    const before = fs.readFileSync(path.join(f.directory, 'member-session.enc'));
+    const mockFetch = globalThis.fetch;
+    globalThis.fetch = async (url, options) => new URL(url).searchParams.get('a') === 'status'
+      ? new Response(JSON.stringify({ ok: true, sessionToken: '2'.repeat(64), member: { id: 2 } })) : mockFetch(url, options);
+    await assert.rejects(() => f.api.memberAction(f.store, 'member.status', {}), /意外的登录凭据/);
+    assert.deepEqual(fs.readFileSync(path.join(f.directory, 'member-session.enc')), before);
+  });
+  await test('a late renewal response cannot restore a logged-out desktop session', async () => {
+    const f = fixture('renewal-logout'); await login(f);
+    const mockFetch = globalThis.fetch; let release, entered;
+    const started = new Promise(resolve => { entered = resolve; });
+    globalThis.fetch = async (url, options) => {
+      if (new URL(url).searchParams.get('a') !== 'status') return mockFetch(url, options);
+      entered(); await new Promise(resolve => { release = resolve; });
+      return new Response(JSON.stringify({ ok: true, sessionToken: '1'.repeat(64), member: { id: 1 }, canRefresh: true }));
+    };
+    const pending = f.api.memberAction(f.store, 'member.status', {});
+    await started; await f.api.memberAction(f.store, 'member.logout', {}); release();
+    assert.equal((await pending).loggedIn, false);
+    assert(!fs.existsSync(path.join(f.directory, 'member-session.enc')));
+    assert.equal((await f.api.memberAction(f.store, 'member.status', {})).loggedIn, false);
+  });
   await test('mismatched supplier URL, protocol and group cannot save a provider', async () => {
     const f = fixture('invalid'); await login(f);
     for (const alter of [v => ({ ...v, baseUrl: 'https://attacker.invalid/v1' }), v => ({ ...v, format: 'anthropic' }), v => ({ ...v, group: { ...v.group, id: 8 } }), v => ({ ...v, memberId: undefined })]) {
@@ -212,6 +275,120 @@ try {
     assert(challenge.requires2fa); assert(!fs.existsSync(path.join(f.directory, 'member-session.enc')));
     await f.api.memberAction(f.store, 'member.login2fa', { tempToken: challenge.tempToken, code: '123456' });
     assert.deepEqual(f.control.requests.at(-1).body, { tempToken: 'challenge-token', totpCode: '123456' });
+  });
+  await test('maintenance never creates credentials or migrates plaintext identities without an existing encrypted login', async () => {
+    for (const mode of ['empty', 'bad-session', 'no-installation', 'legacy-installation', 'bad-installation']) {
+      const f = fixture('maintenance-' + mode);
+      if (mode !== 'empty') fs.writeFileSync(path.join(f.directory, 'member-session.enc'), f.safeStorage.encryptString(mode === 'bad-session' ? 'invalid-session' : '1'.repeat(64)));
+      if (mode === 'legacy-installation') fs.writeFileSync(path.join(f.directory, 'member-installation.json'), JSON.stringify({ id: '12345678-1234-4321-abcd-123456789abc', proof: 'a'.repeat(64) }));
+      if (mode === 'bad-installation') fs.writeFileSync(path.join(f.directory, 'member-installation.enc'), Buffer.from('not-encrypted'));
+      const before = fs.readdirSync(f.directory).map(file => [file, fs.statSync(path.join(f.directory, file)).isFile() ? fs.readFileSync(path.join(f.directory, file)) : null]);
+      const stop = maintenance(f);
+      try { await pause(65); assert.equal(f.control.requests.length, 0); }
+      finally { stop(); }
+      assert.deepEqual(fs.readdirSync(f.directory).map(file => [file, fs.statSync(path.join(f.directory, file)).isFile() ? fs.readFileSync(path.join(f.directory, file)) : null]), before);
+    }
+  });
+  await test('maintenance restores an encrypted login after startup and retries when secure storage becomes available', async () => {
+    const f = fixture('maintenance-restore'); await login(f); f.api = freshApi(); f.control.requests.length = 0; f.control.secure = false;
+    const saved = fs.readFileSync(path.join(f.directory, 'member-session.enc'));
+    const stop = maintenance(f);
+    try {
+      await pause(50); assert.equal(f.control.requests.length, 0);
+      f.control.secure = true;
+      await until(() => f.control.requests.length >= 2, 'Existing login was not maintained after secure storage recovered');
+      assert(f.control.requests.every(request => request.action === 'status' && request.headers.authorization === 'Bearer ' + '1'.repeat(64)));
+      assert.deepEqual(fs.readFileSync(path.join(f.directory, 'member-session.enc')), saved);
+    } finally { stop(); }
+  });
+  await test('maintenance begins after a later explicit login and stops contacting the service after logout', async () => {
+    const f = fixture('maintenance-later-login'); const stop = maintenance(f);
+    try {
+      await pause(35); assert.equal(f.control.requests.length, 0);
+      await login(f); await until(() => f.control.requests.some(request => request.action === 'status'), 'Later login was not maintained');
+      await f.api.memberAction(f.store, 'member.logout', {});
+      const count = f.control.requests.length; await pause(65); assert.equal(f.control.requests.length, count);
+      assert(!fs.existsSync(path.join(f.directory, 'member-session.enc')));
+    } finally { stop(); }
+  });
+  await test('background network, busy and unconfirmed proxy authentication failures preserve login and retry automatically', async () => {
+    const f = fixture('maintenance-retry'); await login(f); const saved = fs.readFileSync(path.join(f.directory, 'member-session.enc'));
+    const mockFetch = globalThis.fetch; let requests = 0, recovered = false;
+    globalThis.fetch = async (url, options) => {
+      assert.equal(new URL(url).searchParams.get('a'), 'status'); requests++;
+      if (requests === 1) return new Response(JSON.stringify({ ok: false, code: 'SESSION_BUSY', error: 'renewal temporarily busy' }), { status: 503 });
+      if (requests === 2) throw new TypeError('fixture network offline');
+      if (requests === 3) return new Response('<html>temporary proxy challenge</html>', { status: 401 });
+      const response = await mockFetch(url, options); recovered = true; return response;
+    };
+    const stop = maintenance(f);
+    try {
+      await until(() => recovered, 'Maintenance did not recover automatically');
+      assert(requests >= 4); assert.deepEqual(fs.readFileSync(path.join(f.directory, 'member-session.enc')), saved);
+    } finally { stop(); }
+  });
+  await test('maintenance is single-flight and skips an in-progress explicit login', async () => {
+    const f = fixture('maintenance-single-flight'); await login(f);
+    const mockFetch = globalThis.fetch; let releaseStatus, releaseLogin, statusCalls = 0, loginStarted = false;
+    globalThis.fetch = async (url, options) => {
+      const action = new URL(url).searchParams.get('a');
+      if (action === 'login') { loginStarted = true; await new Promise(resolve => { releaseLogin = resolve; }); }
+      if (action === 'status') { statusCalls++; if (statusCalls === 1) await new Promise(resolve => { releaseStatus = resolve; }); }
+      return mockFetch(url, options);
+    };
+    const pendingLogin = login(f); await until(() => loginStarted, 'Explicit login did not start');
+    const stop = maintenance(f);
+    try {
+      await pause(65); assert.equal(statusCalls, 0);
+      releaseLogin(); await pendingLogin;
+      await until(() => !!releaseStatus, 'Maintenance did not resume after login');
+      await pause(65); assert.equal(statusCalls, 1);
+      releaseStatus(); await until(() => statusCalls >= 2, 'Maintenance did not schedule its next completed-request interval');
+    } finally { stop(); releaseLogin?.(); releaseStatus?.(); }
+  });
+  await test('a late maintenance rejection cannot clear a newer member login', async () => {
+    const f = fixture('maintenance-stale'); await login(f); const mockFetch = globalThis.fetch;
+    let release, entered = false, intercepted = false;
+    globalThis.fetch = async (url, options) => {
+      if (new URL(url).searchParams.get('a') !== 'status' || intercepted) return mockFetch(url, options);
+      intercepted = true; entered = true; await new Promise(resolve => { release = resolve; });
+      return new Response(JSON.stringify({ ok: false, code: 'SESSION_EXPIRED', error: 'old session' }), { status: 401 });
+    };
+    const stop = maintenance(f);
+    try {
+      await until(() => entered, 'Maintenance did not start');
+      f.control.activeUser = 2; await login(f); const saved = fs.readFileSync(path.join(f.directory, 'member-session.enc'));
+      release(); await pause(60);
+      assert.deepEqual(fs.readFileSync(path.join(f.directory, 'member-session.enc')), saved);
+      assert(f.control.requests.some(request => request.action === 'status' && request.headers.authorization === 'Bearer ' + '2'.repeat(64)));
+    } finally { stop(); release?.(); }
+  });
+  await test('stopping maintenance aborts its request and a late response cannot clear credentials or restart the timer', async () => {
+    const f = fixture('maintenance-stop'); await login(f); const saved = fs.readFileSync(path.join(f.directory, 'member-session.enc'));
+    let release, signal, requests = 0;
+    globalThis.fetch = async (_url, options) => {
+      requests++; signal = options.signal; await new Promise(resolve => { release = resolve; });
+      return new Response(JSON.stringify({ ok: false, code: 'AUTH_REJECTED', error: 'late stopped response' }), { status: 401 });
+    };
+    const stop = maintenance(f);
+    try {
+      await until(() => !!release, 'Maintenance did not start'); stop(); stop(); assert(signal.aborted);
+      release(); await pause(65); assert.equal(requests, 1);
+      assert.deepEqual(fs.readFileSync(path.join(f.directory, 'member-session.enc')), saved);
+    } finally { stop(); release?.(); }
+  });
+  await test('confirmed background session revocation clears credentials and suppresses future maintenance traffic', async () => {
+    const f = fixture('maintenance-revoked'); await login(f); f.control.requests.length = 0; f.control.expired = 'status';
+    const stop = maintenance(f);
+    try {
+      await until(() => !fs.existsSync(path.join(f.directory, 'member-session.enc')), 'Confirmed revocation did not clear the session');
+      await pause(65); assert.deepEqual(f.control.requests.map(request => request.action), ['status']);
+    } finally { stop(); }
+  });
+  await test('the default maintenance timer is unrefed and cannot keep the application process alive', async () => {
+    const code = `globalThis.__memberElectron={app:{getPath:()=>${JSON.stringify(isolated)}},safeStorage:{}};require(${JSON.stringify(bundle)}).startMemberSessionMaintenance();`;
+    const child = spawnSync(process.execPath, ['-e', code], { encoding: 'utf8', timeout: 2500, windowsHide: true });
+    assert.equal(child.error, undefined); assert.equal(child.status, 0, child.stderr);
   });
   console.log(`All ${passed} desktop membership integration tests passed.`);
 } finally {

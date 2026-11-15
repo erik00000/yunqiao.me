@@ -195,7 +195,7 @@ function discover(ctx: Context): { candidates: Candidate[]; sources: LocalClient
     for (const [id, p] of Object.entries(providers)) {
       if (!object(p)) continue;
       const s = source('codex-cli', `Codex / ChatGPT · ${textValue(p.name) || id}`, codexFile, id);
-      if (id === 'aurora') { note(s, 'ignored', '云桥管理的 provider 不重复导入。'); continue; }
+      if (id === 'yunqiao' || id === 'aurora') { note(s, 'ignored', '云桥管理的 provider 不重复导入。'); continue; }
       if (p.wire_api !== undefined && !['responses', 'chat'].includes(p.wire_api)) { note(s, 'unsupported', '此 provider 使用的接口协议暂不支持自动导入。'); continue; }
       if (p.api_key_helper || p.apiKeyHelper || !codexStaticHeadersSupported(p.http_headers)
         || (p.env_http_headers !== undefined && (!object(p.env_http_headers) || Object.keys(p.env_http_headers).length))) {

@@ -1,7 +1,8 @@
 {
   "passed": true,
-  "count": 23,
+  "count": 24,
   "checks": [
+    "Plugin marketplace unlock is first, explains waiting status, retries connection failure and opens the public market only after active status",
     "All five bundled packages use product-facing descriptions while retaining their original license in details",
     "Real upstream format:file exposes the image chooser; picker and validation failures remain inside the open modal",
     "Malformed advanced configuration is rejected locally without invoking the backend",

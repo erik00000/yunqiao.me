@@ -18,6 +18,8 @@ final class MemberService
 {
     public const GIFT_USD = 10;
     private const CAMPAIGN = 'aurora-first-member-v1';
+    private const SESSION_LIFETIME = 30 * 86400;
+    private const REFRESH_MARGIN = 60;
     private array $config;
     private ?PDO $db = null;
     private $transport;
@@ -136,6 +138,24 @@ final class MemberService
                     $db->exec('COMMIT');
                 } catch (Throwable $error) { $db->exec('ROLLBACK'); throw $error; }
             }
+            // Migrate authentication metadata only after verifying the complete monetary ledger.
+            // Old sessions have no recoverable refresh token and retain their original expiry.
+            $columns = array_column($db->query('PRAGMA table_info(member_sessions)')->fetchAll(PDO::FETCH_ASSOC), 'name');
+            $sessionSchema = $db->query("SELECT value FROM member_meta WHERE key='session_refresh_version'")->fetchColumn();
+            if ($sessionSchema !== false) {
+                if ($sessionSchema !== '1' || array_diff(['upstream_refresh', 'access_expires_at'], $columns)) {
+                    throw new MemberError('STORAGE_UNAVAILABLE', '会员登录存储结构不完整，请联系管理员恢复备份', 503);
+                }
+            } else {
+                $db->exec('BEGIN IMMEDIATE');
+                try {
+                    if (!in_array('upstream_refresh', $columns, true)) $db->exec("ALTER TABLE member_sessions ADD COLUMN upstream_refresh TEXT NOT NULL DEFAULT ''");
+                    if (!in_array('access_expires_at', $columns, true)) $db->exec('ALTER TABLE member_sessions ADD COLUMN access_expires_at INTEGER NOT NULL DEFAULT 0');
+                    $db->exec('UPDATE member_sessions SET access_expires_at=expires_at WHERE access_expires_at=0');
+                    $db->exec("INSERT INTO member_meta(key,value) VALUES('session_refresh_version','1')");
+                    $db->exec('COMMIT');
+                } catch (Throwable $error) { $db->exec('ROLLBACK'); throw $error; }
+            }
             @chmod($path, 0600);
             $markerContents = "aurora-members-v1\n";
             if (!is_file($marker) && @file_put_contents($marker, $markerContents, LOCK_EX) !== strlen($markerContents)) {
@@ -229,6 +249,8 @@ final class MemberService
         if (str_starts_with($path, '/keys?')) return '核对客户端密钥';
         if ($path === '/groups/available') return '读取会员分组';
         if ($path === '/auth/me') return '验证会员身份';
+        if ($path === '/auth/refresh') return '续期会员登录';
+        if ($path === '/auth/logout') return '退出会员登录';
         return '会员登录';
     }
 
@@ -302,32 +324,156 @@ final class MemberService
             'balance' => is_numeric($balance) && is_finite((float)$balance) ? (float)$balance : null];
     }
 
-    private function createSession(string $accessToken, array $credentials, int $expiresIn = 3600): array
+    private function accessExpiry(string $token, ?int $expiresIn): int
+    {
+        $now = time();
+        $expiry = $now + max(1, min(self::SESSION_LIFETIME, $expiresIn ?? 3600));
+        // This is only a scheduling hint, never proof of identity. /auth/me authenticates
+        // the token. A JWT exp can shorten a declared TTL, or describe a manual binding.
+        $parts = explode('.', $token);
+        if (count($parts) === 3) {
+            $claims = json_decode((string)base64_decode(strtr($parts[1], '-_', '+/'), true), true);
+            if (is_array($claims) && is_int($claims['exp'] ?? null)) {
+                $expiry = $expiresIn === null ? min($now + self::SESSION_LIFETIME, $claims['exp']) : min($expiry, $claims['exp']);
+            }
+        }
+        if ($expiry <= $now) throw new MemberError('AUTH_REJECTED', '会员访问令牌已过期，请重新登录', 401);
+        return $expiry;
+    }
+
+    private function validRefresh(string $token): bool
+    {
+        return $token !== '' && strlen($token) <= 16384 && !preg_match('/[\x00-\x20\x7f]/', $token);
+    }
+
+    private function sessionInfo(array $session): array
+    {
+        return ['expiresAt' => gmdate('c', (int)$session['expires_at']),
+            'accessExpiresAt' => gmdate('c', (int)$session['access_expires_at']),
+            'canRefresh' => $session['upstream_refresh'] !== ''];
+    }
+
+    private function createSession(string $accessToken, array $credentials, ?int $expiresIn = null, string $refreshToken = ''): array
     {
         // The upstream authenticated identity is the only source of user_id.
         $profile = $this->profile($accessToken);
         $installation = $this->installation($credentials, true);
         $token = bin2hex(random_bytes(32));
-        $expiresAt = time() + max(60, min(3600, $expiresIn));
-        $this->transaction(function () use ($token, $installation, $profile, $accessToken, $expiresAt): void {
+        if ($refreshToken !== '' && !$this->validRefresh($refreshToken)) throw new MemberError('UPSTREAM_RESPONSE_INVALID', '会员站点返回的续期凭据无效', 503);
+        $accessExpiresAt = $this->accessExpiry($accessToken, $expiresIn);
+        $expiresAt = $refreshToken !== '' ? time() + self::SESSION_LIFETIME : $accessExpiresAt;
+        $this->transaction(function () use ($token, $installation, $profile, $accessToken, $refreshToken, $expiresAt, $accessExpiresAt): void {
             $this->execute('DELETE FROM member_sessions WHERE expires_at<? OR installation_hash=?', [time(), $installation]);
-            $this->execute('INSERT INTO member_sessions(token_hash,installation_hash,user_id,profile,upstream_token,expires_at) VALUES(?,?,?,?,?,?)',
-                [hash('sha256', $token), $installation, $profile['id'], json_encode($profile, JSON_THROW_ON_ERROR), $this->seal($accessToken), $expiresAt]);
+            $this->execute('INSERT INTO member_sessions(token_hash,installation_hash,user_id,profile,upstream_token,expires_at,upstream_refresh,access_expires_at) VALUES(?,?,?,?,?,?,?,?)',
+                [hash('sha256', $token), $installation, $profile['id'], json_encode($profile, JSON_THROW_ON_ERROR), $this->seal($accessToken), $expiresAt,
+                    $refreshToken === '' ? '' : $this->seal($refreshToken), $accessExpiresAt]);
         });
         return ['ok' => true, 'sessionToken' => $token, 'expiresAt' => gmdate('c', $expiresAt),
+            'accessExpiresAt' => gmdate('c', $accessExpiresAt), 'canRefresh' => $refreshToken !== '',
             'member' => $profile, 'gift' => $this->gift($profile['id'], $installation)];
     }
 
-    private function session(array $credentials): array
+    private function session(array $credentials, bool $allowExpired = false): array
     {
         $installation = $this->installation($credentials, false);
         $token = (string)($credentials['sessionToken'] ?? '');
         if (!preg_match('/^[a-f0-9]{64}$/D', $token)) throw new MemberError('SESSION_REQUIRED', '请先登录会员账户', 401);
         $row = $this->execute('SELECT * FROM member_sessions WHERE token_hash=?', [hash('sha256', $token)])->fetch(PDO::FETCH_ASSOC);
-        if (!$row || $row['expires_at'] <= time() || !hash_equals($row['installation_hash'], $installation)) {
+        if (!$row || (!$allowExpired && $row['expires_at'] <= time()) || !hash_equals($row['installation_hash'], $installation)) {
             throw new MemberError('SESSION_EXPIRED', '会员登录已失效，请重新登录', 401);
         }
         return $row;
+    }
+
+    private function currentSession(array $expected): array
+    {
+        $row = $this->execute('SELECT * FROM member_sessions WHERE token_hash=?', [$expected['token_hash']])->fetch(PDO::FETCH_ASSOC);
+        if (!$row || $row['expires_at'] <= time() || $row['installation_hash'] !== $expected['installation_hash'] || (int)$row['user_id'] !== (int)$expected['user_id']) {
+            throw new MemberError('SESSION_EXPIRED', '会员登录已失效，请重新登录', 401);
+        }
+        return $row;
+    }
+
+    private function revokeUpstream(string $refreshToken): void
+    {
+        if ($refreshToken === '') return;
+        try { $this->request('POST', '/auth/logout', [], ['refresh_token' => $refreshToken]); }
+        catch (MemberError $ignored) { /* The local session is already revoked, regardless of network availability. */ }
+    }
+
+    private function refreshSession(array $expected, bool $force = false): array
+    {
+        // Bounded lock files avoid an ever-growing file per login. Locks cover only
+        // token rotation, never a database transaction or unrelated gift operation.
+        $lockPath = $this->config['dataDir'] . '/refresh-' . substr($expected['token_hash'], 0, 2) . '.lock';
+        if (is_link($lockPath)) throw new MemberError('STORAGE_UNAVAILABLE', '会员登录存储暂不可用', 503);
+        $lock = @fopen($lockPath, 'c');
+        if (!$lock) throw new MemberError('STORAGE_UNAVAILABLE', '会员登录存储暂不可用', 503);
+        $locked = false;
+        try {
+            $deadline = microtime(true) + 12;
+            do {
+                $locked = flock($lock, LOCK_EX | LOCK_NB);
+                if (!$locked) usleep(50000);
+            } while (!$locked && microtime(true) < $deadline);
+            if (!$locked) throw new MemberError('SESSION_BUSY', '会员登录正在续期，请稍后重试', 503);
+            $session = $this->currentSession($expected);
+            // A waiting request must reuse the pair another worker just rotated.
+            if ($session['upstream_token'] !== $expected['upstream_token'] || (!$force && $session['access_expires_at'] > time() + self::REFRESH_MARGIN)) return $session;
+            if ($session['upstream_refresh'] === '') throw new MemberError('SESSION_EXPIRED', '此登录无法自动续期，请重新登录会员账户', 401);
+            $oldRefresh = $this->unseal($session['upstream_refresh']);
+            try {
+                $auth = $this->request('POST', '/auth/refresh', [], ['refresh_token' => $oldRefresh]);
+            } catch (MemberError $error) {
+                if ($error->errorCode === 'AUTH_REJECTED') {
+                    $this->execute('DELETE FROM member_sessions WHERE token_hash=? AND upstream_refresh=?', [$session['token_hash'], $session['upstream_refresh']]);
+                }
+                throw $error;
+            }
+            $access = $auth['access_token'] ?? null;
+            $refresh = $auth['refresh_token'] ?? null;
+            if (!is_string($access) || !$this->validRefresh($access) || !is_string($refresh) || !$this->validRefresh($refresh)
+                || !is_int($auth['expires_in'] ?? null) || $auth['expires_in'] <= 0) {
+                throw new MemberError('UPSTREAM_RESPONSE_INVALID', '会员站点返回的续期信息不完整，请重新登录', 503);
+            }
+            $accessExpiresAt = $this->accessExpiry($access, $auth['expires_in']);
+            // Persist the new pair before a further network read: if /auth/me is
+            // temporarily unavailable, the already-consumed old refresh is not reused.
+            $updated = $this->execute('UPDATE member_sessions SET upstream_token=?,upstream_refresh=?,access_expires_at=?,expires_at=? WHERE token_hash=? AND upstream_token=? AND upstream_refresh=? AND expires_at>?',
+                [$this->seal($access), $this->seal($refresh), $accessExpiresAt, time() + self::SESSION_LIFETIME,
+                    $session['token_hash'], $session['upstream_token'], $session['upstream_refresh'], time()]);
+            if ($updated->rowCount() !== 1) {
+                $this->revokeUpstream($refresh);
+                throw new MemberError('SESSION_EXPIRED', '会员登录状态已变化，请重新登录', 401);
+            }
+            return $this->currentSession($session);
+        } finally {
+            if ($locked) flock($lock, LOCK_UN);
+            fclose($lock);
+        }
+    }
+
+    private function authenticatedSession(array $session): array
+    {
+        if ($session['upstream_refresh'] !== '' && $session['access_expires_at'] <= time() + self::REFRESH_MARGIN) $session = $this->refreshSession($session);
+        try { $profile = $this->profile($this->unseal($session['upstream_token'])); }
+        catch (MemberError $error) {
+            if ($error->errorCode !== 'AUTH_REJECTED' || $session['upstream_refresh'] === '') throw $error;
+            // Only retry identity verification, before any key or credit operation.
+            $session = $this->refreshSession($session, true);
+            $profile = $this->profile($this->unseal($session['upstream_token']));
+        }
+        if ($profile['id'] !== (int)$session['user_id']) {
+            $this->execute('DELETE FROM member_sessions WHERE token_hash=?', [$session['token_hash']]);
+            $this->revokeUpstream($session['upstream_refresh'] === '' ? '' : $this->unseal($session['upstream_refresh']));
+            throw new MemberError('AUTH_REJECTED', '会员身份不匹配，请重新登录', 401);
+        }
+        // Concurrent logout/account replacement must not be undone by a late refresh/profile.
+        $this->currentSession($session);
+        $this->execute('UPDATE member_sessions SET profile=? WHERE token_hash=?', [json_encode($profile, JSON_THROW_ON_ERROR), $session['token_hash']]);
+        $session['profile'] = json_encode($profile, JSON_THROW_ON_ERROR);
+        $session['verified_profile'] = $profile;
+        return $session;
     }
 
     private function gift(int $userId, string $installation): array
@@ -462,8 +608,7 @@ final class MemberService
     {
         $this->rateLimit('client-key', (string)$session['user_id'], 6, 60);
         $accessToken = $this->unseal($session['upstream_token']);
-        $profile = $this->profile($accessToken);
-        if ($profile['id'] !== (int)$session['user_id']) throw new MemberError('AUTH_REJECTED', '会员身份不匹配', 401);
+        $profile = $session['verified_profile'];
         $groups = $this->availableGroups($accessToken);
         $groupId = $body['groupId'] ?? (count($groups) === 1 ? $groups[0]['id'] : null);
         $selected = null;
@@ -522,28 +667,29 @@ final class MemberService
                 }
                 $auth = $this->request('POST', '/auth/login/2fa', [], ['temp_token' => (string)($body['tempToken'] ?? ''), 'totp_code' => $body['totpCode']]);
             }
-            return $this->createSession((string)($auth['access_token'] ?? ''), $credentials, (int)($auth['expires_in'] ?? 3600));
+            if (!is_string($auth['access_token'] ?? null) || (isset($auth['refresh_token']) && !is_string($auth['refresh_token']))
+                || (isset($auth['expires_in']) && (!is_int($auth['expires_in']) || $auth['expires_in'] <= 0))) {
+                throw new MemberError('UPSTREAM_RESPONSE_INVALID', '会员站点返回的登录信息不完整', 503);
+            }
+            return $this->createSession($auth['access_token'], $credentials, $auth['expires_in'] ?? null, $auth['refresh_token'] ?? '');
         }
-        $session = $this->session($credentials);
+        $session = $this->session($credentials, $action === 'logout');
         $userId = (int)$session['user_id'];
         $installation = $session['installation_hash'];
         if ($action === 'logout') {
             $this->execute('DELETE FROM member_sessions WHERE token_hash=?', [$session['token_hash']]);
+            $this->revokeUpstream($session['upstream_refresh'] === '' ? '' : $this->unseal($session['upstream_refresh']));
             return ['ok' => true];
         }
+        if (!in_array($action, ['status', 'groups', 'create-client-key', 'claim'], true)) throw new MemberError('UNKNOWN_ACTION', '会员操作不存在', 404);
+        $session = $this->authenticatedSession($session);
+        $profile = $session['verified_profile'];
         if ($action === 'status') {
-            $profile = $this->profile($this->unseal($session['upstream_token']));
-            if ($profile['id'] !== $userId) throw new MemberError('AUTH_REJECTED', '会员身份不匹配', 401);
-            $this->execute('UPDATE member_sessions SET profile=? WHERE token_hash=?', [json_encode($profile, JSON_THROW_ON_ERROR), $session['token_hash']]);
-            return ['ok' => true, 'expiresAt' => gmdate('c', (int)$session['expires_at']),
-                'member' => $profile, 'gift' => $this->gift($userId, $installation)];
+            return array_merge(['ok' => true, 'member' => $profile, 'gift' => $this->gift($userId, $installation)], $this->sessionInfo($session));
         }
         if ($action === 'groups') return ['ok' => true, 'groups' => $this->availableGroups($this->unseal($session['upstream_token']))];
         if ($action === 'create-client-key') return $this->createClientKey($session, $body);
-        if ($action !== 'claim') throw new MemberError('UNKNOWN_ACTION', '会员操作不存在', 404);
         $this->rateLimit('claim', (string)$userId, 20, 60);
-        $profile = $this->profile($this->unseal($session['upstream_token']));
-        if ($profile['id'] !== $userId) throw new MemberError('AUTH_REJECTED', '会员身份不匹配', 401);
         $grant = $this->transaction(function () use ($userId, $installation): array {
             $existing = $this->execute('SELECT * FROM welcome_grants WHERE user_id=?', [$userId])->fetch(PDO::FETCH_ASSOC);
             if ($existing) return $existing;

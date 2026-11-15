@@ -82,6 +82,45 @@ try {
   fs.writeFileSync(catalogFile, JSON.stringify(catalog.nativeCatalog));
   fs.writeFileSync(path.join(codexHome, 'config.toml'), 'cli_auth_credentials_store = "file"\n');
   const adapter = m.getAdapter('codex-cli'), context = { provider: supplier, model: 'gpt-fixture', gatewayUrl: `http://127.0.0.1:${gateway.getStatus().port}`, token: store.getSettings().gatewayToken, mode: 'gateway', authMode: 'coexist', modelCatalogPath: catalogFile };
+  // Exercise API mode through the same adapter used by the desktop wizard.
+  // No CLI model, endpoint or authentication override is supplied: the binary
+  // must load all three from the generated config.toml without any saved
+  // official login. Both upstreams remain loopback-only.
+  fs.unlinkSync(authFile);
+  const apiContext = { ...context, authMode: 'api' };
+  const apiPreview = adapter.preview(apiContext); assert.equal(apiPreview.ok, true, apiPreview.message);
+  const apiApplied = adapter.connect({ ...apiContext, expectedRevision: apiPreview.revision }); assert.equal(apiApplied.ok, true, apiApplied.message);
+  const apiConfig = parseToml(fs.readFileSync(path.join(codexHome, 'config.toml'), 'utf8'));
+  assert.equal(apiConfig.model_provider, 'yunqiao'); assert.ok(apiConfig.model_providers.yunqiao); assert.equal(apiConfig.model_providers.aurora, undefined);
+  const gatewayResult = await runCli();
+  assert.equal(gatewayResult.answer, 'RELAY_NATIVE_OK'); assert.equal(supplierCalls.length, 1); assert.equal(officialCalls.length, 0);
+  assert.equal(supplierCalls[0].path, '/v1/responses'); assert.equal(supplierCalls[0].body.model, 'gpt-fixture');
+  assert.equal(supplierCalls[0].headers.authorization, 'Bearer fixture-supplier-key');
+  assert.ok(!JSON.stringify(supplierCalls).includes(fakeToken)); assert.ok(!JSON.stringify(supplierCalls).includes(context.token));
+  assert.equal(fs.existsSync(authFile), false);
+  assert.equal(adapter.disconnect(apiApplied.backup).ok, true);
+  console.log('PASS real CLI without auth.json loads API gateway URL, key and default model from generated config; relay receives only its own key');
+  supplierCalls.length = 0;
+
+  const directContext = { ...apiContext, mode: 'direct', provider: { ...supplier, baseUrl: `http://127.0.0.1:${supplierMock.address().port}/proxy` } };
+  const directPreview = adapter.preview(directContext); assert.equal(directPreview.ok, true, directPreview.message);
+  const directApplied = adapter.connect({ ...directContext, expectedRevision: directPreview.revision }); assert.equal(directApplied.ok, true, directApplied.message);
+  const directConfig = parseToml(fs.readFileSync(path.join(codexHome, 'config.toml'), 'utf8'));
+  assert.equal(directConfig.model_provider, 'yunqiao'); assert.equal(directConfig.model_providers.yunqiao.base_url, directContext.provider.baseUrl + '/v1');
+  const gatewayPort = gateway.getStatus().port;
+  await gateway.stop();
+  const directResult = await runCli();
+  assert.equal(directResult.answer, 'RELAY_NATIVE_OK'); assert.equal(supplierCalls.length, 1); assert.equal(officialCalls.length, 0);
+  assert.equal(supplierCalls[0].path, '/proxy/v1/responses'); assert.equal(supplierCalls[0].body.model, 'gpt-fixture');
+  assert.equal(supplierCalls[0].headers.authorization, 'Bearer fixture-supplier-key');
+  assert.ok(!JSON.stringify(supplierCalls).includes(fakeToken)); assert.ok(!JSON.stringify(supplierCalls).includes(context.token));
+  assert.equal(fs.existsSync(authFile), false);
+  assert.equal(adapter.disconnect(directApplied.backup).ok, true);
+  console.log('PASS real CLI without auth.json loads supplier URL, key and default model from generated direct config while the gateway is stopped');
+  supplierCalls.length = 0;
+  await gateway.start('127.0.0.1', gatewayPort);
+  fs.writeFileSync(authFile, authText);
+
   const preview = adapter.preview(context); assert.equal(preview.ok, true, preview.message);
   const applied = adapter.connect({ ...context, expectedRevision: preview.revision }); assert.equal(applied.ok, true, applied.message);
   const relay = await runCli(`${supplier.id}/gpt-fixture`);
@@ -124,7 +163,7 @@ try {
   } else { assert.equal(profileRun.answer, 'RELAY_NATIVE_OK'); console.log('PASS actual CLI accepts legacy quoted active profile after root-only transport/catalog correction'); }
   assert.equal(supplierCalls.length, checks - 2); assert.equal(officialCalls.length, 1);
   assert.equal(fs.readFileSync(authFile, 'utf8'), authText);
-  console.log(`Native coexistence: ${checks} checks passed; denied external background connections: ${blocked.length}`);
+  console.log(`Native client routing: ${checks + 2} checks passed (API gateway, direct and coexistence); denied external background connections: ${blocked.length}`);
 } finally {
   if (gateway) await gateway.stop();
   for (const server of [supplierMock, officialMock, denyProxy]) { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }

@@ -2,8 +2,9 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { PageProps } from '../App';
 import { Btn, Empty, Ico, useToast } from '../components/ui';
 import { call, CloudCatalog, PROTOCOL_TEXT } from '../lib/api';
+import { catalogSearchText, sortCatalogEntries } from '../lib/catalogPresentation';
 
-const REGIONS: Record<string, string> = { all: '全部厂商', cn: '国内服务', global: '国际服务', relay: '聚合与中转', local: '本地模型' };
+const REGIONS: Record<string, string> = { all: '全部厂商', global: '国际服务', cn: '国内服务', relay: '聚合与中转', local: '本地模型' };
 export default function Catalog({ state, reload, go }: PageProps) {
   const [data, setData] = useState<CloudCatalog | null>(null);
   const [loading, setLoading] = useState(false);
@@ -30,7 +31,7 @@ export default function Catalog({ state, reload, go }: PageProps) {
     void fetchCatalog();
     return () => { catalogRequest.current++; };
   }, [state.catalog?.version, state.catalog?.fetchedAt, state.catalog?.source, state.catalog?.syncing, state.catalog?.warning]);
-  const list = useMemo(() => (data?.providers || []).filter(p => (region === 'all' || p.region === region) && `${p.name} ${p.vendor} ${p.tags?.join(' ')} ${p.models?.map(m => m.id).join(' ')}`.toLowerCase().includes(query.toLowerCase())), [data, region, query]);
+  const list = useMemo(() => sortCatalogEntries(data?.providers || []).filter(p => (region === 'all' || p.region === region) && catalogSearchText(p).includes(query.trim().toLowerCase())), [data, region, query]);
   async function importItems() {
     setImporting(true);
     try {

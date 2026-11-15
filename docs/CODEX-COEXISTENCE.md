@@ -1,8 +1,8 @@
 # 官方账号与第三方推理供应商共存
 
-Aurora 实现适用于具有 Codex 编程模块的 ChatGPT / Codex 桌面版及共享配置的 Codex CLI，不会把普通 ChatGPT 聊天、官方登录、云端项目、订阅额度接口整体替换为第三方服务。
+云桥 AI 实现适用于具有 Codex 编程模块的 ChatGPT / Codex 桌面版及共享配置的 Codex CLI，不会把普通 ChatGPT 聊天、官方登录、云端项目、订阅额度接口整体替换为第三方服务。
 
-`openai_base_url` 是内置 OpenAI 推理传输覆盖，不是 OAuth 登录 API 地址。Aurora 不改 `chatgpt_base_url`、OAuth 浏览器登录回调、Cookie、官方订阅和额度身份，也不把第三方模型宣称为官方授权模型。不同客户端版本可能还有自己的原生模型限制，需实际客户端验证。
+`openai_base_url` 是内置 OpenAI 推理传输覆盖，不是 OAuth 登录 API 地址。云桥 AI 不改 `chatgpt_base_url`、OAuth 浏览器登录回调、Cookie、官方订阅和额度身份，也不把第三方模型宣称为官方授权模型。不同客户端版本可能还有自己的原生模型限制，需实际客户端验证。
 
 ## 当前实现
 

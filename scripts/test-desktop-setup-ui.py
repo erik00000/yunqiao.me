@@ -1,4 +1,4 @@
-"""Shared Codex configuration works independently of executable discovery; isolated IPC."""
+"""Client configuration routing and desktop recovery with isolated IPC."""
 import argparse
 import json
 from pathlib import Path
@@ -14,13 +14,17 @@ FIXTURE = """() => {
  window.initialDetection={installed:false,configured:true,configPath:'C:/Fixture/.codex/config.toml',supportsCodexConfig:false,evidence:[]};
  window.readyDetection={...window.initialDetection,installed:true,command:'C:/Fixture/Codex.exe',productName:'Codex',version:'2.0',supportsCodexConfig:true,evidence:['已找到 Codex 编程模块']};
  window.resetFixture=()=>{
-   window.generation++;window.calls=[];window.pending=[];window.holdSelect=false;window.holdDetect=false;window.selectFailure='';window.selectCanceled=false;window.previewFailure='';window.connectFailure='';window.detectFailure='';window.selectionNextSupport='automatic';window.selectedDetection=structuredClone(window.readyDetection);window.nextDetection=structuredClone(window.readyDetection);
-   window.state={settings:{},platform:'win32',agents:{},presets:[],providers:[{id:'supplier',name:'已测试供应商',format:'openai-responses',enabled:true,models:[{id:'gpt-5.4'},{id:'gpt-5.4-codex',contextWindow:128000}],apiKeys:[]}],detected:{'chatgpt-desktop':structuredClone(window.initialDetection)},agentCatalog:[{id:'chatgpt-desktop',name:'ChatGPT 桌面版',category:'desktop',vendor:'OpenAI',description:'桌面客户端',protocol:'openai-responses',configPath:'C:/Fixture/.codex/config.toml',support:'automatic',supportNote:'共享编程配置可直接应用，程序能力单独识别'}],codexCoexist:{identity:{available:false},models:[],warnings:[]}};
+   window.generation++;window.calls=[];window.pending=[];window.holdTest=false;window.pendingTests=[];window.testFailure='';window.holdSelect=false;window.holdDetect=false;window.selectFailure='';window.selectCanceled=false;window.previewFailure='';window.connectFailure='';window.detectFailure='';window.selectionNextSupport='automatic';window.selectedDetection=structuredClone(window.readyDetection);window.nextDetection=structuredClone(window.readyDetection);
+   window.state={settings:{},platform:'win32',agents:{},presets:[],providers:[{id:'supplier',name:'已测试供应商',baseUrl:'https://fixture.invalid/v1',format:'openai-responses',enabled:true,models:[{id:'gpt-5.4'},{id:'gpt-5.4-codex',contextWindow:128000}],apiKeys:[]}],detected:{'chatgpt-desktop':structuredClone(window.initialDetection)},agentCatalog:[{id:'chatgpt-desktop',name:'ChatGPT 桌面版',category:'desktop',vendor:'OpenAI',description:'桌面客户端',protocol:'openai-responses',configPath:'C:/Fixture/.codex/config.toml',support:'automatic',supportNote:'共享编程配置可直接应用，程序能力单独识别'}],codexCoexist:{identity:{available:false},models:[],warnings:[]}};
  };
  window.resetFixture();
  window.aurora={invoke:async(action,payload={})=>{
    window.calls.push({action,payload:structuredClone(payload)});
-   if(action==='provider.test')return {ok:true,message:'测试通过，供应商 API 可用'};
+   if(action==='agent.test'){
+     if(window.holdTest)await new Promise(resolve=>window.pendingTests.push(resolve));
+     return {ok:!window.testFailure,message:window.testFailure||'测试通过，供应商 API 可用',requestId:payload.requestId,target:payload.target};
+   }
+   if(action==='agent.test.cancel')return {ok:true,canceled:true};
    if(action==='agent.preview'){
      if(window.previewFailure)return {ok:false,message:window.previewFailure};
      return {ok:true,revision:'reviewed-revision-'+window.calls.length,files:[{path:'C:/Fixture/.codex/config.toml',before:'old',after:'new'}],warnings:[],requiresRestart:true};
@@ -80,30 +84,38 @@ window.renderAgents();"""
                 checks.append(label)
                 print('PASS', label, flush=True)
 
-            def open_wizard(reset=True, setup=None):
+            def open_wizard(reset=True, setup=None, selected_model='gpt-5.4-codex'):
                 if reset:
                     page.evaluate('window.resetFixture()')
                 if setup:
                     page.evaluate(setup)
                 page.evaluate('window.renderAgents()')
-                page.get_by_role('button', name='开始配置 →', exact=True).click()
-                dialog = page.get_by_role('dialog', name='配置 ChatGPT 桌面版', exact=True)
+                connected = page.evaluate('!!window.state.agents[window.state.agentCatalog[0].id]?.connected')
+                page.get_by_role('button', name='更换配置 →' if connected else '开始配置 →', exact=True).click()
+                client_name = page.evaluate('window.state.agentCatalog[0].name')
+                dialog = page.get_by_role('dialog', name='配置 ' + client_name, exact=True)
                 dialog.locator('.provider-choice').filter(has=page.get_by_text('已测试供应商', exact=True)).click()
-                if page.evaluate("window.state.codexCoexist.identity.available"):
-                    expect(dialog.get_by_text('共存模式保留官方账号身份；第三方服务仅使用你配置的供应商密钥。', exact=True)).to_be_visible()
-                    dialog.get_by_label('保留官方账号并与第三方模型共存', exact=True).uncheck()
+                codex = page.evaluate("['chatgpt-desktop','codex-desktop','codex-cli'].includes(window.state.agentCatalog[0].id)")
+                if codex and page.evaluate("window.state.codexCoexist.identity.available"):
+                    checkbox = dialog.get_by_label('保留官方账号并与第三方模型共存', exact=True)
+                    if checkbox.is_checked():
+                        expect(dialog.get_by_text('共存模式保留官方账号身份；第三方服务仅使用你配置的供应商密钥。', exact=True)).to_be_visible()
+                    checkbox.uncheck()
                     expect(dialog.get_by_text('API 模式保留官方登录文件', exact=False)).to_be_visible()
                     expect(dialog.get_by_text('官方聊天及云功能可能暂不可用', exact=False)).to_be_visible()
-                else:
+                elif codex:
                     expect(dialog.get_by_text('API 模式保留官方登录文件', exact=False)).to_be_visible()
                 dialog.get_by_role('button', name='下一步：选择模型 →', exact=True).click()
-                dialog.get_by_role('combobox', name='选择模型', exact=True).select_option('gpt-5.4-codex')
-                dialog.get_by_role('button', name='测试连接', exact=True).click()
+                dialog.get_by_role('combobox', name='选择模型', exact=True).select_option(selected_model)
+                dialog.get_by_role('button', name='上游网关测试', exact=True).click()
                 expect(dialog.get_by_text('测试通过，供应商 API 可用', exact=False)).to_be_visible()
                 return dialog
 
             def count(action):
                 return page.evaluate('action=>window.calls.filter(call=>call.action===action).length', action)
+
+            def last_payload(action):
+                return page.evaluate('action=>window.calls.filter(call=>call.action===action).at(-1).payload', action)
 
             def panel_for(dialog, expand=False):
                 panel = dialog.get_by_role('region', name='共享编程配置', exact=True)
@@ -125,14 +137,161 @@ window.renderAgents();"""
             expect(panel.get_by_text('已发现配置', exact=True)).to_be_visible()
             expect(panel.get_by_text('尚未定位程序', exact=True)).not_to_be_visible()
             expect(panel.get_by_text('无需先定位客户端程序', exact=False)).to_be_visible()
-            expect(panel.get_by_text('原生 ChatGPT 纯聊天界面不会因此切换 API', exact=False)).to_be_visible()
+            expect(panel.get_by_text('直连时写入供应商 URL、Key 和模型 ID', exact=False)).to_be_visible()
+            expect(panel.get_by_text('由云桥使用对应供应商的 URL 与 Key 转发请求', exact=False)).to_be_visible()
+            expect(dialog.get_by_role('combobox', name='接入方式', exact=True)).to_have_value('gateway')
             dialog.get_by_role('button', name='预览配置 →', exact=True).click()
             expect(dialog.get_by_role('button', name='备份并应用配置', exact=True)).to_be_visible()
             assert count('agent.desktop.select') == count('agent.detect') == count('agent.connect') == 0
             dialog.get_by_role('button', name='备份并应用配置', exact=True).click()
             expect(dialog.get_by_role('heading', name='配置已应用', exact=True)).to_be_visible()
             assert count('agent.connect') == 1
+            assert last_payload('agent.connect')['mode'] == 'gateway'
             passed('Existing user configuration can be previewed and applied with no executable and no confirmed programming module')
+
+            dialog = open_wizard()
+            dialog.get_by_role('combobox', name='接入方式', exact=True).select_option('direct')
+            expect(dialog.get_by_text('测试通过，供应商 API 可用', exact=False)).to_have_count(0)
+            expect(dialog.get_by_text('客户端直接请求供应商', exact=True)).to_be_visible()
+            expect(dialog.get_by_text('首个已启用的 Key', exact=False)).to_be_visible()
+            expect(dialog.get_by_text('配置加载后无需保持云桥运行', exact=False)).to_be_visible()
+            dialog.get_by_role('button', name='预览配置 →', exact=True).click()
+            expect(dialog.locator('.review-summary .chip')).to_have_text('直连供应商')
+            direct_selection = last_payload('agent.preview')
+            assert direct_selection == {'agentId': 'chatgpt-desktop', 'providerId': 'supplier', 'model': 'gpt-5.4-codex', 'mode': 'direct', 'authMode': 'api', 'permissionMode': 'preserve', 'skipOnboarding': False}
+            expected_revision = 'reviewed-revision-' + str(page.evaluate('window.calls.length'))
+            dialog.get_by_role('button', name='备份并应用配置', exact=True).click()
+            expect(dialog.get_by_role('heading', name='配置已应用', exact=True)).to_be_visible()
+            assert last_payload('agent.connect') == {**direct_selection, 'revision': expected_revision}
+            passed('Direct mode explains URL and key routing, clears prior test feedback, and applies the exact reviewed selection')
+
+            dialog = open_wizard()
+            tests = dialog.get_by_role('region', name='连接测试', exact=True)
+            dialog.get_by_role('button', name='本地网关测试', exact=True).click()
+            expect(tests.get_by_role('status')).to_have_count(2)
+            assert last_payload('agent.test')['target'] == 'local'
+            assert last_payload('agent.test')['model'] == 'gpt-5.4-codex'
+            expect(tests.get_by_text('可能产生少量费用', exact=False)).to_be_visible()
+            page.evaluate('window.holdTest=true')
+            dialog.get_by_role('button', name='上游网关测试', exact=True).click()
+            page.wait_for_function('window.pendingTests.length===1')
+            expect(dialog.get_by_role('button', name='预览配置 →', exact=True)).to_be_disabled()
+            expect(dialog.get_by_role('button', name='本地网关测试', exact=True)).to_be_disabled()
+            pending_id = last_payload('agent.test')['requestId']
+            dialog.get_by_role('button', name='取消测试', exact=True).click()
+            expect(tests.get_by_text('测试已取消。', exact=True)).to_be_visible()
+            assert last_payload('agent.test.cancel')['requestId'] == pending_id
+            page.evaluate('window.pendingTests.shift()();window.holdTest=false')
+            expect(tests.get_by_text('测试已取消。', exact=True)).to_be_visible()
+            expect(dialog.get_by_role('button', name='预览配置 →', exact=True)).to_be_enabled()
+            passed('Upstream and local gateway tests keep separate results, lock duplicate requests, and cancel without accepting a late success')
+
+            page.evaluate('window.holdTest=true')
+            dialog.get_by_role('button', name='本地网关测试', exact=True).click()
+            page.wait_for_function('window.pendingTests.length===1')
+            dialog.get_by_role('combobox', name='选择模型', exact=True).select_option('gpt-5.4')
+            expect(tests.get_by_role('status')).to_have_count(0)
+            page.evaluate('window.pendingTests.shift()();window.holdTest=false')
+            expect(tests.get_by_role('status')).to_have_count(0)
+            assert count('agent.test.cancel') == 2
+            passed('Changing the selected model cancels the old test and clears results for the previous route')
+
+            dialog = open_wizard()
+            expect(dialog.get_by_role('combobox', name='客户端执行权限', exact=True)).to_have_value('preserve')
+            dialog.get_by_role('combobox', name='客户端执行权限', exact=True).select_option('full-access')
+            expect(dialog.get_by_text('沙箱外的文件', exact=False)).to_be_visible()
+            dialog.get_by_role('button', name='预览配置 →', exact=True).click()
+            assert last_payload('agent.preview')['permissionMode'] == 'full-access'
+            dialog.get_by_role('button', name='备份并应用配置', exact=True).click()
+            assert last_payload('agent.connect')['permissionMode'] == 'full-access'
+            assert 'primary' in dialog.get_by_role('button', name='重新启动客户端', exact=True).get_attribute('class').split()
+            passed('Advanced permissions are opt-in, reviewed before application, and successful setup prominently offers restart')
+
+            dialog = open_wizard(setup="window.state.agentCatalog[0]={...window.state.agentCatalog[0],id:'claude-code',name:'Claude Code',category:'cli',protocol:'anthropic'};window.state.providers[0].format='anthropic'")
+            onboarding = dialog.get_by_label('跳过首次登录引导（API 接入）', exact=True)
+            expect(onboarding).not_to_be_checked()
+            onboarding.check()
+            dialog.get_by_role('button', name='预览配置 →', exact=True).click()
+            assert last_payload('agent.preview')['skipOnboarding'] is True
+            assert last_payload('agent.preview')['permissionMode'] == 'preserve'
+            passed('Claude API onboarding compatibility is an independent opt-in and does not silently enable full permissions')
+
+            claude_setup = "window.state.agentCatalog[0]={...window.state.agentCatalog[0],id:'claude-code',name:'Claude Code',category:'cli',protocol:'anthropic'};window.state.providers[0].format='anthropic';window.state.agents['claude-code']={connected:false,permissionMode:'full-access',skipOnboarding:true}"
+            dialog = open_wizard(setup=claude_setup)
+            expect(dialog.get_by_role('combobox', name='客户端执行权限', exact=True)).to_have_value('preserve')
+            expect(dialog.get_by_label('跳过首次登录引导（API 接入）', exact=True)).not_to_be_checked()
+            dialog = open_wizard(setup=claude_setup + ";window.state.agents['claude-code'].connected=true")
+            expect(dialog.get_by_role('combobox', name='客户端执行权限', exact=True)).to_have_value('full-access')
+            expect(dialog.get_by_label('跳过首次登录引导（API 接入）', exact=True)).to_be_checked()
+            passed('Restoring a client requires a fresh permission opt-in; an active managed client keeps its previously chosen options')
+
+            previous_direct = "window.state.agents['chatgpt-desktop']={mode:'direct',providerId:'supplier',model:'gpt-5.4-codex',connected:false}"
+            official_login = "window.state.codexCoexist.identity.available=true;window.state.codexCoexist.models=[{official:true,upstreamModel:'gpt-official',displayName:'官方模型'}]"
+            dialog = open_wizard(setup=previous_direct + ';' + official_login)
+            expect(dialog.get_by_role('combobox', name='接入方式', exact=True)).to_have_value('direct')
+            dialog.get_by_role('button', name='预览配置 →', exact=True).click()
+            first_revision = 'reviewed-revision-' + str(page.evaluate('window.calls.length'))
+            dialog.get_by_role('button', name='上一步', exact=True).click()
+            dialog.get_by_role('combobox', name='接入方式', exact=True).select_option('gateway')
+            expect(dialog.get_by_text('测试通过，供应商 API 可用', exact=False)).to_have_count(0)
+            expect(dialog.get_by_text('将本地网关地址和令牌写入客户端配置', exact=False)).to_be_visible()
+            dialog.get_by_role('button', name='预览配置 →', exact=True).click()
+            expect(dialog.locator('.review-summary .chip')).to_have_text('本地网关')
+            dialog.get_by_role('button', name='备份并应用配置', exact=True).click()
+            expect(dialog.get_by_role('heading', name='配置已应用', exact=True)).to_be_visible()
+            assert count('agent.preview') == 2
+            assert last_payload('agent.connect')['mode'] == 'gateway'
+            assert last_payload('agent.connect')['revision'] != first_revision
+            passed('Previous direct mode survives reopening with an official login; switching mode requires and applies a fresh preview')
+
+            for setup, reason in [
+                ("window.state.providers[0].format='openai-chat'", '供应商与客户端协议不同'),
+                ("window.state.providers[0].headers={'x-vendor-feature':'enabled'}", '此供应商有自定义请求头'),
+                ("window.state.providers[0].proxy='http://proxy.invalid:8080'", '此供应商使用独立代理'),
+                ("window.state.settings.proxy='http://proxy.invalid:8080'", '云桥已设置网络代理'),
+                ("window.state.agentCatalog[0].support='manual'", '此客户端当前提供手动接入参数'),
+                ("Object.assign(window.state.agentCatalog[0],{id:'claude-code',name:'Claude Code',protocol:'anthropic',category:'cli'});Object.assign(window.state.providers[0],{format:'anthropic',baseUrl:'https://fixture.invalid/proxy/v2'})", '此 API 版本无法由 Claude 客户端直连配置'),
+            ]:
+                dialog = open_wizard(setup=previous_direct + ';' + setup)
+                expect(dialog.get_by_role('combobox', name='接入方式', exact=True)).to_have_value('gateway')
+                expect(dialog.locator('option[value="direct"]')).to_be_disabled()
+                expect(dialog.get_by_text(reason, exact=False)).to_be_visible()
+                dialog.get_by_role('button', name='预览配置 →', exact=True).click()
+                assert last_payload('agent.preview')['mode'] == 'gateway'
+                assert count('agent.connect') == 0
+            passed('Protocol conversion, custom headers, supplier or global proxy and manual setup cannot silently produce an incomplete direct configuration')
+
+            for use_official_provider in [False, True]:
+                dialog = open_wizard(setup=previous_direct + ';' + official_login)
+                expect(dialog.get_by_role('combobox', name='接入方式', exact=True)).to_have_value('direct')
+                dialog.get_by_role('button', name='上一步', exact=True).click()
+                if use_official_provider:
+                    dialog.locator('.provider-choice').filter(has=page.get_by_text('ChatGPT 官方账号', exact=True)).click()
+                else:
+                    dialog.get_by_label('保留官方账号并与第三方模型共存', exact=True).check()
+                dialog.get_by_role('button', name='下一步：选择模型 →', exact=True).click()
+                expect(dialog.get_by_role('combobox', name='接入方式', exact=True)).to_have_value('gateway')
+                expect(dialog.locator('option[value="direct"]')).to_be_disabled()
+                expect(dialog.get_by_text('配置指向本地共存入口', exact=False)).to_be_visible()
+                dialog.get_by_role('button', name='预览配置 →', exact=True).click()
+                assert last_payload('agent.preview')['mode'] == 'gateway'
+                assert last_payload('agent.preview')['authMode'] == 'coexist'
+            passed('Both coexist selection and official-provider selection force gateway routing after a previous direct connection')
+
+            claude_setup = "Object.assign(window.state.agentCatalog[0],{id:'claude-desktop',name:'Claude 桌面版',protocol:'anthropic'});Object.assign(window.state.providers[0],{format:'anthropic',models:[{id:'claude-sonnet-4-5'},{id:'custom-model'}]})"
+            dialog = open_wizard(setup=claude_setup, selected_model='claude-sonnet-4-5')
+            dialog.get_by_role('combobox', name='接入方式', exact=True).select_option('direct')
+            dialog.get_by_role('button', name='预览配置 →', exact=True).click()
+            assert last_payload('agent.preview')['mode'] == 'direct'
+            assert last_payload('agent.preview')['agentId'] == 'claude-desktop'
+            dialog.get_by_role('button', name='上一步', exact=True).click()
+            dialog.get_by_role('combobox', name='选择模型', exact=True).select_option('custom-model')
+            expect(dialog.get_by_role('combobox', name='接入方式', exact=True)).to_have_value('gateway')
+            expect(dialog.locator('option[value="direct"]')).to_be_disabled()
+            expect(dialog.get_by_text('Claude 桌面直连需要 Claude 角色模型', exact=False)).to_be_visible()
+            dialog.get_by_role('button', name='预览配置 →', exact=True).click()
+            assert last_payload('agent.preview')['mode'] == 'gateway'
+            passed('Claude Desktop accepts recognizable role models for direct mode and returns to gateway for arbitrary model mapping')
 
             dialog = open_wizard(setup="window.state.detected['chatgpt-desktop'].configured=false;window.state.codexCoexist.identity.available=true;window.state.codexCoexist.models=[{official:true,upstreamModel:'gpt-official',displayName:'官方模型'}]")
             dialog.get_by_role('button', name='上一步', exact=True).click()

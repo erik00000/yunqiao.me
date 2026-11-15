@@ -273,6 +273,8 @@ $test('mismatched receipt requires review, admin read-only reconcile', static fu
 $test('upstream identity and active status revalidated before credit', static function ($dir): void {
     $credentials = signedIn(fixture($dir), 1, 1);
     expectCode(fn() => fixture($dir, 'different-user')->handle('claim', [], $credentials), 'AUTH_REJECTED');
+    expectCode(fn() => fixture($dir)->handle('status', [], $credentials), 'SESSION_EXPIRED');
+    $credentials = signedIn(fixture($dir), 1, 1);
     expectCode(fn() => fixture($dir, 'inactive')->handle('claim', [], $credentials), 'ACCOUNT_INACTIVE');
 });
 $test('session token is hashed, upstream JWT encrypted, logout revokes', static function ($dir): void {
@@ -409,7 +411,7 @@ $test('missing origin and failed initialization marker remain closed on retries'
     $service = fixture($dir);
     expectCode(fn() => $service->adminOverview(), 'STORAGE_UNAVAILABLE');
     expectCode(fn() => $service->adminOverview(), 'STORAGE_UNAVAILABLE');
-    check((int)db($dir)->query('SELECT COUNT(*) FROM member_meta')->fetchColumn() === 0, 'missing origin never inferred from new configuration');
+    check((int)db($dir)->query("SELECT COUNT(*) FROM member_meta WHERE key='upstream_origin'")->fetchColumn() === 0, 'missing origin never inferred from new configuration');
     $database = db($dir); $database->exec("INSERT INTO member_meta VALUES('upstream_origin','https://members.example.test')"); unset($database);
     unlink($dir . '/ledger/members.initialized'); mkdir($dir . '/ledger/members.initialized');
     $service = fixture($dir);

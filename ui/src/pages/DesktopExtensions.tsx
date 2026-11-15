@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Btn, Empty, Field, Ico, Modal, Toggle, useToast } from '../components/ui';
 import { call } from '../lib/api';
+import '../styles/extension-connection-recovery.css';
 
 interface ExtensionItem {
   id: string; name: string; description: string; version?: string;
@@ -45,11 +46,17 @@ export default function DesktopExtensions() {
   const [source, setSource] = useState('all');
   const [query, setQuery] = useState('');
   const [error, setError] = useState('');
+  const [connectionError, setConnectionError] = useState('');
+  const [recoveryError, setRecoveryError] = useState('');
+  const [resetError, setResetError] = useState('');
+  const [connectionNotice, setConnectionNotice] = useState('');
+  const [resetConnectionOpen, setResetConnectionOpen] = useState(false);
   const [listError, setListError] = useState('');
   const [sync, setSync] = useState<MarketSyncState | null>(null);
   const [busy, setBusy] = useState('');
   const operation = useRef('');
   const loadSequence = useRef(0);
+  const alive = useRef(true);
   const [loading, setLoading] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [path, setPath] = useState('');
@@ -62,6 +69,7 @@ export default function DesktopExtensions() {
   const desktop = !!window.aurora;
   const toast = useToast();
   async function load(clearError = true) {
+    if (!alive.current) return false;
     if (!desktop) { setLoading(false); return false; }
     const sequence = ++loadSequence.current;
     setLoading(true);
@@ -71,31 +79,34 @@ export default function DesktopExtensions() {
       if (sequence !== loadSequence.current) return false;
       setListError('');
       setState(r); if (clearError) setError('');
-      return true;
+      return r;
     } catch (e: any) { if (sequence === loadSequence.current) setListError(e.message || String(e)); return false; }
     finally { if (sequence === loadSequence.current) setLoading(false); }
   }
-  useEffect(() => { void load(); return () => { loadSequence.current++; }; }, []);
+  useEffect(() => { alive.current = true; void load(); return () => { alive.current = false; loadSequence.current++; }; }, []);
   useEffect(() => setVisibleCount(60), [source, query]);
   useEffect(() => setAcknowledgeVersion(false), [state?.client?.version]);
   async function action(name: string, payload: any = {}, id = name) {
-    if (operation.current) return;
+    if (!desktop || operation.current || !alive.current) return;
     operation.current = id;
     setBusy(id); setError('');
     try {
       const r = await call(name, payload);
+      if (!alive.current) return null;
       if (r?.ok === false) throw new Error(r.message || '操作未完成');
+      if (name === 'extension.connect') { setConnectionError(''); setRecoveryError(''); setConnectionNotice(''); }
       await load(false);
-      toast.push(r.message || '操作已保存，请查看插件状态', 'ok'); return r;
-    } catch (e: any) { const message = e.message || String(e); await load(false); setError(message); return null; }
-    finally { operation.current = ''; setBusy(''); }
+      if (alive.current) toast.push(r.message || '操作已保存，请查看插件状态', 'ok'); return alive.current ? r : null;
+    } catch (e: any) { if (!alive.current) return null; const message = e.message || String(e); await load(false); if (!alive.current) return null; if (name === 'extension.connect') setConnectionError(message); else setError(message); return null; }
+    finally { operation.current = ''; if (alive.current) setBusy(''); }
   }
   async function refreshMarkets(target?: MarketSource) {
-    if (operation.current) return;
+    if (operation.current || !alive.current) return;
     operation.current = 'extension.refresh'; setBusy('extension.refresh');
     setSync({ source: target, pending: true, complete: false, message: `正在同步${target ? SOURCES[target] : '公开市场与完整索引'}…`, results: [] });
     try {
       const response = await call<MarketRefreshResponse>('extension.refresh', target ? { source: target } : {});
+      if (!alive.current) return;
       const results = Array.isArray(response.results) ? response.results : [];
       const expected: MarketSource[] = target ? [target] : ['public', 'full'];
       const complete = response.ok === true && !response.warning && expected.every(source => results.some(result => result.source === source && result.ok && result.sourceType === 'remote'));
@@ -104,30 +115,92 @@ export default function DesktopExtensions() {
         message: complete ? '市场索引已同步' : updated ? '部分市场索引已更新' : '市场索引暂未更新',
         warning: !complete && !results.length ? '未收到完整同步结果，已保留当前插件列表。' : response.warning ? syncMessage(response.warning) : !complete && response.message ? syncMessage(response.message) : undefined });
       const loaded = await load(false);
-      if (complete && loaded) toast.push('市场索引已同步', 'ok');
+      if (alive.current && complete && loaded) toast.push('市场索引已同步', 'ok');
     } catch (e: unknown) {
-      setSync({ source: target, pending: false, complete: false, message: '市场索引同步失败', warning: syncMessage(e), results: [] });
-    } finally { operation.current = ''; setBusy(''); }
+      if (alive.current) setSync({ source: target, pending: false, complete: false, message: '市场索引同步失败', warning: syncMessage(e), results: [] });
+    } finally { operation.current = ''; if (alive.current) setBusy(''); }
   }
-  const list = useMemo(() => (state?.items || []).filter(i => (source === 'all' || source === 'installed' ? source !== 'installed' || i.installed : i.source === source) && `${i.name} ${i.description} ${i.id} ${(i.tags || []).join(' ')}`.toLowerCase().includes(query.trim().toLowerCase())), [state, source, query]);
+  const list = useMemo(() => (state?.items || []).filter(i => (source === 'all' || source === 'installed' ? source !== 'installed' || i.installed : i.source === source) && `${i.name} ${i.description} ${i.id} ${(i.tags || []).join(' ')}`.toLowerCase().includes(query.trim().toLowerCase())).sort((a, b) => Number(b.id === 'builtin:plugin-market-unlock') - Number(a.id === 'builtin:plugin-market-unlock')), [state, source, query]);
   const counts = (state?.items || []).reduce<Record<string, number>>((v, i) => { v[i.source] = (v[i.source] || 0) + 1; if (i.installed) v.installed = (v.installed || 0) + 1; return v; }, {});
   const connected = !!state?.runtime?.connected;
+  const unlock = state?.items.find(item => item.id === 'builtin:plugin-market-unlock');
   const errors = state?.runtime?.errors || [];
+  const runtimeConnectionError = errors.find(item => typeof item !== 'string' && item.id === 'runtime');
+  const connectionProblem = connectionError || (runtimeConnectionError ? runtimeConnectionError.message || runtimeConnectionError.error || '桌面增强连接异常' : '')
+    || (!connected && state && (!state.client.installed || state.client.compatible === false) ? state.client.message || '尚未找到可连接的桌面客户端，请选择已安装的程序。' : '');
+  const needsVersionConfirmation = !!state?.client?.versionChanged && !acknowledgeVersion;
+  async function chooseProgram() {
+    if (!desktop || operation.current) return;
+    operation.current = 'agent.desktop.select'; setBusy(operation.current);
+    try {
+      const result = await call('agent.desktop.select', { agentId: 'chatgpt-desktop' });
+      if (!alive.current) return;
+      if (result?.canceled) return;
+      if (!result?.ok) throw new Error(result?.message || '程序选择未完成，请重新选择桌面主程序。');
+      if (connectionProblem) setConnectionError(connectionProblem);
+      setRecoveryError('');
+      const refreshed = await load(false);
+      if (!alive.current) return;
+      if (refreshed) setPath(refreshed.connection.exePath || '');
+      setConnectionNotice('程序路径已保存。请保存桌面客户端中的工作，再点击重新连接。');
+    } catch (e: any) { if (alive.current) { setRecoveryError(e.message || '无法选择程序，请重试。'); await load(false); } }
+    finally { operation.current = ''; if (alive.current) setBusy(''); }
+  }
+  async function restoreConnectionDefaults() {
+    if (!desktop || operation.current) return;
+    operation.current = 'extension.configure'; setBusy(operation.current);
+    try {
+      const result = await call('extension.configure', { exePath: '', port: 9222 });
+      if (!alive.current) return;
+      if (!result?.ok) throw new Error(result?.message || '默认连接设置未能保存，请重试。');
+      if (connectionProblem) setConnectionError(connectionProblem);
+      setPath(''); setPort(9222); setRecoveryError(''); setResetError(''); setResetConnectionOpen(false);
+      await load(false);
+      if (!alive.current) return;
+      setConnectionNotice('已恢复自动检测程序，调试端口为 9222。请保存桌面客户端中的工作，再点击重新连接。');
+    } catch (e: any) { if (alive.current) { setResetError(e.message || '无法恢复默认连接设置，请重试。'); await load(false); } }
+    finally { operation.current = ''; if (alive.current) setBusy(''); }
+  }
+  function reconnect() {
+    if (!desktop || operation.current || needsVersionConfirmation) return;
+    void action('extension.connect', { launch: true, acknowledgeVersion });
+  }
   function editConfig(item: ExtensionItem) { setError(''); setEditing(item); setConfig(JSON.stringify(item.config || {}, null, 2)); }
   function changeConfig(key: string, value: any) { try { setConfig(JSON.stringify({ ...JSON.parse(config), [key]: value }, null, 2)); } catch { toast.push('请先修正 JSON 配置格式', 'bad'); } }
   async function chooseImage(key: string) {
     setError('');
-    try { const result = await call('app.chooseImage'); if (result.ok) changeConfig(key, result.path); else if (result.message) throw new Error(result.message); }
-    catch (e: any) { setError(e.message || '无法选择图片，请重试'); }
+    try { const result = await call('app.chooseImage'); if (!alive.current) return; if (result.ok) changeConfig(key, result.path); else if (result.message) throw new Error(result.message); }
+    catch (e: any) { if (alive.current) setError(e.message || '无法选择图片，请重试'); }
+  }
+  async function connectUnlock() {
+    if (!unlock || operation.current || unlock.status === 'unsupported') return;
+    if (!unlock.installed && !await action('extension.install', { id: unlock.id }, unlock.id)) return;
+    if (!unlock.enabled && !await action('extension.toggle', { id: unlock.id, enabled: true }, unlock.id)) return;
+    if (!connected) await action('extension.connect', { launch: true, acknowledgeVersion });
+    else await load();
   }
   return <>
     {!desktop ? <div className="notice"><Ico name="puzzle" size={20} /><div><b>请在电脑上管理桌面插件</b><p>桌面插件会在 ChatGPT 桌面版运行，安装、启用与连接需要电脑端操作。</p></div></div> : <>
+      {unlock && <section className="extension-banner market-unlock-feature" aria-label="插件市场解锁快捷入口">
+        <div className="grow"><div className="row wrap"><h3>插件市场解锁</h3><span className={`chip ${unlock.status === 'active' ? 'ok' : ''}`}>{STATUS[unlock.status] || unlock.status}</span></div><p>{unlock.status === 'active' ? '桌面插件入口已生效，可以浏览市场并安装需要的插件。' : unlock.status === 'unsupported' ? unlock.reason || '此客户端版本暂不兼容，请查看下方兼容提示。' : unlock.enabled ? '开关已开启。连接桌面客户端后才会生效；请保存工作并退出已运行的客户端，再点击启动并连接。' : '启用后连接桌面客户端，开放插件入口并浏览公开市场与完整索引。'}</p><p>插件需要的服务账号由对应服务授权。</p></div>
+        <div className="connection-buttons"><Btn variant="primary" disabled={!!busy || unlock.status === 'unsupported' || (!connected && !!state?.client?.versionChanged && !acknowledgeVersion)} onClick={() => { if (unlock.status === 'active') { setQuery(''); setSource('public'); } else void connectUnlock(); }}>{unlock.status === 'active' ? '浏览插件市场' : connected ? '启用插件市场' : unlock.enabled ? '启动并连接' : '启用并连接'}</Btn></div>
+      </section>}
       <div className="desktop-connection">
         <div className="desktop-connection-icon"><Ico name="puzzle" size={28} /></div>
         <div className="grow"><div className="row"><h2>ChatGPT 桌面版插件</h2><span className={`chip ${connected ? 'ok' : ''}`}>{connected ? '已连接桌面' : state?.client?.installed ? '已发现客户端' : '等待检测'}</span></div><p>{state?.client?.message || (connected ? '已连接本机桌面客户端，可挂载扩展与解锁插件入口。' : '自动识别 ChatGPT、ChatGPT Beta 及原 Codex 桌面版。连接后启用插件。')}</p><div className="row wrap"><span className="hint">{state?.client?.version ? `客户端 ${state.client.version}` : '版本待检测'}</span>{state?.client?.exePath && <span className="mono ellipsis hint" style={{ maxWidth: 440 }} title={state.client.exePath}>{state.client.exePath}</span>}</div></div>
         <div className="connection-buttons"><Btn size="sm" disabled={!!busy} onClick={() => { setError(''); setPath(state?.connection?.exePath || state?.client?.exePath || ''); setPort(state?.connection?.port || 9222); setSettingsOpen(true); }}><Ico name="gear" size={13} />连接设置</Btn><Btn variant="primary" disabled={!!busy || (!connected && !!state?.client?.versionChanged && !acknowledgeVersion)} onClick={() => action(connected ? 'extension.disconnect' : 'extension.connect', { launch: true, acknowledgeVersion })}><Ico name={connected ? 'stop' : 'plug'} size={14} />{busy === 'extension.connect' ? '连接中…' : connected ? '断开连接' : '启动并连接'}</Btn></div>
       </div>
-      {state?.client?.versionChanged && !connected && <div className="notice warning"><label className="checkbox-label"><input type="checkbox" checked={acknowledgeVersion} onChange={e => setAcknowledgeVersion(e.target.checked)} />客户端已更新到 {state.client.version}。确认重新检测插件兼容性并连接此版本。</label></div>}
+      {state?.client?.versionChanged && (!connected || !!connectionProblem) && <div className="notice warning"><label className="checkbox-label"><input type="checkbox" disabled={!!busy} checked={acknowledgeVersion} onChange={e => setAcknowledgeVersion(e.target.checked)} />客户端已更新到 {state.client.version}。确认重新检测插件兼容性并连接此版本。</label></div>}
+      {(connectionProblem || recoveryError || connectionNotice) && <section className="extension-connection-recovery notice warning" aria-label="桌面插件连接处理">
+        <div className="grow"><b>{connectionProblem ? '桌面插件尚未连接成功' : recoveryError ? '连接设置需要处理' : '连接设置已更新'}</b>{connectionProblem && <p role="alert">{connectionProblem}</p>}
+          {recoveryError && !resetConnectionOpen && <p role="alert">{recoveryError}</p>}{connectionNotice && <p role="status">{connectionNotice}</p>}
+          <p className="hint">Windows 请选择 .exe 主程序，macOS 请选择完整 .app 应用包。重连前请保存工作；如果客户端正在普通模式运行，请先完全退出。</p>
+        </div>
+        <div className="extension-recovery-actions"><Btn size="sm" disabled={!!busy} onClick={() => { void chooseProgram(); }}><Ico name="search" size={13} />{busy === 'agent.desktop.select' ? '选择中…' : '选择程序'}</Btn>
+          <Btn size="sm" variant="primary" disabled={!!busy || needsVersionConfirmation} onClick={reconnect}><Ico name="refresh" size={13} />{busy === 'extension.connect' ? '连接中…' : '重新连接'}</Btn>
+          <Btn size="sm" disabled={!!busy} onClick={() => { setResetError(''); setResetConnectionOpen(true); }}>恢复默认连接设置</Btn>
+        </div>
+      </section>}
       {error && !editing && !settingsOpen && !detail && <div className="notice warning" role="alert">{error}<div className="grow" /><Btn size="sm" disabled={!!busy} onClick={load}>重新检测</Btn></div>}
       {listError && <div className="notice warning" role="alert">插件列表刷新失败：{listError}<div className="grow" /><Btn size="sm" disabled={!!busy || loading} onClick={() => load(false)}>刷新列表</Btn></div>}
       {errors.length > 0 && <details className="notice warning" style={{ display: 'block' }}><summary>有 {errors.length} 个扩展未能生效，查看原因</summary>{errors.map((e, i) => <p key={i}>{typeof e === 'string' ? e : `${e.id || e.name || ''}：${e.message || e.error || '运行失败'}`}</p>)}</details>}
@@ -146,6 +219,7 @@ export default function DesktopExtensions() {
         <h3>{item.name}</h3><p className="extension-description" title={packageDescription(item)}>{packageDescription(item) || '暂无插件描述'}</p>
         <div className="tag-list"><span className="chip">{SOURCES[item.source]}</span>{item.version && <span className="chip">v{item.version}</span>}{item.updateAvailable && <span className="chip accent">可更新至 {item.availableVersion || '新版本'}</span>}{item.catalogMissing && <span className="chip">目录已下架</span>}{item.missingFiles && <span className="chip warn">文件缺失</span>}{item.requiresAuth && <span className="chip">需服务授权</span>}{item.requiresRestart && <span className="chip">重启生效</span>}</div>
         {item.reason && <p className="extension-reason">{item.reason}</p>}
+        {item.id === 'builtin:plugin-market-unlock' && item.status === 'needs-connection' && <p className="extension-reason">已开启，尚未连接桌面；使用页面顶部的“启动并连接”完成应用。</p>}
         {packageLimitations(item.id) && <p className="extension-reason">{packageLimitations(item.id)}</p>}
         <div className="extension-card-actions"><button className="text-button" disabled={!!busy} onClick={() => { setError(''); setDetail(item); }}>详情与来源 ↗</button><div className="grow" />{item.installed ? <>
           {(item.updateAvailable || item.missingFiles) && !item.catalogMissing && <Btn size="sm" disabled={!!busy} onClick={() => action('extension.install', { id: item.id }, item.id)}>{busy === item.id ? '安装中…' : item.missingFiles ? '修复安装' : '更新'}</Btn>}
@@ -159,9 +233,18 @@ export default function DesktopExtensions() {
       <Btn disabled={!!busy} variant="primary" onClick={async () => { if (await action('extension.configure', { exePath: path.trim(), port: Number(port) })) setSettingsOpen(false); }}>保存连接设置</Btn>
     </>}>
       {error && <div className="notice warning" role="alert">{error}</div>}
-      <Field label="客户端程序路径" hint="留空自动识别。Windows 可填 .exe，macOS 可填完整 .app 应用包。"><input className="input mono" aria-label="桌面客户端路径" value={path} onChange={e => setPath(e.target.value)} placeholder="自动检测" /></Field>
-      <Field label="本机调试端口"><input className="input" aria-label="桌面调试端口" type="number" min={1024} max={65535} value={port} onChange={e => setPort(Number(e.target.value))} /></Field>
+      {recoveryError && <div className="notice warning" role="alert">{recoveryError}</div>}
+      <Field label="客户端程序路径" hint="留空自动识别。通过选择器选中的程序路径会立即保存；Windows 选择 .exe，macOS 选择完整 .app 应用包。"><div className="row"><input className="input mono grow" aria-label="桌面客户端路径" disabled={!!busy} value={path} onChange={e => setPath(e.target.value)} placeholder="自动检测" /><Btn disabled={!!busy} onClick={() => { void chooseProgram(); }}>选择程序</Btn></div></Field>
+      <Field label="本机调试端口"><input className="input" aria-label="桌面调试端口" type="number" min={1024} max={65535} disabled={!!busy} value={port} onChange={e => setPort(Number(e.target.value))} /></Field>
       <div className="notice">如果客户端正在以普通方式运行，请先保存工作并完全退出，再点击「启动并连接」。连接成功不代表所有版本都兼容每一项增强，具体状态会显示在插件卡片上。</div>
+    </Modal>}
+    {resetConnectionOpen && desktop && <Modal title="恢复默认连接设置" sub="将程序路径改为自动检测，并将本机调试端口恢复为 9222。" onClose={() => !busy && setResetConnectionOpen(false)} foot={<>
+      <Btn disabled={!!busy} onClick={() => setResetConnectionOpen(false)}>取消</Btn>
+      <Btn variant="primary" disabled={!!busy} onClick={() => { void restoreConnectionDefaults(); }}>{busy === 'extension.configure' ? '恢复中…' : '确认恢复'}</Btn>
+    </>}>
+      <p>已安装插件、插件配置、账号和客户端文件都会保留。当前增强连接会断开，桌面程序不会自动退出或重新启动。</p>
+      <p className="hint">保存后请先保存桌面客户端中的工作，再点击重新连接。</p>
+      {resetError && <div className="notice warning" role="alert">{resetError}</div>}
     </Modal>}
     {editing && <Modal title={`${editing.name} · 插件设置`} sub={editing.source === 'builtin' ? '保存后应用设置。内置增强可以停用，不能移除。' : '保存后应用设置；移除会停用此拓展包。'} onClose={() => !busy && setEditing(null)} foot={<>
       {editing.source !== 'builtin' && <Btn variant="danger" disabled={!!busy} onClick={async () => { if (!confirm(`移除插件「${editing.name}」？`)) return; if (await action('extension.remove', { id: editing.id }, editing.id)) setEditing(null); }}>移除插件</Btn>}

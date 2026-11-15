@@ -220,6 +220,55 @@ window.renderPage=(page=window.page||'agents')=>{window.page=page;const Page=pag
             expect(page.get_by_role('heading', name='测试预设', exact=True)).to_have_count(0)
             checks.append('A late stale directory response cannot overwrite a newer background snapshot')
 
+            # Use the real shipped directory in reverse order to exercise presentation after remote updates.
+            catalog_entries = json.loads((ROOT / 'server/seed-catalog.json').read_text(encoding='utf-8'))['providers']
+            reset('catalog')
+            page.evaluate("""providers=>{
+              window.catalog={...window.catalog,providers:[...providers].reverse(),version:3,source:'remote',syncing:false,warning:'',fetchedAt:'ordered-3'};
+              window.state.presets=window.catalog.providers.map(p=>({...p,id:p.key,nameZh:p.name,models:p.models||[]}));
+              window.state.catalog={version:3,source:'remote',syncing:false,fetchedAt:'ordered-3'};window.renderPage();
+            }""", catalog_entries)
+            names = page.locator('.catalog-card h3')
+            expect(names).to_have_count(len(catalog_entries))
+            assert names.all_text_contents()[:3] == ['OpenAI', 'Anthropic Claude', 'Google Gemini']
+            ordered = names.all_text_contents()
+            assert ordered.index('xAI Grok') < ordered.index('深度求索') < ordered.index('云桥AI 官方中转') < ordered.index('Ollama 本地')
+            assert ordered.index('云桥AI 官方中转') < ordered.index('OpenRouter')
+            page.get_by_label('搜索厂商或模型').fill('ChatGPT')
+            expect(names.first).to_have_text('OpenAI')
+            page.get_by_label('搜索厂商或模型').fill('Claude')
+            page.get_by_role('button', name='国际服务', exact=True).click()
+            expect(names).to_have_text(['Anthropic Claude'])
+            page.get_by_label('选择 Anthropic Claude', exact=True).check()
+            page.evaluate("""()=>{
+              window.catalog={...window.catalog,providers:[...window.catalog.providers].reverse(),version:4,fetchedAt:'ordered-4'};
+              window.state.catalog={...window.state.catalog,version:4,fetchedAt:'ordered-4'};window.renderPage();
+            }""")
+            expect(page.locator('.page-footnote')).to_contain_text('目录 v4')
+            expect(names).to_have_text(['Anthropic Claude'])
+            expect(page.get_by_label('选择 Anthropic Claude', exact=True)).to_be_checked()
+            expect(page.get_by_label('搜索厂商或模型')).to_have_value('Claude')
+            page.get_by_role('button', name='全部厂商', exact=True).click()
+            page.get_by_label('搜索厂商或模型').fill('')
+            assert names.all_text_contents() == ordered
+            checks.append('Real directory keeps OpenAI, Anthropic and Gemini first, then international/domestic/relay/local groups across reordered remote updates; filters and selection survive')
+
+            page.evaluate("window.renderPage('agents')")
+            dialog = wizard()
+            assert dialog.locator('.preset-item .ellipsis').all_text_contents()[:3] == ['OpenAI', 'Anthropic Claude', 'Google Gemini']
+            dialog.get_by_label('搜索供应商预设').fill('ChatGPT')
+            expect(dialog.locator('.preset-item .ellipsis')).to_have_text(['OpenAI'])
+            dialog.get_by_role('button', name='国际', exact=True).click()
+            expect(dialog.locator('.preset-item .ellipsis')).to_have_text(['OpenAI'])
+            checks.append('Shared client/provider preset picker uses the same priority and finds the OpenAI preset by ChatGPT alias')
+
+            page.evaluate("window.renderPage('providers')")
+            page.get_by_role('button', name='云端目录', exact=True).click()
+            cloud = page.get_by_role('dialog', name='云端目录', exact=True)
+            expect(cloud.locator('.cloud-item')).to_have_count(len(catalog_entries))
+            assert cloud.locator('.cloud-item .ellipsis').all_text_contents()[0:6:2] == ['OpenAI', 'Anthropic Claude', 'Google Gemini']
+            checks.append('Cloud-import chooser presents the same international-first order without changing imported data')
+
             assert not errors, errors
             checks.append('No renderer exceptions or real client/configuration/network actions occurred')
             browser.close()

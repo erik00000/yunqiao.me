@@ -1,0 +1,8 @@
+.extension-connection-recovery { align-items: flex-start; gap: 20px; }
+.extension-connection-recovery > .grow { min-width: 0; }
+.extension-connection-recovery p { margin: 7px 0 0; line-height: 1.7; overflow-wrap: anywhere; }
+.extension-recovery-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; max-width: 390px; flex: none; }
+@media (max-width: 1050px) {
+  .extension-connection-recovery { flex-direction: column; gap: 12px; }
+  .extension-recovery-actions { justify-content: flex-start; max-width: none; }
+}

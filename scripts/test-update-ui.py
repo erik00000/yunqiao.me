@@ -25,7 +25,7 @@ window.mount();
 FIXTURE = """()=>{
   window.calls=[];window.opened=[];window.windowOpens=[];window.pending=[];
   window.hold={};window.manualError='';window.websiteError='';
-  window.latest={ok:true,current:'0.6.0',version:'0.7.0',hasUpdate:true,mandatory:false,source:'github',url:'https://github.com/jxb412/aurora/releases/download/v0.7.0/YunQiaoAI-0.7.0-win-x64-setup.exe',releaseUrl:'https://github.com/jxb412/aurora/releases/tag/v0.7.0',assetName:'YunQiaoAI-0.7.0-win-x64-setup.exe',notes:'改进客户端配置与更新体验。'};
+  window.latest={ok:true,current:'0.6.0',version:'0.7.0',hasUpdate:true,mandatory:false,source:'github',url:'https://github.com/jxb412/yunqiao.me/releases/download/v0.7.0/YunQiaoAI-0.7.0-win-x64-setup.exe',releaseUrl:'https://github.com/jxb412/yunqiao.me/releases/tag/v0.7.0',assetName:'YunQiaoAI-0.7.0-win-x64-setup.exe',notes:'改进客户端配置与更新体验。'};
   window.manual=structuredClone(window.latest);
   window.website={...window.latest,source:'website',url:'https://yunqiao.me/downloads/YunQiaoAI-0.7.0-win-x64-setup.exe'};
   window.openResult={ok:true};

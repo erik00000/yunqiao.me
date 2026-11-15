@@ -39,7 +39,7 @@ const FLOATING_FILES=['runtime/state.js','core/appearance-runtime.js','runtime/d
 export function buildRuntimeSource(store:AuroraStore,state:ExtensionState,bridge:string,nativeModules=''):string{
   const enabled=(id:string)=>!BUILTINS.find(b=>b.id===id)?.unsupported&&effectiveEntry(state,`builtin:${id}`).enabled;
   const disabled=BUILTINS.filter(b=>!enabled(b.id)).map(b=>b.id),settings=backendSettings(store,state);
-  const flags=`window.__codexPlusBuiltinExtensionState=${JSON.stringify({disabled,replacedBy:{}})};globalThis.__codexPlusBuiltinInactive=new Set(${JSON.stringify(disabled)});window.__CODEX_PLUS_VERSION__='2.6.9 / Aurora';window.__CODEX_PLUS_BUILD__='aurora-0.6';window.__CODEX_PLUS_INSTANCE_LABEL__=${JSON.stringify(effectiveEntry(state,'builtin:instance-identity').config.label||'云桥 AI')};window.__CODEX_PLUS_PASTE_FIX__={enabled:${enabled('paste-fix')}};window.__CODEX_PLUS_FORCE_CHINESE_LOCALE__={enabled:${enabled('force-chinese-locale')},locale:'zh-CN'};window.__CODEX_PLUS_STATSIG_OVERRIDES__={enabled:${enabled('statsig-overrides')}};window.__CODEX_PLUS_HIDE_OFFICIAL_USAGE_ALERT__={enabled:false};window.__CODEX_PLUS_EXTERNAL_DREAM_SKIN_RUNTIME__=true;`;
+  const flags=`window.__codexPlusBuiltinExtensionState=${JSON.stringify({disabled,replacedBy:{}})};globalThis.__codexPlusBuiltinInactive=new Set(${JSON.stringify(disabled)});window.__CODEX_PLUS_VERSION__='2.6.9 / yunqiao.me';window.__CODEX_PLUS_BUILD__='yunqiao.me-0.6';window.__CODEX_PLUS_INSTANCE_LABEL__=${JSON.stringify(effectiveEntry(state,'builtin:instance-identity').config.label||'云桥 AI')};window.__CODEX_PLUS_PASTE_FIX__={enabled:${enabled('paste-fix')}};window.__CODEX_PLUS_FORCE_CHINESE_LOCALE__={enabled:${enabled('force-chinese-locale')},locale:'zh-CN'};window.__CODEX_PLUS_STATSIG_OVERRIDES__={enabled:${enabled('statsig-overrides')}};window.__CODEX_PLUS_HIDE_OFFICIAL_USAGE_ALERT__={enabled:false};window.__CODEX_PLUS_EXTERNAL_DREAM_SKIN_RUNTIME__=true;`;
   const prelude=script('composer-readiness.js')+'\n'+script('native-fast-unlock.js')+'\n'+script('native-fast-rspack.js')+`\nwindow.__codexPlusNativeFastUnlock?.runtime.update(${JSON.stringify(settings)});\n`+script('native-predictions.js')+`\nwindow.__codexPlusNativePredictions?.runtime.update(${JSON.stringify(settings)});\n`;
   const bundled=BUNDLED.filter(id=>{const e=effectiveEntry(state,`bundled:${id}`);return e.installed&&e.enabled;}).map(id=>packageScript(id,state)).join('\n');
   const theme=enabled('dream-skin')?dreamThemeSource(effectiveEntry(state,'builtin:dream-skin').config):'';
@@ -66,7 +66,7 @@ export class ExtensionRuntime{
     }catch(e){return{connected:cdp.connected,targetTitle:cdp.target.title,targetUrl:cdp.target.url,applied:[],errors:[{id:'runtime',message:(e as Error).message}]};}
   }
   async connect(payload:any):Promise<any>{
-    const state=loadState(this.store),info=await desktopInfo(state.connection.lastVersion,state.connection.exePath,state.connection.port);
+    const state=loadState(this.store),info=await desktopInfo(state.connection.lastVersion,state.connection.exePath,state.connection.port,true);
     if(info.versionChanged&&!payload.acknowledgeVersion)throw new Error(`客户端已从 ${info.lastVersion} 更新到 ${info.version}，请勾选确认版本变化后重新连接`);
     if(this.cdp?.connected)await this.disconnect();
     try{const opened=await openDesktopConnection({...state.connection,launch:payload.launch===true});this.cdp=opened.cdp;this.bridge=await this.cdp.setBridge((route,p)=>this.route(route,p));state.connection.lastVersion=info.version;saveState(this.store,state);this.lastError='';await this.apply();return{ok:true,message:'已连接兼容桌面，扩展按实际加载结果显示',launched:opened.launched,runtime:await this.status()};}
@@ -109,7 +109,7 @@ export class ExtensionRuntime{
       saveState(this.store,state);this.scheduleApply();return backendSettings(this.store,state);
     });
     if(route==='/settings/catalog')return {status:'ok',groups:[],items:[]};
-    if(route==='/backend/status')return {status:'ok',version:'2.6.9 / Aurora',build:'aurora-0.6',available:true};
+    if(route==='/backend/status')return {status:'ok',version:'2.6.9 / yunqiao.me',build:'yunqiao.me-0.6',available:true};
     if(route==='/stepwise/settings'){const info=stepwiseSettings(this.store);return{status:info.status,settings:info.settings};}
     if(route==='/stepwise/generate')return generateSuggestions(this.store,payload);
     if(route==='/stepwise/test'){const info=stepwiseSettings(this.store);return{status:info.settings.apiKeyConfigured?'ok':'failed',message:info.settings.apiKeyConfigured?'已配置供应商；点击生成建议将实际调用模型':'请先配置供应商 API Key'};}
@@ -117,12 +117,12 @@ export class ExtensionRuntime{
     if(route==='/thread-usage-live'){
       const id=String(payload.session_id||'').replace(/^local:/,'');const result=threadUsage(id);
       if(!result.events.length){
-        result.events=this.store.recentRequests(300).filter(r=>r.threadId===id).reverse().map(r=>({t:r.ts,turn_id:null,input_tokens:r.estimated?null:r.inputTokens,output_tokens:r.estimated?null:r.outputTokens,cached_input_tokens:r.cacheReadKnown?r.cacheRead:null,cache_write_tokens:r.cacheWriteKnown?r.cacheWrite:null,total_tokens:r.estimated?null:r.inputTokens+r.outputTokens,context_window:null,turn_output_tokens:null,source:'aurora-gateway'}));
+        result.events=this.store.recentRequests(300).filter(r=>r.threadId===id).reverse().map(r=>({t:r.ts,turn_id:null,input_tokens:r.estimated?null:r.inputTokens,output_tokens:r.estimated?null:r.outputTokens,cached_input_tokens:r.cacheReadKnown?r.cacheRead:null,cache_write_tokens:r.cacheWriteKnown?r.cacheWrite:null,total_tokens:r.estimated?null:r.inputTokens+r.outputTokens,context_window:null,turn_output_tokens:null,source:'yunqiao.me-gateway'}));
         if(result.events.length)result.status='ok';
       }
       const live=activeRequests(this.store).filter(r=>r.threadId===id).at(-1);
       if(live&&[live.inputTokens,live.outputTokens,live.cacheRead,live.cacheWrite].some(v=>v!==undefined)){
-        result.events.push({t:new Date().toISOString(),turn_id:`gateway:${live.id}`,input_tokens:live.inputTokens??null,output_tokens:live.outputTokens??null,cached_input_tokens:live.cacheRead??null,cache_write_tokens:live.cacheWrite??null,total_tokens:live.inputTokens!==undefined&&live.outputTokens!==undefined?live.inputTokens+live.outputTokens:null,context_window:result.events.at(-1)?.context_window??null,turn_output_tokens:null,source:'aurora-gateway-live'});result.status='ok';
+        result.events.push({t:new Date().toISOString(),turn_id:`gateway:${live.id}`,input_tokens:live.inputTokens??null,output_tokens:live.outputTokens??null,cached_input_tokens:live.cacheRead??null,cache_write_tokens:live.cacheWrite??null,total_tokens:live.inputTokens!==undefined&&live.outputTokens!==undefined?live.inputTokens+live.outputTokens:null,context_window:result.events.at(-1)?.context_window??null,turn_output_tokens:null,source:'yunqiao.me-gateway-live'});result.status='ok';
       }
       return result;
     }

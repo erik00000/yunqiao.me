@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { AuroraStore, DEFAULT_SETTINGS, getStore, setDataDir } from '../core/store/index.js';
-import { memberAction } from './member.js';
+import { memberAction, startMemberSessionMaintenance } from './member.js';
 import { describeClientLifecycle, restartClient } from './clientLifecycle.js';
 import { selectClientDesktop } from './clientDesktopSelection.js';
 import { runtimeFor } from '../core/extensions/runtime.js';
@@ -13,6 +13,7 @@ import { getCoexistCatalog, isCodexCoexistConfigured } from '../core/gateway/coe
 import { GatewayServer, resetGateway } from '../core/gateway/server.js';
 import { runAction, type ActionDeps } from '../core/actions.js';
 import type { UsageRecord } from '../core/store/types.js';
+import { onDetectionUpdated } from '../core/agents/detectionAsync.js';
 
 const DEV = process.env.AURORA_DEV === '1' && !app.isPackaged;
 const UI_URL = process.env.AURORA_UI_URL || 'http://localhost:5199';
@@ -24,6 +25,8 @@ let gatewayError = '';
 let quitting = false;
 let gatewayChange: Promise<void> | null = null;
 let clientScanTimer: ReturnType<typeof setInterval> | undefined;
+let stopDetectionUpdates: (() => void) | undefined;
+let stopMemberSessionMaintenance: (() => void) | undefined;
 let localClientWarnings: string[] = [];
 const recent: UsageRecord[] = [];
 const uiFile = path.join(__dirname, '..', 'ui', 'index.html');
@@ -123,8 +126,10 @@ async function trayConnect(agentId: string, providerId: string, model: string) {
   try {
     const states = store.listAgents();
     const previous = states[agentId] || (agentId === 'codex-cli' ? states['chatgpt-desktop'] || states['codex-desktop'] : undefined);
-    const authMode = previous?.connected || previous?.pendingReapply ? previous.authMode : 'api';
-    const result = await runAction(deps(), 'agent.connect', { agentId, providerId, model, mode: 'gateway', authMode });
+    const retained = previous?.connected || previous?.pendingReapply ? previous : undefined;
+    const authMode = retained?.authMode || 'api';
+    const permissionMode = retained?.permissionMode || 'preserve', skipOnboarding = retained?.skipOnboarding === true;
+    const result = await runAction(deps(), 'agent.connect', { agentId, providerId, model, mode: 'gateway', authMode, permissionMode, skipOnboarding });
     if (!result?.ok) throw new Error(result?.message || '接入失败');
   }
   catch (e: any) { dialog.showErrorBox('客户端配置失败', e.message); }
@@ -164,7 +169,7 @@ async function handleAction(action: string, payload: any) {
     case 'app.isDev': return { dev: !app.isPackaged, root: app.getAppPath() };
     case 'app.gitUpdate': return gitUpdate();
     case 'app.export': {
-      const r = await dialog.showSaveDialog({ defaultPath: path.join(app.getPath('documents'), `aurora-backup-${Date.now()}.json`), filters: [{ name: '云桥 AI 配置备份（含密钥，请妥善保管）', extensions: ['json'] }] });
+      const r = await dialog.showSaveDialog({ defaultPath: path.join(app.getPath('documents'), `yunqiao.me-backup-${Date.now()}.json`), filters: [{ name: '云桥 AI 配置备份（含密钥，请妥善保管）', extensions: ['json'] }] });
       if (r.canceled || !r.filePath) return { ok: false };
       fs.writeFileSync(r.filePath, JSON.stringify(store.exportAll(), null, 2), { encoding: 'utf8', mode: 0o600 }); return { ok: true, path: r.filePath };
     }
@@ -201,6 +206,9 @@ if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', showWindow);
   app.whenReady().then(async () => {
+    stopDetectionUpdates = onDetectionUpdated(() => {
+      if (win && !win.isDestroyed()) win.webContents.send('aurora:gateway', status());
+    });
     ipcMain.handle('aurora:invoke', async (event, req) => {
       if (event.sender !== win?.webContents || event.senderFrame !== event.sender.mainFrame || !trustedFrame(event.senderFrame?.url)) return { error: '未经授权的界面请求' };
       try { if (!req || typeof req.action !== 'string') throw new Error('无效操作'); return await handleAction(req.action, req.payload || {}); } catch (e: any) { return { error: String(e.message || e) }; }
@@ -208,6 +216,7 @@ else {
     ipcMain.handle('aurora:recent', event => event.sender === win?.webContents && trustedFrame(event.senderFrame?.url) ? recent.slice(0, 100) : []);
     refreshLocalClients(true);
     createApplicationMenu(); createWindow(); createTray(); if (store.getSettings().autoStartGateway) await ensureGateway().catch(() => {}); applyLoginItem(store.getSettings().launchAtLogin);
+    stopMemberSessionMaintenance = startMemberSessionMaintenance();
     clientScanTimer = setInterval(() => refreshLocalClients(), 30_000);
     clientScanTimer.unref();
     app.on('activate', showWindow);
@@ -215,4 +224,4 @@ else {
 }
 app.on('before-quit', () => { quitting = true; });
 app.on('window-all-closed', () => { if (!store.getSettings().closeToTray && process.platform !== 'darwin') app.quit(); });
-app.on('will-quit', () => { if (clientScanTimer) clearInterval(clientScanTimer); void gateway?.stop(); tray?.destroy(); });
+app.on('will-quit', () => { stopDetectionUpdates?.(); stopMemberSessionMaintenance?.(); if (clientScanTimer) clearInterval(clientScanTimer); void gateway?.stop(); tray?.destroy(); });

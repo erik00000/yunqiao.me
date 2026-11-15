@@ -63,7 +63,7 @@
   "macOS": {
     "arm64": {
       "runner": "macos-15",
-      "jobUrl": "https://github.com/jxb412/aurora/actions/runs/43689616128/job/132737284998",
+      "jobUrl": "https://github.com/jxb412/yunqiao.me/actions/runs/43689616128/job/132737284998",
       "coreSuites": 31,
       "nativeBundleChecks": 8,
       "nativeLifecycleChecks": 6,
@@ -110,7 +110,7 @@
     },
     "x64": {
       "runner": "macos-15-intel",
-      "jobUrl": "https://github.com/jxb412/aurora/actions/runs/43689616128/job/132737284738",
+      "jobUrl": "https://github.com/jxb412/yunqiao.me/actions/runs/43689616128/job/132737284738",
       "coreSuites": 31,
       "nativeBundleChecks": 8,
       "nativeLifecycleChecks": 6,
@@ -158,7 +158,7 @@
   },
   "githubValidation": {
     "runId": 43689616128,
-    "url": "https://github.com/jxb412/aurora/actions/runs/43689616128",
+    "url": "https://github.com/jxb412/yunqiao.me/actions/runs/43689616128",
     "conclusion": "success",
     "revision": "0202d85e94de893e57dd598e9fe57d30936bb768"
   },

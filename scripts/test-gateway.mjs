@@ -17,7 +17,7 @@ await build({ stdin: { contents: [
 ].map((file) => `export * from ${JSON.stringify(path.join(root, file).replaceAll('\\', '/'))};`).join('\n'),
   resolveDir: root, loader: 'ts' }, bundle: true, platform: 'node', format: 'cjs', outfile: bundle });
 const { AuroraStore, GatewayServer, Router, fetchCloudCatalog, validateCloudCatalog, importCloudProviders, applyMiddleware, parseClientRequest,
-  encodeAnthropicRequest, createEncoder, buildUpstreamHttp } = createRequire(import.meta.url)(bundle);
+  encodeAnthropicRequest, createEncoder, buildUpstreamHttp, parseUpstreamJson, buildClientJson } = createRequire(import.meta.url)(bundle);
 let checks = 0;
 const check = (name, assertion) => { assertion(); checks++; console.log(`PASS ${name}`); };
 let requests = [];
@@ -35,6 +35,13 @@ const upstream = http.createServer(async (req, res) => {
   for await (const chunk of req) chunks.push(chunk);
   const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
   requests.push({ body, key: req.headers.authorization });
+  if (body.model === 'header-error' || body.model === 'header-stream-error') {
+    const message = ['Rejected', req.headers.authorization, String(req.headers.authorization).replace(/^Bearer\s+/i, ''),
+      req.headers['x-vendor-secret'], req.headers['x-custom-auth'], String(req.headers['x-custom-auth']).replace(/^Basic\s+/i, ''), req.headers['x-short']].join(' ');
+    if (body.stream) { res.writeHead(200, { 'content-type': 'text/event-stream' }); res.end(`data: ${JSON.stringify({ error: { message } })}\n\n`); }
+    else { res.writeHead(400, { 'content-type': 'application/json' }); res.end(JSON.stringify({ error: { message } })); }
+    return;
+  }
   if (req.headers.authorization === 'Bearer mock-bad-key') {
     res.writeHead(401, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ error: { message: 'Rejected mock-bad-key' } }));
@@ -149,6 +156,41 @@ try {
   store.saveProvider({ id: provider.id, enabled: true });
   check('unknown model is not sent to unrelated configured providers', () => assert.equal(router.resolveModel('unknown-model').candidates.length, 0));
 
+  const colonModel = 'org/model:1';
+  const colonProvider = store.saveProvider({ name: 'Gemini colon route', enabled: true, format: 'openai-chat', baseUrl: upstreamUrl + '/v1',
+    apiKeys: [{ id: 'colon-key', key: 'mock-colon-key', enabled: true, weight: 1 }], models: [{ id: colonModel }] });
+  for (const encoded of [false, true]) {
+    for (const stream of [false, true]) {
+      const qualified = `${colonProvider.id}/${colonModel}`;
+      const action = stream ? 'streamGenerateContent?alt=sse' : 'generateContent';
+      response = await post(`/v1beta/models/${encoded ? encodeURIComponent(qualified) : qualified}:${action}`, { contents: [{ role: 'user', parts: [{ text: 'Verify colon model' }] }] });
+      const body = await response.text();
+      check(`Gemini ${encoded ? 'encoded' : 'native SDK'} ${stream ? 'streaming' : 'JSON'} URL preserves model namespace and colon`, () => {
+        assert.equal(response.status, 200, body); assert.equal(requests.at(-1).body.model, colonModel);
+        assert.equal(response.headers.get('x-aurora-model'), encodeURIComponent(colonModel)); assert(body.includes('Verify colon model'));
+      });
+    }
+  }
+
+  const headerSecrets = ['mock-custom-bearer-private', 'mock-vendor-header-private', 'bW9jay1jdXN0b20tcHJpdmF0ZTpwYXNzd29yZA=='];
+  const headerProvider = store.saveProvider({ name: 'Header authentication', enabled: true, format: 'openai-chat', baseUrl: upstreamUrl + '/v1',
+    apiKeys: [{ id: 'header-key', key: 'mock-header-provider-key', enabled: true, weight: 1 }],
+    headers: { authorization: `Bearer ${headerSecrets[0]}`, 'x-vendor-secret': headerSecrets[1], 'x-custom-auth': `Basic ${headerSecrets[2]}`, 'x-short': 'abc' },
+    models: [{ id: 'header-error' }, { id: 'header-stream-error' }] });
+  for (const stream of [false, true]) {
+    const model = stream ? 'header-stream-error' : 'header-error';
+    response = await post('/v1/chat/completions', chat(`${headerProvider.id}/${model}`, 'test header authentication', stream));
+    const wire = await response.text();
+    const record = store.recentRequests().find(item => item.providerId === headerProvider.id && item.model === model);
+    check(`custom authentication header errors are hidden from ${stream ? 'converted SSE' : 'HTTP'} responses and logs`, () => {
+      assert.equal(response.status, stream ? 200 : 400); assert(record?.error);
+      for (const output of [wire, record.error, ...(stream ? [] : [gateway.getStatus().lastError])]) {
+        for (const secret of headerSecrets) assert.equal(output.includes(secret), false, 'A custom header credential escaped');
+        assert(output.includes('[已隐藏密钥]')); assert(output.includes('abc'), 'Short strings should retain the existing redaction policy');
+      }
+    });
+  }
+
   response = await post('/v1/chat/completions', chat('test-model', '中文片段🌏', true));
   const streamed = await response.text();
   check('SSE preserves UTF-8 split inside a Chinese character', () => assert.ok(streamed.includes('中文片段🌏') && !streamed.includes('�')));
@@ -230,6 +272,18 @@ try {
   const geminiData = eventsFrom(geminiEvents);
   check('Gemini stream does not repeat accumulated text at completion', () => assert.equal(geminiData.flatMap((item) => item.candidates[0].content.parts).map((part) => part.text || '').join(''), '只出现一次'));
   check('Gemini stream assembles fragmented tool arguments', () => assert.deepEqual(geminiData.at(-1).candidates[0].content.parts[0].functionCall.args, { text: '中文' }));
+  const geminiThinking = parseUpstreamJson('gemini', { candidates: [{ content: { parts: [{ text: 'private reasoning', thought: true }, { text: 'visible answer' }] }, finishReason: 'STOP' }] });
+  check('Gemini non-streaming parser distinguishes thoughts from final answer text', () => assert.deepEqual(geminiThinking.blocks, [{ type: 'thinking', text: 'private reasoning' }, { type: 'text', text: 'visible answer' }]));
+  check('Gemini thought-only conversions never fabricate final answer text', () => {
+    for (const protocol of ['anthropic', 'openai-responses', 'openai-chat', 'gemini']) {
+      const context = { requestId: 'gemini-thought-test', model: 'model', clientModel: 'model', upstreamFormat: 'gemini' };
+      const onlyThoughts = { ...geminiThinking, blocks: geminiThinking.blocks.filter(block => block.type === 'thinking') };
+      const parsed = parseUpstreamJson(protocol, buildClientJson(protocol, onlyThoughts, context));
+      assert.equal(parsed.blocks.some(block => block.type === 'text' && block.text.trim()), false, protocol);
+      const answered = parseUpstreamJson(protocol, buildClientJson(protocol, geminiThinking, context));
+      assert.deepEqual(answered.blocks.filter(block => block.type === 'text'), [{ type: 'text', text: 'visible answer' }], protocol);
+    }
+  });
   for (const protocol of ['anthropic', 'openai-chat', 'openai-responses', 'gemini']) {
     const errorEncoder = createEncoder(protocol, { requestId: 'error', model: 'model', clientModel: 'model' });
     check(`${protocol} exposes upstream stream errors`, () => assert.ok(errorEncoder.push({ type: 'error', message: 'visible-error' }).includes('visible-error')));

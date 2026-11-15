@@ -9,6 +9,7 @@ declare(strict_types=1);
 
 const AURORA_DATA_DIR = '/www/aurora-data';
 const AURORA_VERSION = '1.0.0';
+const ADMIN_SESSION_LIFETIME = 43200;
 
 function data_path(string $name): string
 {
@@ -212,21 +213,36 @@ function boot_session(): void
     if (session_status() === PHP_SESSION_ACTIVE) {
         return;
     }
+    // A shared PHP session directory can be collected by another site's 24-minute
+    // default. Keep our sessions private and align storage with the login limit.
+    $directory = data_path('admin-sessions');
+    if (is_link($directory) || (!is_dir($directory) && !@mkdir($directory, 0700, true) && !is_dir($directory))) {
+        throw new RuntimeException('无法初始化管理登录存储');
+    }
+    @chmod($directory, 0700);
+    if (!is_writable($directory)) throw new RuntimeException('管理登录存储不可写');
+    session_save_path($directory);
+    ini_set('session.gc_maxlifetime', (string)ADMIN_SESSION_LIFETIME);
+    // System cron jobs often clean only PHP's shared directory, with PHP GC off.
+    ini_set('session.gc_probability', '1');
+    ini_set('session.gc_divisor', '100');
+    ini_set('session.use_strict_mode', '1');
+    ini_set('session.use_only_cookies', '1');
     session_set_cookie_params([
-        'lifetime' => 0,
+        'lifetime' => ADMIN_SESSION_LIFETIME,
         'path' => '/',
         'httponly' => true,
         'samesite' => 'Lax',
-        'secure' => !empty($_SERVER['HTTPS']),
+        'secure' => !empty($_SERVER['HTTPS']) && strtolower((string)$_SERVER['HTTPS']) !== 'off',
     ]);
     session_name('aurora_sid');
-    @session_start();
+    if (!session_start()) throw new RuntimeException('无法读取管理登录状态');
 }
 
 function is_logged_in(): bool
 {
     boot_session();
-    return !empty($_SESSION['aurora_admin']) && (int)($_SESSION['loginAt'] ?? 0) > time() - 43200;
+    return !empty($_SESSION['aurora_admin']) && (int)($_SESSION['loginAt'] ?? 0) > time() - ADMIN_SESSION_LIFETIME;
 }
 
 function require_login(): void
@@ -458,7 +474,7 @@ function track(string $kind, array $extra = []): void
         }
         return $a;
     }, ['days' => [], 'clients' => []]); }
-    catch (Throwable $error) { error_log('Aurora analytics write failed: ' . get_class($error)); }
+    catch (Throwable $error) { error_log('yunqiao.me analytics write failed: ' . get_class($error)); }
 }
 
 /** 把按天的原始数据压成前端要的形状 */

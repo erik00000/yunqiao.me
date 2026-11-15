@@ -144,7 +144,7 @@ try {
     assert.equal(fs.readFileSync(file, 'utf8'), original); assert.equal(missing.files[0].path, file);
     assert.throws(() => api.desktopDebugLaunch(api.detectCodingDesktop(absent), 9222), /未找到桌面程序/);
     const saved = adapter.connect({ ...context, expectedRevision: missing.revision }); assert.equal(saved.ok, true, saved.message);
-    assert.match(saved.message, /共享编程配置已保存并备份/); assert.match(saved.message, /不表示桌面版本已验证可用/); assert(saved.backup);
+    assert.match(saved.message, /共享编程配置已保存并备份/); assert.match(saved.message, /桌面版本尚未完成实际请求验证/); assert(saved.backup);
     assert.equal(fs.readFileSync(auth, 'utf8'), '{"fixture":"keep"}'); assert.equal(adapter.disconnect(saved.backup).ok, true); assert.equal(fs.readFileSync(file, 'utf8'), original);
     const plain = hostInstallation('preview-plain'); desktopArchive(plain); api.configureDesktopPath(plain.exe);
     const unsupported = adapter.preview(context); assert.equal(unsupported.ok, true, unsupported.message);

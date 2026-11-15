@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
-import { detectCodingDesktop, type CodingDesktopDetection } from './desktopDetection.js';
-import { runningCodingClientsSync } from './clientProcesses.js';
+import type { CodingDesktopDetection } from './desktopDetection.js';
+import { runningCodingClients, runningCodingClientsSync } from './clientProcesses.js';
+import { detectDesktopAsync } from './agents/detectionAsync.js';
 export { detectCodingDesktop, inspectCodingDesktop, resolveMacApplication } from './desktopDetection.js';
 export type { CodingDesktopDetection, DesktopDetectionOptions, MacApplication } from './desktopDetection.js';
 
@@ -17,8 +18,10 @@ export async function debugPortOpen(port = 9222): Promise<boolean> {
 export interface CodexDesktopInfo extends CodingDesktopDetection {
   running: boolean; debugPortOpen: boolean; versionChanged: boolean; lastVersion?: string; message?: string;
 }
-export async function desktopInfo(lastVersion?: string, exePath?: string, port = 9222): Promise<CodexDesktopInfo> {
-  const detected = detectCodingDesktop(exePath); const running = isCodexRunning(detected.executable); const open = await debugPortOpen(port);
+export async function desktopInfo(lastVersion?: string, exePath?: string, port = 9222, fresh = false): Promise<CodexDesktopInfo> {
+  const detected = await detectDesktopAsync(exePath, fresh);
+  const [processes, open] = await Promise.all([runningCodingClients(detected.executable ? [detected.executable] : []), debugPortOpen(port)]);
+  const running = processes.length > 0;
   return { ...detected, running, debugPortOpen: open, lastVersion, versionChanged: !!(lastVersion && detected.version && lastVersion !== detected.version),
     message: detected.detectionError || (!detected.installed ? '没有找到 ChatGPT 桌面版，可指定程序路径。' : !detected.supportsCodexConfig ? '尚未从安装资源确认编程桌面能力；连接时将检测实际页面。旧聊天客户端不支持 Codex 配置。' : running && !open ? '客户端正在运行但没有开启调试端口，请完全退出后使用启动并连接。' : undefined) };
 }
@@ -132,9 +135,9 @@ export async function openDesktopConnection(options: { port: number; exePath?: s
   const port = validateDebugPort(options.port); let launched = false;
   if (!await debugPortOpen(port)) {
     if (!options.launch) throw new Error('调试端口未开启，请完全退出客户端后选择启动并连接');
-    const d = detectCodingDesktop(options.exePath);
+    const d = await detectDesktopAsync(options.exePath, true);
     if (!d.executable) throw new Error(d.detectionError || '未找到桌面程序，请先指定程序路径');
-    if (isCodexRunning(d.executable)) throw new Error('客户端正在运行且未开启调试端口，请完全退出后重试');
+    if ((await runningCodingClients([d.executable])).length) throw new Error('客户端正在运行且未开启调试端口，请完全退出后重试');
     const launch = desktopDebugLaunch(d, port);
     const child = spawn(launch.command, launch.args, { detached: true, stdio: 'ignore', windowsHide: false, shell: false });
     await new Promise<void>((resolve, reject) => { child.once('spawn', () => resolve()); child.once('error', reject); }); child.unref(); launched = true;
@@ -150,5 +153,5 @@ export async function launchAndInject(scripts: Array<{ id: string; name: string;
   try { const opened = await openDesktopConnection({ port, launch: true }); cdp = opened.cdp; const active = scripts.filter(s => s.enabled && s.code.trim()); for (const s of active) await cdp.evaluate(s.code); return { ok: true, launched: opened.launched, injected: active.length, message: `已执行 ${active.length} 个自定义脚本` }; }
   catch (e) { return { ok: false, message: (e as Error).message }; } finally { cdp?.close(); }
 }
-export async function injectorStatus(): Promise<{ portOpen: boolean; running: boolean; installed: boolean }> { return { portOpen: await debugPortOpen(), running: isCodexRunning(), installed: detectCodingDesktop().installed }; }
+export async function injectorStatus(): Promise<{ portOpen: boolean; running: boolean; installed: boolean }> { const info = await desktopInfo(); return { portOpen: info.debugPortOpen, running: info.running, installed: info.installed }; }
 export const BUILTIN_INJECT_SCRIPTS: Array<{ id: string; name: string; enabled: boolean; code: string }> = [];

@@ -57,7 +57,7 @@
     }
   },
   "macOS": {
-    "workflow": "https://github.com/jxb412/aurora/actions/runs/43698055414",
+    "workflow": "https://github.com/jxb412/yunqiao.me/actions/runs/43698055414",
     "headSha": "abc3dc4d3b6e082619e03083c666c642aaefd2ec",
     "status": "success",
     "architectures": [
@@ -65,7 +65,7 @@
       "x64"
     ],
     "previousRun": {
-      "url": "https://github.com/jxb412/aurora/actions/runs/43697523204",
+      "url": "https://github.com/jxb412/yunqiao.me/actions/runs/43697523204",
       "note": "Native UI and packaged acceptance passed; a cache regression incorrectly used a Windows executable fixture on macOS. Corrected to a native app bundle and reran both architectures."
     },
     "results": {

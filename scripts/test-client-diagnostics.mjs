@@ -52,7 +52,8 @@ try {
   await check('applied configuration, original backup and current connection parameters are verified', async () => {
     const f = fixture('connected'); assert.equal((await f.connect()).ok, true);
     const checks = await diagnose(f);
-    for (const id of ['format', 'connection', 'models', 'credential', 'parameters', 'gateway', 'backup', 'drift']) assert.equal(checks.get(id)?.status, 'ok', id);
+    for (const id of ['format', 'connection', 'models', 'credential', 'parameters', 'gateway', 'backup-location', 'backup', 'drift']) assert.equal(checks.get(id)?.status, 'ok', id);
+    assert.equal(fs.existsSync(f.adapter.configPaths()[1]), false, 'Default API setup must not create Claude first-run state');
   });
   await check('token and port changes are detected even when applied file hash is unchanged', async () => {
     const f = fixture('settings'); assert.equal((await f.connect()).ok, true);

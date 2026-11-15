@@ -10,9 +10,9 @@ const bundle = path.join(scratch, 'updates.mjs');
 await build({ stdin: { contents: "export * from './src/core/cloud.ts'; export * from './src/core/releaseSources.ts';", resolveDir: process.cwd(), loader: 'ts' }, bundle: true, platform: 'node', format: 'esm', outfile: bundle, logLevel: 'silent' });
 const m = await import(pathToFileURL(bundle).href);
 const win = { platform: 'win', arch: 'x64' }, version = '0.7.0';
-const asset = (name, changes = {}) => ({ name, state: 'uploaded', size: 50_000_000, browser_download_url: `https://github.com/jxb412/aurora/releases/download/v${version}/${name}`, ...changes });
+const asset = (name, changes = {}) => ({ name, state: 'uploaded', size: 50_000_000, browser_download_url: `https://github.com/jxb412/yunqiao.me/releases/download/v${version}/${name}`, ...changes });
 const setup = `YunQiaoAI-${version}-win-x64-setup.exe`, portable = `YunQiaoAI-${version}-win-x64-portable.exe`;
-const release = (changes = {}) => ({ tag_name: `v${version}`, html_url: `https://github.com/jxb412/aurora/releases/tag/v${version}`, draft: false, prerelease: false, body: '正式版说明', published_at: '2026-11-15T00:00:00Z', assets: [asset(portable), asset(setup)], ...changes });
+const release = (changes = {}) => ({ tag_name: `v${version}`, html_url: `https://github.com/jxb412/yunqiao.me/releases/tag/v${version}`, draft: false, prerelease: false, body: '正式版说明', published_at: '2026-11-15T00:00:00Z', assets: [asset(portable), asset(setup)], ...changes });
 const website = (changes = {}) => ({ version, platform: 'win', arch: 'x64', url: `https://ai.haowucm.cn/releases/${setup}`, notes: '官网正式版', mandatory: false, hasUpdate: true, ...changes });
 let passed = 0;
 async function test(name, fn) { await fn(); passed++; console.log(`PASS ${name}`); }
@@ -67,7 +67,7 @@ try {
     await expectFallback(release({ assets: names.map(name => asset(name)) }));
   });
   await test('bad or cross-repository asset URLs cannot be offered', async () => {
-    for (const url of ['http://github.com/jxb412/aurora/releases/download/v0.7.0/' + setup, 'javascript:alert(1)', 'https://github.com.evil.test/jxb412/aurora/releases/download/v0.7.0/' + setup, 'https://github.com/attacker/aurora/releases/download/v0.7.0/' + setup, 'https://user:pass@github.com/jxb412/aurora/releases/download/v0.7.0/' + setup, 'https://github.com/jxb412/aurora/releases/download/v0.6.0/' + setup]) await expectFallback(release({ assets: [asset(setup, { browser_download_url: url })] }));
+    for (const url of ['http://github.com/jxb412/yunqiao.me/releases/download/v0.7.0/' + setup, 'javascript:alert(1)', 'https://github.com.evil.test/jxb412/yunqiao.me/releases/download/v0.7.0/' + setup, 'https://github.com/attacker/aurora/releases/download/v0.7.0/' + setup, 'https://user:pass@github.com/jxb412/yunqiao.me/releases/download/v0.7.0/' + setup, 'https://github.com/jxb412/yunqiao.me/releases/download/v0.6.0/' + setup]) await expectFallback(release({ assets: [asset(setup, { browser_download_url: url })] }));
   });
   await test('release URLs and empty or unuploaded assets are validated', async () => {
     await expectFallback(release({ html_url: 'https://github.com/other/repo/releases/tag/v0.7.0' }));
