@@ -18,7 +18,7 @@
 }
 ```
 
-目标来自完整 TOML 解析后的根配置与当前活动 profile，包括内置 `openai`。允许合法的引号、点号和中文标识；跳过非对象 provider、未激活 profile 的专有 provider、内部保留别名 `codex_plus_managed`。配置损坏时拒绝执行，不返回解析器携带的原始配置文本。
+目标来自完整 TOML 解析后的根配置与旧式 `profiles` 表中当前活动 profile，包括内置 `openai`。不自动识别新版 CLI 通过 `--profile` 选中的独立配置文件。允许合法的引号、点号和中文标识；跳过非对象 provider、未激活 profile 的专有 provider、内部保留别名 `codex_plus_managed`。配置损坏时拒绝执行，不返回解析器携带的原始配置文本。
 
 来源和数量按唯一原生 `threads.id` 去重，活动/归档状态以同一行的 `archived` 为准。历史 provider 即使已从配置删除仍显示。日志里残留的旧 provider 不会把已经迁至另一区域的原生会话重新选中。仅有日志、重复 canonical 行、无有效 provider 的记录会提示，其数量不会伪装成可迁移区域。
 

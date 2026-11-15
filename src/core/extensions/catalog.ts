@@ -16,7 +16,7 @@ export const BUILTINS: BuiltinDefinition[] = [
   { id:'instance-identity',name:'实例身份提示',description:'在桌面窗口显示当前连接名称',configSchema:{label:{type:'string',title:'实例名称',default:'云桥 AI'}} },
   { id:'session-title-hook',name:'会话标题中间件',description:'为已注册 session/title 处理器的扩展提供原生标题读写' },
   { id:'session-delete',name:'会话归档与撤销',description:'通过原生客户端移入归档并可撤销，保留完整会话文件' },
-  { id:'markdown-export',name:'Markdown 导出',description:'从原生会话文件导出完整对话 Markdown' },
+  { id:'markdown-export',name:'Markdown 导出',description:'导出本地对话 Markdown；超长会话会标明导出范围' },
   { id:'thread-id-badge',name:'会话 ID 角标',description:'显示并复制原生会话 ID' },
   { id:'thread-scroll-restore',name:'滚动位置恢复',description:'切换会话时恢复阅读位置',setting:'codexAppThreadScrollRestore' },
   { id:'conversation-view',name:'对话宽度',description:'在原生对话中切换内容显示宽度' },
