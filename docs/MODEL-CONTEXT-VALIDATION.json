@@ -1,0 +1,50 @@
+{
+  "date": "2026-11-15",
+  "revision": "ff605f18ade5242be1ee896acff04747a869d533",
+  "windows": {
+    "coreSuites": 36,
+    "corePassed": true,
+    "contextBackendChecks": 18,
+    "contextBrowserChecks": 12,
+    "contextBrowserPassed": true,
+    "nativePackage": {
+      "passed": true,
+      "count": 14,
+      "executable": "release\\context-debug-0.6.0\\win-unpacked\\YunQiaoAI.exe",
+      "exeSha256": "832898e68ffee8f0c0ef0fde3ad00b9bbaa5b2ff85e78b087662f6a99e532376",
+      "asarSha256": "60ee35b19900cdb1fde9314724808c270d6fb47a3b5c1723c35f9fb850f51125",
+      "build": {
+        "id": "20261115T082905Z-ff605f18",
+        "builtAt": "2026-11-15T08:29:05.339Z",
+        "revision": "ff605f18",
+        "channel": "local"
+      },
+      "resourceFilesVerified": 188
+    }
+  },
+  "macos": {
+    "status": "passed",
+    "runUrl": "https://github.com/jxb412/aurora/actions/runs/43694767981",
+    "architectures": [
+      "arm64",
+      "x64"
+    ],
+    "coreSuitesPerArchitecture": 36,
+    "contextBrowserChecksPerArchitecture": 12,
+    "packagedChecksPerArchitecture": 12
+  },
+  "scope": [
+    "editable provider model context",
+    "application-native batch context form",
+    "default recommendations for missing GPT/Codex text context",
+    "model-management batch selection",
+    "preserve explicit limits on synchronization",
+    "apply API model context when reconnecting"
+  ],
+  "limitations": [
+    "Model limits are recommendations unless supplied explicitly; they cannot enlarge upstream capacity.",
+    "Existing compression thresholds are preserved, not recalculated when changing context.",
+    "Third-party coexistence Responses compact is not implemented.",
+    "No real client configuration was changed during validation and no public release was published."
+  ]
+}
