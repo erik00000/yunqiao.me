@@ -78,10 +78,13 @@ class CatalogHandler(BaseHTTPRequestHandler):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--exe', type=Path, default=ROOT / 'release/win-unpacked/YunQiaoAI.exe')
+    parser.add_argument('--launcher', type=Path, help='Launch a portable wrapper and verify its extracted runtime against --exe')
     parser.add_argument('--version', default='0.6.0')
     args = parser.parse_args()
     executable = args.exe.resolve()
     assert executable.is_file(), f'Build the release first: {executable}'
+    launcher = args.launcher.resolve() if args.launcher else executable
+    assert launcher.is_file(), f'Portable wrapper is missing: {launcher}'
     resources = executable.parent / 'resources'
     asar = resources / 'app.asar'
     assert asar.is_file(), 'Packaged app.asar is missing'
@@ -133,10 +136,10 @@ def main():
     errors = []
     try:
         process = subprocess.Popen([
-            str(executable), f'--remote-debugging-port={debug_port}', f'--user-data-dir={chromium}',
+            str(launcher), f'--remote-debugging-port={debug_port}', f'--user-data-dir={chromium}',
         ], cwd=profile, env=environment, stdout=logs, stderr=logs,
            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-        deadline = time.monotonic() + 35
+        deadline = time.monotonic() + (60 if args.launcher else 35)
         while time.monotonic() < deadline:
             assert process.poll() is None, f'Packaged executable exited; see {profile / "packaged.log"}'
             try:
@@ -158,10 +161,22 @@ def main():
             assert state['version'] == args.version and Path(state['dataDir']).resolve() == data.resolve(), state
             assert state['providers'] == 0, 'Acceptance must use a fresh supplier profile'
             packaged = page.evaluate("() => window.aurora.invoke('app.isDev')")
-            assert packaged['dev'] is False and Path(packaged['root']).resolve() == asar.resolve(), packaged
+            runtime_asar = Path(packaged['root']).resolve()
+            assert packaged['dev'] is False and runtime_asar.is_file(), packaged
+            if args.launcher:
+                assert sha256(runtime_asar) == sha256(asar), 'Portable wrapper extracted a different app.asar'
+                for record in manifest:
+                    file = runtime_asar.parent / 'codexplusplus' / record['path']
+                    assert file.is_file() and sha256(file) == record['sha256'], record['path']
+                checks.append('Portable wrapper extracts the verified application and all 217 pinned resources')
+            else:
+                assert runtime_asar == asar.resolve(), packaged
             checks.append('Actual packaged EXE renders app.asar with an isolated data directory')
 
-            page.wait_for_function("async () => (await window.aurora.invoke('gateway.status')).running === true")
+            deadline = time.monotonic() + 15
+            while not page.evaluate("async () => (await window.aurora.invoke('gateway.status')).running === true"):
+                assert time.monotonic() < deadline, 'Packaged gateway startup timed out'
+                page.wait_for_timeout(200)
             with urllib.request.urlopen(f'http://127.0.0.1:{port}/health', timeout=5) as response:
                 health = json.load(response)
                 assert health == {'ok': True, 'running': True}, health
@@ -238,6 +253,7 @@ def main():
                 'version': args.version, 'passed': True, 'count': len(checks), 'checks': checks,
                 'executable': str(executable.relative_to(ROOT)) if executable.is_relative_to(ROOT) else str(executable),
                 'exeSha256': sha256(executable), 'asarSha256': sha256(asar),
+                **({'portable': str(launcher.relative_to(ROOT)), 'portableSha256': sha256(launcher)} if args.launcher and launcher.is_relative_to(ROOT) else {}),
                 'build': build,
                 'resourceFilesVerified': len(manifest), 'profile': 'isolated temporary app, gateway and client directories',
                 'membershipPublicConfigWarning': membership_warning,
@@ -248,7 +264,10 @@ def main():
             browser.close()
     finally:
         if process and process.poll() is None:
-            process.terminate()
+            if args.launcher and os.name == 'nt':
+                subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+            if process.poll() is None:
+                process.terminate()
             try:
                 process.wait(timeout=10)
             except subprocess.TimeoutExpired:

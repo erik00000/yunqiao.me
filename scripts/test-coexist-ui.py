@@ -184,7 +184,10 @@ def main():
                 dialog.get_by_role('button', name='恢复原配置', exact=True).click()
                 expect(dialog).not_to_be_visible()
 
-            page.wait_for_function("async () => (await window.aurora.invoke('gateway.status')).running === true")
+            deadline = time.monotonic() + 15
+            while not rpc('gateway.status')['running']:
+                assert time.monotonic() < deadline, 'Isolated gateway startup timed out'
+                page.wait_for_timeout(200)
             initial = state()
             assert Path(initial['dataDir']).resolve() == data
             assert len(initial['providers']) == 1 and len(initial['localClients']['sources']) == 2
@@ -242,11 +245,16 @@ def main():
             config_file.write_text(configuration('fixture-source-key-two', 'relay-model-two'), encoding='utf-8', newline='\n')
             go('我的供应商')
             # Do not invoke localClients.scan: the running main process must discover this change itself.
-            page.wait_for_function("""async id => {
-                const current=await window.aurora.invoke('state.get');
-                return current.providers.some(p=>p.id===id && p.models.some(m=>m.id==='relay-model-two'));
-            }""", arg=supplier['id'], timeout=45000, polling=1000)
-            refreshed = state()
+            # wait_for_function polls a synchronous predicate; an async Promise can be truthy
+            # before its boolean result resolves. Await each IPC call explicitly in Python.
+            deadline = time.monotonic() + 45
+            while True:
+                refreshed = state()
+                updated = next((item for item in refreshed['providers'] if item['id'] == supplier['id']), None)
+                if updated and updated['apiKeys'][0]['key'] == 'fixture-source-key-two' and any(model['id'] == 'relay-model-two' for model in updated['models']):
+                    break
+                assert time.monotonic() < deadline, 'Background scanning did not import the changed source key and model within 45 seconds'
+                page.wait_for_timeout(1000)
             updated = next(item for item in refreshed['providers'] if item['id'] == supplier['id'])
             assert len(refreshed['providers']) == 1 and updated['apiKeys'][0]['key'] == 'fixture-source-key-two'
             assert set(model['id'] for model in updated['models']) == {'relay-model-one', 'relay-model-two'}

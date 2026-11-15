@@ -18,7 +18,11 @@ interface ExtensionState {
 const SOURCES: Record<string, string> = { all: '全部插件', builtin: '内置增强', bundled: '官方拓展包', public: '公开市场', full: '完整索引', installed: '已安装' };
 const STATUS: Record<string, string> = { available: '可安装', installed: '已安装', active: '已生效', 'needs-connection': '等待连接', unsupported: '暂不兼容', error: '运行异常' };
 const packageLimitations = (id: string) => id === 'bundled:agent-pet' ? '支持随附图片、动图与音效。自定义音效导入、大肥鱼余额及专项统计尚未接入。' : '';
-const packageDescription = (item: ExtensionItem) => item.id === 'bundled:agent-pet' ? '在桌面客户端显示图片或动图桌宠，支持按压互动与内置音效。' : item.description;
+const PACKAGE_DESCRIPTIONS: Record<string, string> = {
+  'bundled:agent-pet': '在桌面客户端显示图片或动图桌宠，支持按压互动与内置音效。',
+  'bundled:proxy-request-status': '请求经过云桥网关时，在桌面客户端输入框上方显示发送、等待、重试和生成进度。停用后不再显示或查询请求状态。',
+};
+const packageDescription = (item: ExtensionItem) => PACKAGE_DESCRIPTIONS[item.id] || item.description;
 const unsupportedPetField = (key: string) => /^codexAppWhaleBalance/.test(key) || ['customSoundPress', 'customSoundRelease'].includes(key);
 
 export default function DesktopExtensions() {

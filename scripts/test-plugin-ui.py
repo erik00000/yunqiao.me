@@ -18,9 +18,10 @@ window.renderPage=(page='plugins')=>{window.page=page;const Page=page==='codex'?
         build = "require('esbuild').buildSync(" + json.dumps({'stdin': {'contents': source, 'resolveDir': str(ROOT), 'loader': 'tsx'}, 'bundle': True, 'platform': 'browser', 'format': 'iife', 'outfile': str(bundle), 'define': {'process.env.NODE_ENV': '"production"'}}) + ')'
         subprocess.run(['node', '-e', build], cwd=ROOT, check=True)
         packages = []
-        for name in ['image-overlay', 'agent-pet', 'typing-effects']:
+        for name in ['image-overlay', 'agent-pet', 'typing-effects', 'usage-statusline', 'proxy-request-status']:
             manifest = json.loads((ROOT / f'third_party/codexplusplus/materialized/extensions/{name}/codexpp.json').read_text(encoding='utf-8'))
-            packages.append({'id': 'bundled:' + name, 'name': manifest['name'], 'description': manifest['description'], 'source': 'bundled', 'version': manifest['version'], 'license': 'AGPL-3.0-only', 'installed': True, 'enabled': False, 'status': 'installed', 'configSchema': manifest['config'], 'config': {key: value.get('default') for key, value in manifest['config'].items()}})
+            schema = manifest.get('config', {})
+            packages.append({'id': 'bundled:' + name, 'name': manifest['name'], 'description': manifest['description'], 'source': 'bundled', 'version': manifest['version'], 'license': 'AGPL-3.0-only', 'installed': True, 'enabled': False, 'status': 'installed', 'configSchema': schema, 'config': {key: value.get('default') for key, value in schema.items()}})
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
             page = browser.new_page(viewport={'width': 1380, 'height': 1100})
@@ -65,8 +66,19 @@ window.renderPage=(page='plugins')=>{window.page=page;const Page=page==='codex'?
               }};
             }""", packages)
             page.add_script_tag(path=str(bundle))
-            expect(page.locator('.extension-card')).to_have_count(8)
+            expect(page.locator('.extension-card')).to_have_count(10)
             card = lambda name: page.locator('.extension-card').filter(has=page.get_by_role('heading', name=name, exact=True))
+            page.get_by_role('button', name='官方拓展包 5', exact=True).click()
+            expect(page.locator('.extension-card')).to_have_count(5)
+            assert 'CODEX++' not in page.locator('main').inner_text().upper()
+            expect(card('请求状态条').locator('.extension-description')).to_contain_text('请求经过云桥网关时')
+            card('请求状态条').get_by_role('button', name='详情与来源 ↗', exact=True).click()
+            request_detail = page.get_by_role('dialog', name='请求状态条', exact=True)
+            expect(request_detail.get_by_text('AGPL-3.0-only', exact=True)).to_be_visible()
+            assert 'CODEX++' not in request_detail.inner_text().upper()
+            request_detail.get_by_role('button', name='关闭', exact=True).click()
+            page.get_by_role('button', name='全部插件', exact=True).click()
+            checks.append('All five bundled packages use product-facing descriptions while retaining their original license in details')
             card('背景图').get_by_role('button', name='设置', exact=True).click()
             dialog = page.get_by_role('dialog', name='背景图 · 插件设置', exact=True)
             dialog.get_by_role('button', name='选择图片', exact=True).click()
@@ -143,7 +155,7 @@ window.renderPage=(page='plugins')=>{window.page=page;const Page=page==='codex'?
             page.evaluate("window.fail['extension.list']='插件列表暂不可读'")
             page.get_by_role('button', name='刷新状态', exact=True).click()
             expect(page.get_by_role('alert')).to_contain_text('插件列表暂不可读')
-            expect(page.locator('.extension-card')).to_have_count(8)
+            expect(page.locator('.extension-card')).to_have_count(10)
             page.evaluate("delete window.fail['extension.list']")
             page.get_by_role('button', name='重新检测', exact=True).click()
             expect(page.get_by_role('alert')).to_have_count(0)
