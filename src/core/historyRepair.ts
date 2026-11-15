@@ -3,7 +3,7 @@ import path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import { parse as parseToml } from 'smol-toml';
 import { atomicWrite } from './agents/configFiles.js';
-import { acquireHistoryLock, assertClientsStopped, checkedFile, discoverHistoryDbs, fileHash, historyContext, inside, openHistoryDb, repairRoot, saveJournal, sqlIdentifier, tableColumns, valueHash, type HistoryContext, type SqlDb } from './historyRepairIO.js';
+import { acquireHistoryLock, assertClientsStopped, checkedFile, discoverHistoryDbs, fileHash, historyContext, historyLocation, normalizeHistoryContext, sameHistoryFile, inside, openHistoryDb, repairRoot, saveJournal, sqlIdentifier, tableColumns, valueHash, type HistoryContext, type SqlDb } from './historyRepairIO.js';
 
 type Cell = string | number | null;
 interface RowState { dbPath: string; table: 'threads' | 'local_thread_catalog'; keys: Record<string, Cell>; before: Record<string, Cell>; after: Record<string, Cell>; sessionId: string }
@@ -229,7 +229,7 @@ async function buildPlan(ctx: HistoryContext, input: HistoryRepairOptions): Prom
         const after: Record<string, Cell> = { ...row.values, model_provider: options.targetProvider };
         if (options.fixPaths && Object.hasOwn(after, 'rollout_path')) {
           const existing = typeof after.rollout_path === 'string' ? path.resolve(ctx.home, after.rollout_path) : '';
-          const matched = sources.find(s => path.resolve(s.path) === existing);
+          const matched = sources.find(s => existing && sameHistoryFile(ctx.home, s.path, existing));
           if (!matched && sources.length === 1 && (!existing || !fs.existsSync(existing))) { after.rollout_path = sources[0].path; item.changes.push('修复会话文件路径'); }
           else if (!matched) { item.status = 'blocked'; item.reason = '索引路径指向其他现存文件或有多个候选原文件，不能自动选择'; break; }
         }
@@ -258,9 +258,9 @@ function loadJournal(ctx: HistoryContext, id: string): Journal {
   const file = journalFile(ctx, id); checkedFile(repairRoot(ctx), file);
   if (fs.statSync(file).size > 64 * 1024 * 1024) throw new Error('备份清单过大');
   const value = JSON.parse(fs.readFileSync(file, 'utf8')) as Journal;
-  if (value.format !== 'aurora-history-provider-v1' || value.id !== id || path.resolve(value.home) !== path.resolve(ctx.home) || path.resolve(value.sqliteHome) !== path.resolve(ctx.sqliteHome)) throw new Error('备份不属于当前客户端配置目录');
+  if (value.format !== 'aurora-history-provider-v1' || value.id !== id || historyLocation(value.home) !== ctx.home || historyLocation(value.sqliteHome) !== ctx.sqliteHome) throw new Error('备份不属于当前客户端配置目录');
   const root = path.dirname(file);
-  for (const f of value.files) { checkedFile(ctx.home, f.path); checkedFile(root, f.original); if (!inside(root, f.staged)) throw new Error('备份中暂存路径无效'); }
+  for (const f of value.files) { checkedFile(ctx.home, f.path); checkedFile(root, f.original); if (!inside(historyLocation(root), historyLocation(f.staged))) throw new Error('备份中暂存路径无效'); }
   for (const db of value.databases) { checkedFile(ctx.sqliteHome, db.path); checkedFile(root, db.backup); }
   for (const row of value.rows) {
     if (!value.databases.some(db => db.path === row.dbPath) || !['threads', 'local_thread_catalog'].includes(row.table) || Object.keys(row.keys).some(k => !['id', 'thread_id', 'host_id'].includes(k)) || Object.keys(row.before).some(k => !['model_provider', 'rollout_path', 'cwd'].includes(k)) || Object.keys(row.after).sort().join() !== Object.keys(row.before).sort().join()) throw new Error('备份中的数据库变更超出允许范围');
@@ -361,6 +361,7 @@ async function restoreJournal(ctx: HistoryContext, journal: Journal, revision?: 
 }
 
 export function createHistoryRepairService(ctx: HistoryContext = historyContext()) {
+  ctx = normalizeHistoryContext(ctx);
   function backups() {
     const root = backupDir(ctx); if (!fs.existsSync(root)) return { ok: true, backups: [] };
     const list: any[] = [];

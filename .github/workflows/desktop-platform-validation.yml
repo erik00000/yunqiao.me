@@ -48,12 +48,18 @@ jobs:
       - name: Verify actual native runner architecture
         run: node -e "if (process.platform !== 'darwin' || process.arch !== '${{ matrix.arch }}') process.exit(1)"
       - name: Core features and configuration regressions
-        run: pnpm test
+        run: node scripts/test-core-all.mjs
       - run: node scripts/test-desktop-macos.mjs
+        if: ${{ !cancelled() }}
       - run: node scripts/test-client-lifecycle-macos-native.mjs
+        if: ${{ !cancelled() }}
       - run: pnpm build
+        id: build
+        if: ${{ !cancelled() }}
       - run: node scripts/test-desktop-shell.mjs
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
       - name: Client, plugin, history, balance and membership UI
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           python scripts/test-client-restart-ui.py
           python scripts/test-plugin-ui.py
@@ -61,8 +67,11 @@ jobs:
           python scripts/test-provider-balance-ui.py
           python scripts/test-membership-ui.py
       - name: Package native application for acceptance (no release)
+        id: package
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: npx electron-builder --mac --${{ matrix.arch }} --dir --publish never
       - name: Validate packaged native application and resources
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail

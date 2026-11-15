@@ -19,8 +19,8 @@ const fixtures = [];
 const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 async function until(condition, message, timeout = 15000) { const deadline = Date.now() + timeout; while (Date.now() < deadline) { if (await condition()) return; await wait(100); } throw new Error(message); }
 const text = file => { try { return fs.readFileSync(file, 'utf8'); } catch { return ''; } };
-const launches = fixture => text(path.join(fixture.bundle, 'launches.log')).trim().split('\n').filter(Boolean).length;
-const alive = fixture => { const pid = Number(text(path.join(fixture.bundle, 'pid'))); try { return !!pid && Date.now() - fs.statSync(path.join(fixture.bundle, 'heartbeat')).mtimeMs < 3000; } catch { return false; } };
+const launches = fixture => text(path.join(fixture.state, 'launches.log')).trim().split('\n').filter(Boolean).length;
+const alive = fixture => { const pid = Number(text(path.join(fixture.state, 'pid'))); try { return !!pid && Date.now() - fs.statSync(path.join(fixture.state, 'heartbeat')).mtimeMs < 3000; } catch { return false; } };
 const check = async (label, fn) => { await fn(); checks++; console.log(`PASS ${label}`); };
 const fixtureSource = `#import <Cocoa/Cocoa.h>
 #include <unistd.h>
@@ -34,7 +34,7 @@ const fixtureSource = `#import <Cocoa/Cocoa.h>
 - (BOOL)exists:(NSString *)name { return [[NSFileManager defaultManager] fileExistsAtPath:[self.root stringByAppendingPathComponent:name]]; }
 - (void)write:(NSString *)name text:(NSString *)value { [value writeToFile:[self.root stringByAppendingPathComponent:name] atomically:YES encoding:NSUTF8StringEncoding error:nil]; }
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
-  self.root = [[NSBundle mainBundle] bundlePath]; self.deadline = [NSDate dateWithTimeIntervalSinceNow:90];
+  self.root = [[[[NSBundle mainBundle] bundlePath] stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"fixture-state"]; self.deadline = [NSDate dateWithTimeIntervalSinceNow:90];
   NSString *line = [NSString stringWithFormat:@"%d\\n", getpid()];
   NSString *log = [self.root stringByAppendingPathComponent:@"launches.log"];
   if (![[NSFileManager defaultManager] fileExistsAtPath:log]) [[NSData data] writeToFile:log atomically:YES];
@@ -62,7 +62,8 @@ async function makeFixture(parent, bundleId) {
   fs.writeFileSync(path.join(bundle, 'Contents', 'Info.plist'), `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>CFBundleName</key><string>YunQiao Private Lifecycle Fixture</string><key>CFBundleExecutable</key><string>ClaudeLauncher</string><key>CFBundleIdentifier</key><string>${bundleId}</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleVersion</key><string>1</string><key>LSUIElement</key><true/></dict></plist>`);
   await runFile('/usr/bin/xcrun', ['clang', '-fobjc-arc', '-Wno-incompatible-pointer-types', '-framework', 'Cocoa', source, '-o', executable], { timeout: 60000, maxBuffer: 1024 * 1024 });
   await runFile('/usr/bin/codesign', ['--force', '--sign', '-', bundle], { timeout: 30000, maxBuffer: 1024 * 1024 });
-  const fixture = { bundle, executable, bundleId }; fixtures.push(fixture); return fixture;
+  const state = path.join(path.dirname(bundle), 'fixture-state'); fs.mkdirSync(state);
+  const fixture = { bundle, executable, bundleId, state }; fixtures.push(fixture); return fixture;
 }
 
 try {
@@ -82,7 +83,7 @@ try {
     assert.equal(await runtime.resolveTarget('workbuddy', { installed: false, configured: false }), null);
   });
   await runFile('/usr/bin/open', ['-n', '-a', sentinel.bundle], { timeout: 15000 }); await until(() => alive(sentinel), 'Private sentinel did not start through LaunchServices');
-  const sentinelPid = Number(text(path.join(sentinel.bundle, 'pid')));
+  const sentinelPid = Number(text(path.join(sentinel.state, 'pid')));
   await check('LaunchServices starts the private target and AppKit verifies exact bundle/executable/UID identity', async () => {
     const result = await lifecycle.restartClient(payload); assert.equal(result.ok, true, result.message); assert.equal(result.operation, 'started');
     await until(() => alive(target), 'Private target did not initialize');
@@ -93,17 +94,17 @@ try {
     const resolved = await runtime.resolveTarget(payload.agentId, detected); const row = (await runtime.listProcesses(resolved)).processes[0];
     assert.equal(await runtime.closeProcess(resolved, { ...row, started: '1|not the launch identity' }), 'changed');
     assert.equal(await runtime.closeProcess(resolved, { ...row, ownerSid: 'uid:999999' }), 'changed');
-    assert.equal(fs.existsSync(path.join(target.bundle, 'quit-request')), false); assert(alive(target));
+    assert.equal(fs.existsSync(path.join(target.state, 'quit-request')), false); assert(alive(target));
   });
   await check('AppKit normal quit restarts only the exact target while the same-name sentinel survives', async () => {
-    const previousPid = Number(text(path.join(target.bundle, 'pid'))); const result = await lifecycle.restartClient(payload); assert.equal(result.ok, true, result.message); assert.equal(result.operation, 'restarted');
-    await until(() => alive(target) && launches(target) === 2 && Number(text(path.join(target.bundle, 'pid'))) !== previousPid, 'Target did not restart with a new process');
-    assert.equal(Number(text(path.join(target.bundle, 'exited'))), previousPid); assert.equal(Number(text(path.join(sentinel.bundle, 'pid'))), sentinelPid); assert.equal(launches(sentinel), 1); assert(alive(sentinel));
+    const previousPid = Number(text(path.join(target.state, 'pid'))); const result = await lifecycle.restartClient(payload); assert.equal(result.ok, true, result.message); assert.equal(result.operation, 'restarted');
+    await until(() => alive(target) && launches(target) === 2 && Number(text(path.join(target.state, 'pid'))) !== previousPid, 'Target did not restart with a new process');
+    assert.equal(Number(text(path.join(target.state, 'exited'))), previousPid); assert.equal(Number(text(path.join(sentinel.state, 'pid'))), sentinelPid); assert.equal(launches(sentinel), 1); assert(alive(sentinel));
   });
   await check('An application that refuses normal quit is left running without a second instance', async () => {
-    fs.writeFileSync(path.join(target.bundle, 'refuse'), 'hold'); const previousPid = Number(text(path.join(target.bundle, 'pid'))), before = launches(target);
-    const result = await lifecycle.restartClient(payload); assert.equal(result.ok, false); assert.equal(result.operation, 'failed'); assert(alive(target)); assert.equal(Number(text(path.join(target.bundle, 'pid'))), previousPid); assert.equal(launches(target), before); assert(alive(sentinel));
-    fs.unlinkSync(path.join(target.bundle, 'refuse'));
+    fs.writeFileSync(path.join(target.state, 'refuse'), 'hold'); const previousPid = Number(text(path.join(target.state, 'pid'))), before = launches(target);
+    const result = await lifecycle.restartClient(payload); assert.equal(result.ok, false); assert.equal(result.operation, 'failed'); assert(alive(target)); assert.equal(Number(text(path.join(target.state, 'pid'))), previousPid); assert.equal(launches(target), before); assert(alive(sentinel));
+    fs.unlinkSync(path.join(target.state, 'refuse'));
   });
   await check('Changing bundle metadata invalidates the target before any launch', async () => {
     const resolved = await runtime.resolveTarget(payload.agentId, detected); fs.appendFileSync(path.join(target.bundle, 'Contents', 'Info.plist'), '\n'); assert.equal(runtime.validateTarget(resolved), false); assert.equal(launches(target), 2);
@@ -111,10 +112,10 @@ try {
   console.log(`Native macOS lifecycle: ${checks} checks passed (${os.arch()}, real Cocoa/LaunchServices/AppKit; Terminal automation not exercised)`);
 } finally {
   // Only fixtures inside this test's unique root receive their private self-exit marker.
-  for (const fixture of fixtures) fs.writeFileSync(path.join(fixture.bundle, 'stop'), 'exit');
+  for (const fixture of fixtures) fs.writeFileSync(path.join(fixture.state, 'stop'), 'exit');
   for (const fixture of fixtures) {
-    const pid = Number(text(path.join(fixture.bundle, 'pid')));
-    if (pid) await until(() => Number(text(path.join(fixture.bundle, 'exited'))) === pid, 'Private fixture did not acknowledge its stop file', 20000);
+    const pid = Number(text(path.join(fixture.state, 'pid')));
+    if (pid) await until(() => Number(text(path.join(fixture.state, 'exited'))) === pid, 'Private fixture did not acknowledge its stop file', 20000);
   }
   await wait(300);
   if (priorHome === undefined) delete process.env.AURORA_CLIENT_HOME; else process.env.AURORA_CLIENT_HOME = priorHome;

@@ -10,16 +10,32 @@ import { getAdapter } from './agents/adapters.js';
 
 export const runFile = promisify(execFile);
 export interface HistoryContext { home: string; sqliteHome: string; blockingProcesses?: () => Promise<string[]> }
+/** Resolve existing ancestors too, so a not-yet-created journal keeps its parent's canonical identity. */
+export function historyLocation(file: string): string {
+  let current = path.resolve(file); const tail: string[] = [];
+  while (true) {
+    try { return path.join(fs.realpathSync(current), ...tail); }
+    catch (error: any) {
+      if (!['ENOENT', 'ENOTDIR'].includes(error.code) || path.dirname(current) === current) throw error;
+      tail.unshift(path.basename(current)); current = path.dirname(current);
+    }
+  }
+}
+export function normalizeHistoryContext(ctx: HistoryContext): HistoryContext {
+  return { ...ctx, home: historyLocation(ctx.home), sqliteHome: historyLocation(ctx.sqliteHome) };
+}
 export function historyContext(): HistoryContext {
   const home = process.env.AURORA_CLIENT_HOME ? path.join(process.env.AURORA_CLIENT_HOME, '.codex') : process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
-  return { home: path.resolve(home), sqliteHome: path.resolve(process.env.AURORA_CLIENT_HOME ? home : process.env.CODEX_SQLITE_HOME || home) };
+  return normalizeHistoryContext({ home, sqliteHome: process.env.AURORA_CLIENT_HOME ? home : process.env.CODEX_SQLITE_HOME || home });
 }
 export function inside(root: string, file: string): boolean { const relative = path.relative(path.resolve(root), path.resolve(file)); return !!relative && !relative.startsWith('..') && !path.isAbsolute(relative); }
 export function checkedFile(root: string, file: string): string {
-  if (!inside(root, file)) throw new Error('文件路径不属于本次修复目录');
   const realRoot = fs.realpathSync(root), realFile = fs.realpathSync(file);
   if (!inside(realRoot, realFile) || fs.lstatSync(file).isSymbolicLink() || !fs.statSync(file).isFile()) throw new Error('修复不接受外部链接或非普通文件');
   return realFile;
+}
+export function sameHistoryFile(root: string, first: string, second: string): boolean {
+  try { return checkedFile(root, first) === checkedFile(root, second); } catch { return false; }
 }
 export async function fileHash(file: string): Promise<string> {
   const hash = createHash('sha256');

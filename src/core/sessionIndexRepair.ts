@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import {
-  acquireHistoryLock, assertClientsStopped, checkedFile, discoverHistoryDbs, fileHash,
+  acquireHistoryLock, assertClientsStopped, checkedFile, discoverHistoryDbs, fileHash, historyLocation, normalizeHistoryContext, sameHistoryFile,
   historyContext, openHistoryDb, repairRoot, saveJournal, sqlIdentifier, tableColumns, valueHash,
   type HistoryContext, type SqlDb,
 } from './historyRepairIO.js';
@@ -212,7 +212,7 @@ async function plan(ctx: HistoryContext, options: Options, connection?: SqlDb): 
       try {
         if (!['id', 'rollout_path'].every(c => tableColumns(state, 'threads').has(c))) continue;
         for (const row of state.prepare('SELECT id,rollout_path FROM threads WHERE rollout_path IS NOT NULL').all()) {
-          if (typeof row.rollout_path === 'string' && sources.some(s => s.threadId === row.id && path.resolve(ctx.home, row.rollout_path) === s.file)) owners.add(row.id);
+          if (typeof row.rollout_path === 'string' && sources.some(s => s.threadId === row.id && sameHistoryFile(ctx.home, path.resolve(ctx.home, row.rollout_path), s.file))) owners.add(row.id);
         }
       } finally { state.close(); }
     }
@@ -326,7 +326,7 @@ function journalPath(ctx: HistoryContext, id: string): string {
 function loadJournal(ctx: HistoryContext, id: string): Journal {
   const file = journalPath(ctx, id); checkedFile(backupRoot(ctx), file);
   const journal = JSON.parse(fs.readFileSync(file, 'utf8')) as Journal;
-  if (journal.version !== 1 || journal.id !== id || journal.home !== ctx.home || journal.sqliteHome !== ctx.sqliteHome || !Array.isArray(journal.mutations) || path.basename(journal.db) !== 'thread_history_1.sqlite') throw new Error('备份不属于当前会话目录');
+  if (journal.version !== 1 || journal.id !== id || historyLocation(journal.home) !== ctx.home || historyLocation(journal.sqliteHome) !== ctx.sqliteHome || !Array.isArray(journal.mutations) || path.basename(journal.db) !== 'thread_history_1.sqlite') throw new Error('备份不属于当前会话目录');
   checkedFile(ctx.sqliteHome, journal.db);
   return journal;
 }
@@ -354,6 +354,7 @@ function inspectRestore(ctx: HistoryContext, journal: Journal, db: SqlDb) {
 }
 
 export function createSessionIndexRepairService(ctx: HistoryContext = historyContext()) {
+  ctx = normalizeHistoryContext(ctx);
   return {
     async preview(options: Options = {}) { return summary(await plan(ctx, options)); },
     backups() { return { ok: true, backups: backups(ctx) }; },
