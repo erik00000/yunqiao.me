@@ -311,6 +311,10 @@ def main():
             assert Path(detected['configPath']).resolve() == (clients / '.codex/config.toml').resolve()
             page.locator('nav').get_by_role('button', name='我的供应商', exact=True).click()
             page.locator('nav').get_by_role('button', name='客户端接入', exact=True).click()
+            # The fixture was saved through IPC; refresh UI state before opening
+            # a wizard whose initial provider choice is intentionally preserved.
+            page.get_by_role('button', name='检测本地客户端', exact=True).click()
+            expect(page.locator('nav').get_by_role('button', name='我的供应商', exact=True).locator('.badge')).to_have_text('1')
             card = page.locator('.client-card').filter(has=page.get_by_text('ChatGPT 桌面版', exact=True))
             expect(card.get_by_text('发现本地配置', exact=True)).to_be_visible()
             card.get_by_role('button', name='开始配置 →', exact=True).click()
