@@ -2,13 +2,15 @@
 
 当前阶段为本地功能完善，未发布包含本轮改动的新版本，也未更新线上下载元数据。已有早期 0.6.0 安装包不能代替本次调试包。
 
-便携调试包：`release/plugin-sync-debug-0.6.0/YunQiaoAI-0.6.0-plugin-sync-20261115-win-x64.exe`。先从托盘退出早期版本，再启动新包；侧栏显示「调试」，在「系统设置 → 版本更新」可核对构建时间。
+最新调试入口：`release/data-clean-debug-0.6.0/win-unpacked/YunQiaoAI.exe`。先从托盘退出早期版本，再启动新包；侧栏显示「调试」，在「系统设置 → 版本更新」可核对构建时间。
 
-未压缩调试入口：`release/plugin-sync-debug-0.6.0/win-unpacked/YunQiaoAI.exe`。运行或复制时保留整个 `win-unpacked` 目录。当前电脑 C 盘仅剩约 240 MiB，默认便携解压空间不足；建议直接使用 D 盘已解压入口。便携包已在 D 盘独立临时目录完成启动与内容校验。
+运行或复制时保留整个 `win-unpacked` 目录。该入口直接运行已解压程序，适用于本机 C 盘临时空间不足的情况。本次仅生成已解压调试版；上一轮便携包不包含本次数据清理。
 
 第二轮全面检查与后续优先级见 [工程审查记录](ENGINEERING-AUDIT-2026-11-15.md)。本地包已包含该轮修复；PHP 修复已完成本机验证，尚未部署到线上。
 
 本次追加修复插件市场同步超时、代理支持、备用请求与缓存验证，详见 [同步修复记录](PLUGIN-SYNC-VALIDATION.md)。真实 Windows 界面同步公开市场 520 项、完整索引 5,491 项成功。
+
+最新构建另完成 [正式数据清理](PRODUCTION-DATA-AUDIT-2026-11-15.md)：删除演示数据、清空四类地址模板、修正未发布版本与未知余额，并将随附测试和参考源码排除出客户端。实际产物扫描见 [清理验证](PRODUCTION-DATA-VALIDATION.json)。
 
 ## 本轮完成
 
@@ -23,7 +25,7 @@
 
 ## 验证结果
 
-下表综合上一轮全面审查与本次专项验证。本次重新执行类型检查、插件后端与界面、真实网络同步及实际打包检查；其余记录保留上一轮的验证范围。
+下表综合此前全面审查、同步修复与本次数据清理的验证。本次重点重新检查目录、版本、PHP、手机、发布资源及实际 Windows 程序；其余记录保留此前的验证范围。
 
 | 检查 | 结果 |
 | --- | --- |
@@ -48,29 +50,24 @@
 | 新增工程故障与并发保护 / 管理界面 | 20 项 / 10 项通过 |
 | PHP 真实本机运行 / 手机接口与浏览器 | 64 项 / 6 项与 20 项通过 |
 | 真实 Codex CLI 共存请求、配置继承与认证隔离 | 5 项通过，本地模拟服务；详见 [CLI 验证](CODEX-NATIVE-VALIDATION.md) |
-| 实际打包 EXE 与便携包资源、设置迁移、插件、会员入口与网关 | 12 项通过，便携解压内容与 217 个第三方资源哈希一致 |
+| 实际打包 EXE 资源、设置迁移、插件、会员入口与网关 | 11 项通过，188 个发布资源哈希一致，29 个测试/参考文件未进入包 |
 | 实际打包 EXE 自动导入、共存向导、切换与恢复 | 11 项通过 |
 
 测试均使用隔离的数据、Chromium 和客户端目录，未改写真实客户端配置，未执行真实模型计费请求或赠金核销。打包验收会核对 `app.asar` 主进程与本地构建内容一致。记录见 [打包报告](PACKAGED-VALIDATION-0.6.0.json) 和 [共存界面报告](COEXIST-UI-VALIDATION-0.6.0.json)。本轮提交的管理员密钥、API 密钥与 GitHub 凭据形态检查无命中；`git diff --check` 通过。
 
-构建标识：`20261115T044439Z-d8b55a25`；北京时间 2026-11-15 12:44:39，源码提交 `d8b55a25`。
+构建标识：`20261115T051045Z-f82147b1`；北京时间 2026-11-15 13:10:45，源码提交 `f82147b1`。
 
-直接启动便携 EXE 完成 12 项检查，核对其解压后的程序与已通过同步流程的未压缩程序一致。因本机 C 盘空间不足，复现时使用 D 盘临时目录：
+直接启动已解压 EXE 完成 11 项检查，并针对实际发布资源完成 29 项扩展回归。复现打包验收：
 
 ```powershell
-$taskTemp = 'D:\btc\aurora\release\plugin-sync-debug-0.6.0\acceptance-temp'
-New-Item -ItemType Directory -Path $taskTemp -Force | Out-Null
-$env:TEMP = $taskTemp
-$env:TMP = $taskTemp
-python scripts/test-packaged.py --exe release/plugin-sync-debug-0.6.0/win-unpacked/YunQiaoAI.exe --launcher release/plugin-sync-debug-0.6.0/YunQiaoAI-0.6.0-plugin-sync-20261115-win-x64.exe
+python scripts/test-packaged.py --exe release/data-clean-debug-0.6.0/win-unpacked/YunQiaoAI.exe
 ```
 
 当前调试包 SHA-256：
 
 ```text
-便携 EXE       3c5c5fc0c57fb48d1595a500c710366b70b912593bea2e0eb035f3cbb0da0648
-YunQiaoAI.exe  3403cf017be1ed9a589569b22ed2dd752606dcdc5ea605c7c9de74ff3c7605f5
-app.asar      913bc084efc3a617c04a6683d6c2cf88f4a9e220b7b34b94a96cae1b986c388e
+YunQiaoAI.exe  d0cf3507614eb9f047c4b141f7c3fc1958c781d1570d3b6a17c8b27a4b6ea96d
+app.asar      21f2c353d0bc6df4a06ec0d86889c4cd56da8262be295c54587176fc927aed7a
 ```
 
 ## 尚需实际联调

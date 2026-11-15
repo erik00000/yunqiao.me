@@ -23,5 +23,9 @@
 | 手机接口单测 / 浏览器流程 | 6 / 20 项通过 |
 | 发布子集、完整性、输出目录及验包污染防护 | 7 组通过 |
 | 使用实际发布资源的扩展与 Electron renderer | 29 项通过 |
+| 最新 Windows 包的实际启动与页面流程 | 11 项通过 |
+| 正式产物与生成数据残留扫描 | 199 个文件通过，四类模板地址为空，演示目录无文件残留 |
 
 验证使用隔离数据和模拟服务，不修改真实客户端配置、不执行计费请求。PHP 改动未部署到线上。
+
+最新 Windows 调试构建为 `20261115T051045Z-f82147b1`，入口 `release/data-clean-debug-0.6.0/win-unpacked/YunQiaoAI.exe`。详见 [产物扫描](PRODUCTION-DATA-VALIDATION.json) 与 [实包验收](PACKAGED-VALIDATION-0.6.0.json)。

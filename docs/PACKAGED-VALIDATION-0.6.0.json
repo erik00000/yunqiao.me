@@ -1,11 +1,10 @@
 {
   "version": "0.6.0",
   "passed": true,
-  "count": 12,
+  "count": 11,
   "checks": [
     "Packaged version and AGPL notices",
-    "All 217 packaged resource hashes match pinned source",
-    "Portable wrapper extracts the verified application and all 217 pinned resources",
+    "All 188 distributed resource hashes match pinned source; upstream tests and Rust reference sources are absent",
     "Actual packaged EXE renders app.asar with an isolated data directory",
     "Packaged gateway health is ready and management rejects missing credentials",
     "Installed runtime loads 5 complete packages, 32 builtins and both pinned markets",
@@ -16,18 +15,16 @@
     "Packaged membership onboarding renders without authenticated user state",
     "No page exceptions or changes to isolated client configuration"
   ],
-  "executable": "release\\plugin-sync-debug-0.6.0\\win-unpacked\\YunQiaoAI.exe",
-  "exeSha256": "3403cf017be1ed9a589569b22ed2dd752606dcdc5ea605c7c9de74ff3c7605f5",
-  "asarSha256": "913bc084efc3a617c04a6683d6c2cf88f4a9e220b7b34b94a96cae1b986c388e",
-  "portable": "release\\plugin-sync-debug-0.6.0\\YunQiaoAI-0.6.0-plugin-sync-20261115-win-x64.exe",
-  "portableSha256": "3c5c5fc0c57fb48d1595a500c710366b70b912593bea2e0eb035f3cbb0da0648",
+  "executable": "release\\data-clean-debug-0.6.0\\win-unpacked\\YunQiaoAI.exe",
+  "exeSha256": "d0cf3507614eb9f047c4b141f7c3fc1958c781d1570d3b6a17c8b27a4b6ea96d",
+  "asarSha256": "21f2c353d0bc6df4a06ec0d86889c4cd56da8262be295c54587176fc927aed7a",
   "build": {
-    "id": "20261115T044439Z-d8b55a25",
-    "builtAt": "2026-11-15T04:44:39.594Z",
-    "revision": "d8b55a25",
+    "id": "20261115T051045Z-f82147b1",
+    "builtAt": "2026-11-15T05:10:45.324Z",
+    "revision": "f82147b1",
     "channel": "local"
   },
-  "resourceFilesVerified": 217,
+  "resourceFilesVerified": 188,
   "profile": "isolated temporary app, gateway and client directories",
   "membershipPublicConfigWarning": [],
   "screenshots": [
