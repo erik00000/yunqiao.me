@@ -166,7 +166,22 @@ if(process.argv.includes('--renderer'))await atest('actual CDP connects only ver
     await new Promise(r=>setTimeout(r,1000));const usage=await rt.cdp.evaluate('document.querySelector("[data-aurora-usage-details]")?.textContent || null');assert.ok(usage?.includes('缓存读'),String(usage));
     assert.equal(await rt.cdp.evaluate('!!document.querySelector("img[data-codex-plus-ext=agent-pet]")?.naturalWidth'),true);
     assert.equal(await rt.cdp.evaluate('window.__codexPlusImageOverlayReady'),true);
-    await rt.cdp.evaluate('document.querySelector(".ProseMirror").focus()');await rt.cdp.send('Input.insertText',{text:'扩展测试'});assert.equal(await rt.cdp.evaluate('!!document.querySelector("canvas[data-codex-plus-ext=typing-effects]")'),true);
+    // Windows CI can request reduced motion; this fixture explicitly tests animations enabled.
+    // Input composition may restore its caret on a later frame, so await the real canvas.
+    const slowRenderer=process.argv.includes('--slow-renderer');
+    if(slowRenderer){await rt.cdp.send('Emulation.setCPUThrottlingRate',{rate:6});await rt.cdp.send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});assert.equal(await rt.cdp.evaluate('matchMedia("(prefers-reduced-motion: reduce)").matches'),true);}
+    await rt.cdp.send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'no-preference'}]});
+    await rt.cdp.evaluate(`(()=>{window.__fixtureTypingInputs=[];document.addEventListener('input',event=>{window.__fixtureTypingInputs.push({trusted:event.isTrusted,type:event.inputType,data:event.data});},{capture:true});const editor=document.querySelector('.ProseMirror');editor.style.minHeight='80px';editor.focus();})()`);
+    await rt.cdp.send('Input.insertText',{text:'扩展测试'});
+    let typingSnapshot,typingTimer,typingExpired=false;
+    try{
+      await Promise.race([
+        (async()=>{while(!typingExpired){typingSnapshot=await rt.cdp.evaluate(`(()=>{const editor=document.querySelector('.ProseMirror'),canvas=document.querySelector('canvas[data-codex-plus-ext=typing-effects]'),selection=getSelection(),rect=editor.getBoundingClientRect();return {canvas:!!canvas?.isConnected,width:canvas?.width||0,height:canvas?.height||0,text:editor.textContent,focused:document.activeElement===editor,hidden:document.hidden,reducedMotion:matchMedia('(prefers-reduced-motion: reduce)').matches,editorWidth:rect.width,editorHeight:rect.height,selectionInEditor:!!selection?.rangeCount&&editor.contains(selection.anchorNode)&&editor.contains(selection.focusNode),inputs:window.__fixtureTypingInputs};})()`);if(typingSnapshot.canvas&&typingSnapshot.width>0&&typingSnapshot.height>0&&typingSnapshot.inputs.some(event=>event.trusted&&event.data==='扩展测试'))return;await new Promise(resolve=>setTimeout(resolve,25));}})(),
+        new Promise((_,reject)=>{typingTimer=setTimeout(()=>{typingExpired=true;reject(new Error('Typing effect did not render within 8000 ms: '+JSON.stringify(typingSnapshot)+'\nElectron: '+output.slice(-2000)));},8000);}),
+      ]);
+      assert.equal(typingSnapshot.canvas,true,JSON.stringify(typingSnapshot));assert.equal(typingSnapshot.text,'扩展测试');assert.equal(typingSnapshot.reducedMotion,false);
+      if(slowRenderer)console.log('✓ real typing canvas with trusted input at 6x CPU slowdown after reduced-motion override');
+    }finally{typingExpired=true;clearTimeout(typingTimer);if(slowRenderer)await rt.cdp.send('Emulation.setCPUThrottlingRate',{rate:1});}
     m.trackRequest(store,{id:'renderer-live',threadId:'12345678-1234-1234-1234-123456789012',agent:'codex-cli',phase:'streaming',model:'renderer-fixture',startedAtMs:Date.now(),attempts:1,autoRetries:0});
     let proxy='';for(let i=0;i<25;i++){proxy=await rt.cdp.evaluate('document.querySelector("#codex-plus-proxy-request-status[data-hidden=false]")?.textContent || ""');if(proxy.includes('renderer-fixture'))break;await new Promise(r=>setTimeout(r,100));}assert.ok(proxy.includes('renderer-fixture'),proxy);m.finishRequest(store,'renderer-live');
 
