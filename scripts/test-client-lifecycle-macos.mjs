@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { build } from 'esbuild';
 
 // These tests mock macOS system APIs. Passing on another OS is not native macOS validation.
-const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'yunqiao-macos-lifecycle-'));
+const temporary = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'yunqiao-macos-lifecycle-')));
 let checks = 0;
 const check = async (name, run) => { await run(); checks++; console.log(`PASS ${name}`); };
 try {
@@ -44,7 +44,7 @@ try {
   }
   await check('Bundle discovery uses isolated Applications and the declared executable identity', async () => {
     const f = fixture(); const target = await f.driver.resolveTarget('claude-desktop', definition, { installed: false, configured: false });
-    assert.equal(target.bundlePath, fs.realpathSync(f.bundle)); assert.equal(target.executable, fs.realpathSync(f.executable)); assert.equal(target.bundleId, f.metadata.CFBundleIdentifier); assert.equal(f.driver.validateTarget(target), true);
+    assert.equal(target.bundlePath, fs.realpathSync.native(f.bundle)); assert.equal(target.executable, fs.realpathSync.native(f.executable)); assert.equal(target.bundleId, f.metadata.CFBundleIdentifier); assert.equal(f.driver.validateTarget(target), true);
     assert(f.state.candidates.every(candidate => candidate.startsWith(f.home))); assert.equal(f.state.calls.length, 0);
     const exact = await f.driver.resolveTarget('claude-desktop', definition, { installed: true, configured: false, command: f.executable }); assert.equal(exact.identity, target.identity);
   });
@@ -110,7 +110,7 @@ try {
   await check('Terminal receives literal paths and the isolated native configuration directory', async () => {
     const f = fixture(); const command = path.join(f.home, 'codex'); fs.writeFileSync(command, '#!/bin/sh\nexit 0\n', { mode: 0o700 });
     const target = await f.driver.resolveTarget('codex-cli', { kind: 'cli', name: 'Codex', binaries: ['codex'] }, { installed: true, configured: false, command });
-    await f.driver.openTerminal(target, f.home); const request = JSON.parse(f.state.calls[0].args.at(-1)); assert.equal(request.terminal, '/System/Applications/Utilities/Terminal.app'); assert.equal(request.command, api.macTerminalCommand(fs.realpathSync(command), f.home, { CODEX_HOME: path.join(f.home, '.codex') }));
+    await f.driver.openTerminal(target, f.home); const request = JSON.parse(f.state.calls[0].args.at(-1)); assert.equal(request.terminal, '/System/Applications/Utilities/Terminal.app'); assert.equal(request.command, api.macTerminalCommand(fs.realpathSync.native(command), f.home, { CODEX_HOME: path.join(f.home, '.codex') }));
     assert(request.command.includes("'\"'\"'")); assert(!request.command.includes('kill')); assert(!request.command.includes('--resume'));
     assert.equal(api.macTerminalCommand('/tmp/a;$(touch bad)/codex', '/tmp/a b'), "cd -- '/tmp/a b' && '/tmp/a;$(touch bad)/codex'");
     assert.throws(() => api.macTerminalCommand('/tmp/codex\nwhoami', f.home));
@@ -124,16 +124,16 @@ try {
       f.host.configurationEnvironment = () => ({ [key]: custom, OPENAI_API_KEY: 'fixture-secret-api-key', ANTHROPIC_AUTH_TOKEN: 'fixture-secret-auth', GEMINI_CLI_HOME: '/unrelated/gemini' });
       await f.driver.openTerminal(target, f.home);
       let request = JSON.parse(f.state.calls.at(-1).args.at(-1));
-      assert.equal(request.command, api.macTerminalCommand(fs.realpathSync(command), f.home, { ...(agentId === 'claude-code' ? { HOME: f.home } : {}), [key]: custom }));
+      assert.equal(request.command, api.macTerminalCommand(fs.realpathSync.native(command), f.home, { ...(agentId === 'claude-code' ? { HOME: f.home } : {}), [key]: custom }));
       assert(!request.command.includes('fixture-secret')); assert(!request.command.includes('GEMINI_CLI_HOME'));
       f.host.configurationEnvironment = () => ({}); await f.driver.openTerminal(target, f.home);
       request = JSON.parse(f.state.calls.at(-1).args.at(-1));
-      assert.equal(request.command, api.macTerminalCommand(fs.realpathSync(command), f.home, agentId === 'claude-code' ? { HOME: f.home, CLAUDE_CONFIG_DIR: undefined } : { [key]: path.join(f.home, folder) }));
+      assert.equal(request.command, api.macTerminalCommand(fs.realpathSync.native(command), f.home, agentId === 'claude-code' ? { HOME: f.home, CLAUDE_CONFIG_DIR: undefined } : { [key]: path.join(f.home, folder) }));
       if (agentId === 'claude-code') {
         for (const isolated of [undefined, f.home]) {
           f.host.isolatedHome = () => isolated; f.host.configurationEnvironment = () => ({ CLAUDE_CONFIG_DIR: isolated ? custom : path.join(f.home, '.claude') });
           await f.driver.openTerminal(target, f.home); const defaultRequest = JSON.parse(f.state.calls.at(-1).args.at(-1));
-          assert.equal(defaultRequest.command, api.macTerminalCommand(fs.realpathSync(command), f.home, { HOME: f.home, CLAUDE_CONFIG_DIR: undefined }));
+          assert.equal(defaultRequest.command, api.macTerminalCommand(fs.realpathSync.native(command), f.home, { HOME: f.home, CLAUDE_CONFIG_DIR: undefined }));
           const adapterEnvironment = { HOME: f.home, USERPROFILE: f.home, ...(isolated ? { AURORA_CLIENT_HOME: isolated, CLAUDE_CONFIG_DIR: custom } : { CLAUDE_CONFIG_DIR: path.join(f.home, '.claude') }) };
           const adapterPaths = spawnSync(process.execPath, ['-e', 'process.stdout.write(JSON.stringify(require(process.argv[1]).getAdapter("claude-code").configPaths()))', output], { env: adapterEnvironment, encoding: 'utf8', windowsHide: true });
           assert.equal(adapterPaths.status, 0, adapterPaths.stderr);
@@ -166,5 +166,5 @@ try {
   });
   console.log(`macOS lifecycle simulation: ${checks} checks passed (native macOS not exercised)`);
 } finally {
-  if (path.dirname(path.resolve(temporary)) === path.resolve(os.tmpdir()) && path.basename(temporary).startsWith('yunqiao-macos-lifecycle-')) fs.rmSync(temporary, { recursive: true, force: true });
+  if (path.dirname(fs.realpathSync.native(temporary)) === fs.realpathSync.native(os.tmpdir()) && path.basename(temporary).startsWith('yunqiao-macos-lifecycle-')) fs.rmSync(temporary, { recursive: true, force: true });
 }

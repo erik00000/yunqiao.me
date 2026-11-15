@@ -16,7 +16,7 @@ if (process.platform !== 'win32') {
 
 const runFile = promisify(execFile);
 const workspace = path.resolve(import.meta.dirname, '..');
-const temporaryRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'aurora-client-native-')));
+const temporaryRoot = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'aurora-client-native-')));
 const previousHome = process.env.AURORA_CLIENT_HOME;
 const require = createRequire(import.meta.url);
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -148,12 +148,12 @@ try {
   const userShortcut = path.join(userMenu, 'Vendor Folder', 'Claude.lnk');
   await shortcutTo(userShortcut, selected.exe);
   const userDiscovered = await runtime.resolveTarget('claude-desktop', noDetection);
-  assert.equal(userDiscovered.executable.toLowerCase(), fs.realpathSync(selected.exe).toLowerCase());
+  assert.equal(userDiscovered.executable.toLowerCase(), fs.realpathSync.native(selected.exe).toLowerCase());
   fs.unlinkSync(userShortcut);
   const commonShortcut = path.join(commonMenu, 'Vendor Folder', 'Claude.lnk');
   await shortcutTo(commonShortcut, selected.exe);
   const commonDiscovered = await runtime.resolveTarget('claude-desktop', noDetection);
-  assert.equal(commonDiscovered.executable.toLowerCase(), fs.realpathSync(selected.exe).toLowerCase());
+  assert.equal(commonDiscovered.executable.toLowerCase(), fs.realpathSync.native(selected.exe).toLowerCase());
   console.log('PASS nested user and machine Start Menu shortcuts resolve the selected private fixture'); passed++;
 
   await shortcutTo(commonShortcut, selected.exe, '--fixture-argument');
@@ -164,7 +164,7 @@ try {
   const shortcut = path.join(temporaryRoot, "Claude 'quoted'.lnk");
   await shortcutTo(shortcut, selected.exe);
   const resolvedShortcut = await runtime.resolveTarget('claude-desktop', { ...detected, command: shortcut });
-  assert.equal(resolvedShortcut.executable.toLowerCase(), fs.realpathSync(selected.exe).toLowerCase());
+  assert.equal(resolvedShortcut.executable.toLowerCase(), fs.realpathSync.native(selected.exe).toLowerCase());
   await shortcutTo(shortcut, selected.exe, '--fixture-argument');
   await assert.rejects(runtime.resolveTarget('claude-desktop', { ...detected, command: shortcut }), /快捷方式包含额外启动参数/);
   console.log('PASS native shortcut COM resolves an exact target and rejects added arguments'); passed++;
@@ -208,9 +208,9 @@ try {
   if (previousHome === undefined) delete process.env.AURORA_CLIENT_HOME;
   else process.env.AURORA_CLIENT_HOME = previousHome;
   await stopFixtures();
-  const resolved = fs.realpathSync(temporaryRoot);
+  const resolved = fs.realpathSync.native(temporaryRoot);
   assert.equal(resolved, temporaryRoot);
   assert(path.basename(resolved).startsWith('aurora-client-native-'));
-  assert.equal(path.dirname(resolved).toLowerCase(), fs.realpathSync(os.tmpdir()).toLowerCase());
+  assert.equal(path.dirname(resolved).toLowerCase(), fs.realpathSync.native(os.tmpdir()).toLowerCase());
   fs.rmSync(resolved, { recursive: true, force: true, maxRetries: 10, retryDelay: 150 });
 }

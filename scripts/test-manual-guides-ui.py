@@ -105,6 +105,7 @@ window.render=()=>flushSync(()=>root.render(window.visible?<ManualClientGuide {.
         checks.append('Changed fresh parameters and unmount refuse copy; IPC and clipboard errors stay sanitized without textarea fallback')
 
         page.evaluate("window.switchAgent('kimi-code')")
+        expect(page.get_by_text('复制未完成，请重新预览并在电脑桌面端重试。', exact=True)).to_have_count(0)
         expect(page.get_by_role('alert')).to_contain_text('max_context_size')
         expect(page.get_by_role('button', name='复制可用配置（含令牌）')).to_have_count(0)
         expect(page.get_by_role('button', name='复制命令')).to_be_disabled()

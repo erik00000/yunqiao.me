@@ -5,7 +5,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { build } from 'esbuild';
 
-const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'yunqiao-client-lifecycle-'));
+const temporary = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'yunqiao-client-lifecycle-')));
 const previousClientHome = process.env.AURORA_CLIENT_HOME;
 process.env.AURORA_CLIENT_HOME = temporary;
 let checks = 0;
@@ -124,12 +124,12 @@ try {
   });
   if (process.platform === 'win32') await check('Native target validation rejects arbitrary executables and treats npm command shims as literal files', async () => {
     const dir = path.join(temporary, "path with spaces and ' quote"); fs.mkdirSync(dir); const shim = path.join(dir, 'codex.cmd'); fs.writeFileSync(shim, '@rem isolated non-executed fixture\r\n');
-    const target = await api.nativeClientLifecycleRuntime.resolveTarget('codex-cli', { installed: true, configured: false, command: shim.slice(0, -4) }); assert.equal(target.executable, fs.realpathSync(shim)); assert.equal(api.nativeClientLifecycleRuntime.validateTarget(target), true);
+    const target = await api.nativeClientLifecycleRuntime.resolveTarget('codex-cli', { installed: true, configured: false, command: shim.slice(0, -4) }); assert.equal(target.executable, fs.realpathSync.native(shim)); assert.equal(api.nativeClientLifecycleRuntime.validateTarget(target), true);
     fs.appendFileSync(shim, '@rem changed\r\n'); assert.equal(api.nativeClientLifecycleRuntime.validateTarget(target), false);
     for (const command of [process.execPath, 'C:\\Windows\\System32\\cmd.exe', 'powershell.exe', 'C:\\Apps\\Claude.exe\nwhoami']) await assert.rejects(() => api.nativeClientLifecycleRuntime.resolveTarget('claude-desktop', { installed: true, configured: false, command }));
   });
   console.log(`Client lifecycle: ${checks} checks passed`);
 } finally {
   if (previousClientHome === undefined) delete process.env.AURORA_CLIENT_HOME; else process.env.AURORA_CLIENT_HOME = previousClientHome;
-  if (path.dirname(path.resolve(temporary)) === path.resolve(os.tmpdir()) && path.basename(temporary).startsWith('yunqiao-client-lifecycle-')) fs.rmSync(temporary, { recursive: true, force: true });
+  if (path.dirname(temporary) === fs.realpathSync.native(os.tmpdir()) && path.basename(temporary).startsWith('yunqiao-client-lifecycle-')) fs.rmSync(temporary, { recursive: true, force: true });
 }
