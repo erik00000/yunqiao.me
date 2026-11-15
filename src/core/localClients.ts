@@ -7,6 +7,7 @@ import type { AuroraStore, Provider } from './store/index.js';
 import type { ProtocolName } from './types.js';
 import { atomicWrite, readText } from './agents/configFiles.js';
 import { CLAUDE_DESKTOP_PROFILE, resolveClaudeDesktopConfig } from './claudeDesktopPaths.js';
+import { isValidContextWindow } from './modelContext.js';
 
 export type LocalSourceStatus = 'imported' | 'updated' | 'unchanged' | 'linked' | 'modified' | 'ignored' | 'missing-key' | 'unsupported' | 'missing-file';
 export interface LocalClientSource {
@@ -29,7 +30,7 @@ export interface LocalClientOptions {
   /** Trusted main-process/test options, never populated from an RPC body. */
   home?: string; environment?: Record<string, string | undefined>; platform?: NodeJS.Platform;
 }
-interface Candidate { source: LocalClientSource; name: string; format: ProtocolName; baseUrl: string; key: string; models: string[] }
+interface Candidate { source: LocalClientSource; name: string; format: ProtocolName; baseUrl: string; key: string; models: string[]; context?: { modelId: string; value: number } }
 interface RecordEntry {
   source: Pick<LocalClientSource, 'id' | 'clientId' | 'label' | 'path'>;
   providerId?: string; managedHash?: string; candidateHash?: string; owned?: boolean; suppressed?: boolean;
@@ -58,7 +59,7 @@ function managedHash(provider: Provider): string {
   return hash(canonical({ ...configuration, apiKeys: provider.apiKeys.map(({ lastUsedAt, lastError, cooldownUntil, ...key }) => key) }));
 }
 function candidateHash(candidate: Candidate): string {
-  return hash(canonical({ name: candidate.name, format: candidate.format, baseUrl: candidate.baseUrl, key: candidate.key, models: candidate.models }));
+  return hash(canonical({ name: candidate.name, format: candidate.format, baseUrl: candidate.baseUrl, key: candidate.key, models: candidate.models, context: candidate.context }));
 }
 function loadLedger(store: AuroraStore): Ledger {
   const file = path.join(store.dir, LEDGER);
@@ -133,13 +134,13 @@ function discover(ctx: Context): { candidates: Candidate[]; sources: LocalClient
     try { const parsed = JSON.parse(raw.replace(/^\uFEFF/, '')); if (!object(parsed)) throw new Error(); return parsed; }
     catch { warnings.push(`${label}：JSON 配置无效，已跳过；没有改写源文件。`); return undefined; }
   };
-  const add = (s: LocalClientSource, name: string, format: ProtocolName, base: unknown, key: unknown, models: unknown[]): void => {
+  const add = (s: LocalClientSource, name: string, format: ProtocolName, base: unknown, key: unknown, models: unknown[], context?: Candidate['context']): void => {
     const baseUrl = endpoint(base, format);
     if (!baseUrl) return note(s, 'unsupported', '接口地址不明确、包含动态值或不受支持，需手动确认。');
     if (!validKey(key)) return note(s, 'missing-key', '没有明确可用的静态 API Key；OAuth、占位符和动态命令均不作为 API Key 导入。');
     if (ownGateway(baseUrl, key, ctx)) return note(s, 'ignored', '这是云桥自己的网关配置，已跳过以避免循环调用。');
     const uniqueModels = [...new Set(models.filter(modelId))];
-    candidates.push({ source: s, name, format, baseUrl, key, models: uniqueModels });
+    candidates.push({ source: s, name, format, baseUrl, key, models: uniqueModels, ...(context && uniqueModels.includes(context.modelId) && isValidContextWindow(context.value) ? { context } : {}) });
   };
   const account = (kind: LocalAccount['kind'], label: string, file: string, format: ProtocolName, credential: unknown, metadata: Record<string, any> = {}): void => {
     const rawExpiry = metadata.expiresAt ?? metadata.expires_at ?? metadata.expiry_date;
@@ -171,6 +172,8 @@ function discover(ctx: Context): { candidates: Candidate[]; sources: LocalClient
     const selectedProfile = typeof codex.profile === 'string' && object(profiles[codex.profile]) ? profiles[codex.profile] : {};
     const currentId = textValue(selectedProfile.model_provider ?? codex.model_provider) ?? 'openai';
     const currentModel = selectedProfile.model ?? codex.model;
+    const currentWindow = selectedProfile.model_context_window ?? codex.model_context_window;
+    const currentContext = modelId(currentModel) && isValidContextWindow(currentWindow) ? { modelId: currentModel, value: currentWindow } : undefined;
     const providers = { ...(object(codex.model_providers) ? codex.model_providers : {}) };
     if (object(selectedProfile.model_providers)) for (const [id, override] of Object.entries(selectedProfile.model_providers)) {
       if (object(override)) providers[id] = { ...(object(providers[id]) ? providers[id] : {}), ...override };
@@ -194,10 +197,10 @@ function discover(ctx: Context): { candidates: Candidate[]; sources: LocalClient
       if (key === undefined && p.env_key === undefined && id === currentId && (p.requires_openai_auth === true || id === 'openai')) key = authKey;
       const models = [id === currentId ? currentModel : undefined, ...Object.values(profiles).filter(object).filter(v => v.model_provider === id).map(v => v.model)];
       const base = id === 'openai' ? openaiBase ?? p.base_url ?? 'https://api.openai.com/v1' : p.base_url;
-      add(s, s.label, p.wire_api === 'chat' ? 'openai-chat' : 'openai-responses', base, key, models);
+      add(s, s.label, p.wire_api === 'chat' ? 'openai-chat' : 'openai-responses', base, key, models, id === currentId ? currentContext : undefined);
     }
     if (currentId === 'openai' && authKey !== undefined && !Object.hasOwn(providers, 'openai')) {
-      add(source('codex-cli', 'Codex / ChatGPT · API 登录配置', authFile, 'openai-api'), 'Codex API · 本机配置', 'openai-responses', openaiBase ?? 'https://api.openai.com/v1', authKey, [currentModel]);
+      add(source('codex-cli', 'Codex / ChatGPT · API 登录配置', authFile, 'openai-api'), 'Codex API · 本机配置', 'openai-responses', openaiBase ?? 'https://api.openai.com/v1', authKey, [currentModel], currentContext);
     } else if (authKey !== undefined && currentId !== 'openai' && !Object.hasOwn(providers, currentId)) {
       note(source('codex-cli', 'Codex / ChatGPT · API 登录配置', authFile, 'unresolved-api'), 'unsupported', '当前自定义 provider 没有明确接口地址，未将其密钥误当作 OpenAI 官方密钥。');
     }
@@ -330,7 +333,8 @@ export function syncLocalClients(store: AuroraStore, options: LocalClientOptions
           apiKeys: [{ id: existing.apiKeys[0]?.id || 'local_' + s.id, label: '本机已有 API Key', key: candidate.key, enabled: true, weight: 1 }],
           // Switching a client to another provider removes its current-model association, not the
           // original provider's supported models. Discovery may append evidence, never erase it.
-          models: [...existing.models, ...candidate.models.filter(id => !existing.models.some(model => model.id === id)).map(id => ({ id }))] });
+          models: [...existing.models, ...candidate.models.filter(id => !existing.models.some(model => model.id === id)).map(id => ({ id }))]
+            .map(model => candidate.context?.modelId === model.id ? { ...model, contextWindow: candidate.context.value } : model) });
         record!.managedHash = managedHash(updated); record!.candidateHash = candidateHash(candidate);
         s.status = 'updated'; s.message = '本机来源配置已变化，已更新未被手动修改的导入项。'; snapshot.updated++;
       }
@@ -343,7 +347,7 @@ export function syncLocalClients(store: AuroraStore, options: LocalClientOptions
       } else {
         const imported = store.saveProvider({ name: candidate.name, presetId, format: candidate.format, baseUrl: candidate.baseUrl,
           apiKeys: [{ id: 'key_' + s.id, label: '本机已有 API Key', key: candidate.key, enabled: true, weight: 1 }],
-          models: candidate.models.map(id => ({ id })), enabled: true, priority: 10, official: false,
+          models: candidate.models.map(id => ({ id, ...(candidate.context?.modelId === id ? { contextWindow: candidate.context.value } : {}) })), enabled: true, priority: 10, official: false,
           notes: `自动发现来源：${s.label}\n配置文件：${s.path}\n仅读取本机已有 API 配置，未联网验证。源客户端和官方登录记录保持不变。` });
         record = { source: s, providerId: imported.id, owned: true, managedHash: managedHash(imported), candidateHash: candidateHash(candidate) };
         s.providerId = imported.id; s.status = 'imported'; s.message = '已从本机已有 API 配置导入，尚未联网验证。'; snapshot.added++;

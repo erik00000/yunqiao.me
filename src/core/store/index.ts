@@ -17,6 +17,7 @@ import { GITHUB_RELEASE_API } from '../releaseSources.js';
 import { newId, nowIso, dayKey } from '../util.js';
 import { validatePluginConfiguration, clearMiddlewareStatus, clearAllMiddlewareStatus } from '../plugins/middleware.js';
 import { validateBalanceQuery } from '../providerBalanceValidation.js';
+import { applyContextDefaults, isValidContextWindow } from '../modelContext.js';
 
 export * from './types.js';
 export { JsonFile, JsonLines } from './jsonFile.js';
@@ -38,13 +39,14 @@ function validateProvider(provider: Provider): Provider {
   if (provider.apiKeys.some(k => typeof k.id !== 'string' || !k.id || typeof k.enabled !== 'boolean' || !Number.isFinite(k.weight) || k.weight < 0)
       || new Set(provider.apiKeys.map(k => k.id)).size !== provider.apiKeys.length) throw new Error('密钥标识不能重复，启用状态和权重必须有效');
   for (const model of provider.models) {
-    for (const field of ['contextWindow', 'maxOutput', 'inputPrice', 'outputPrice', 'cacheReadPrice', 'cacheWritePrice'] as const) {
+    if (model.contextWindow !== undefined && !isValidContextWindow(model.contextWindow)) throw new Error(`模型 ${model.id} 的上下文必须是正安全整数`);
+    for (const field of ['maxOutput', 'inputPrice', 'outputPrice', 'cacheReadPrice', 'cacheWritePrice'] as const) {
       const value = model[field];
       if (value !== undefined && (!Number.isFinite(value) || value < 0)) throw new Error(`模型 ${model.id} 的 ${field} 必须是非负数字`);
     }
   }
   validateBalanceQuery(provider.balanceQuery, provider.baseUrl);
-  return provider;
+  return { ...provider, models: provider.models.map(applyContextDefaults) };
 }
 
 function validateGroup(group: RoutingGroup, providers: Provider[]): RoutingGroup {
@@ -203,9 +205,9 @@ export class AuroraStore {
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
-    validateProvider(created);
-    this.providers.write([...list, created]);
-    return created;
+    const validated = validateProvider(created);
+    this.providers.write([...list, validated]);
+    return validated;
   }
 
   deleteProvider(id: string): void {

@@ -74,6 +74,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python scripts/test-provider-views-ui.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/test-model-context-ui.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/test-model-batch-context-ui.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python scripts/test-session-relations-ui.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node scripts/test-client-lifecycle-native.mjs

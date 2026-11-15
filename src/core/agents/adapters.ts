@@ -4,6 +4,7 @@ import path from 'node:path';
 import { parse as parseToml } from 'smol-toml';
 import type { AgentId, Provider } from '../store/types.js';
 import { nowIso } from '../util.js';
+import { isValidContextWindow } from '../modelContext.js';
 import { detectCodingDesktop } from '../injector.js';
 import { cliCandidates, desktopCandidates, type ClientPathContext } from '../clientPaths.js';
 import { CLAUDE_DESKTOP_PROFILE, claudeDesktopConfigFiles, claudeDesktopRestorePaths, resolveClaudeDesktopConfig } from '../claudeDesktopPaths.js';
@@ -175,12 +176,16 @@ function codexPlan(ctx: ConnectContext): PlannedFile[] {
   const selection = { model: ep.model, model_provider: coexist ? 'openai' : 'aurora' };
   const endpoint = codexCoexistBaseUrl(Number(new URL(ctx.gatewayUrl).port) || 80);
   const ownEndpoint = (value: unknown) => { try { const url = new URL(String(value)); return ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) && url.pathname.replace(/\/$/, '') === CODEX_COEXIST_BASE_PATH; } catch { return false; } };
-  const routing: Record<string, string | null> = { ...selection };
+  const routing: Record<string, string | number | null> = { ...selection };
   if (coexist) {
     routing.openai_base_url = endpoint;
     routing.model_catalog_json = ctx.modelCatalogPath!;
     if (current.forced_login_method === 'api') routing.forced_login_method = null;
   } else {
+    const contextWindow = ctx.provider.models.find(model => model.id === ctx.model)?.contextWindow;
+    // Context limits are root-level Codex settings, not ConfigProfile fields.
+    // Keep explicit compaction policy intact and avoid inventing unknown model limits.
+    if (isValidContextWindow(contextWindow)) routing.model_context_window = contextWindow;
     if (ownEndpoint(current.openai_base_url)) routing.openai_base_url = null;
     if (current.model_catalog_json === ctx.modelCatalogPath) routing.model_catalog_json = null;
   }
@@ -198,15 +203,16 @@ function codexPlan(ctx: ConnectContext): PlannedFile[] {
   if (!coexist) text = patchToml(text, 'model_providers.aurora', { name: '云桥 AI', base_url: ep.baseUrl, wire_api: 'responses', experimental_bearer_token: ep.apiKey, env_key: null, requires_openai_auth: false, stream_idle_timeout_ms: 300000 });
   return [planned(file, text)];
 }
+const CODEX_CONTEXT_WARNING = '普通 API 接入会应用所选模型已填写的上下文窗口；已有自动压缩阈值保持不变，修改后需重启客户端。官方账号共存保留现有窗口覆盖。';
 const codexCli = makeAdapter({
   id: 'codex-cli', name: 'Codex CLI', vendor: 'OpenAI', category: 'cli', support: 'automatic', protocol: 'openai-responses', description: 'OpenAI 终端编程助手，使用 Responses 协议。',
   supportNote: '配置独立的 aurora provider，保留账号登录态和其他 TOML 配置。', docsUrl: 'https://developers.openai.com/codex/config-reference', command: 'codex', paths: () => [codexConfig()], hint: '完全退出后重新运行 codex', plan: codexPlan,
-  warnings: ['Codex CLI 与 Codex 桌面共享用户级配置；当前 profile 或项目配置可能覆盖此设置。', '部分新版 CLI 已停用 config.toml 内的旧 profile 表，改用 --profile 名称和独立配置文件；请先确认原配置可由当前 CLI 正常读取，云桥不会自动迁移这些文件。'],
+  warnings: ['Codex CLI 与 Codex 桌面共享用户级配置；当前 profile 或项目配置可能覆盖此设置。', '部分新版 CLI 已停用 config.toml 内的旧 profile 表，改用 --profile 名称和独立配置文件；请先确认原配置可由当前 CLI 正常读取，云桥不会自动迁移这些文件。', CODEX_CONTEXT_WARNING],
 });
 const codexDesktop = makeAdapter({
   id: 'chatgpt-desktop', name: 'ChatGPT 桌面版', vendor: 'OpenAI', category: 'desktop', support: 'automatic', protocol: 'openai-responses', description: '统一识别 ChatGPT、ChatGPT Beta 与原 Codex 桌面版，按已安装版本的实际能力接入。',
   supportNote: '具有 Codex 编程模块的桌面版本可配置 Responses 供应商；旧版纯聊天应用需要升级或使用 CLI。', docsUrl: 'https://developers.openai.com/codex/config-reference', desktop: 'ChatGPT', paths: () => [codexConfig()], hint: '完全退出 ChatGPT / Codex 桌面版（包括托盘）后重新打开', plan: codexPlan,
-  warnings: ['此变更也会影响 Codex CLI；切换供应商后部分历史会话可能被客户端按 provider 筛选，可到历史会话页查看。'],
+  warnings: ['此变更也会影响 Codex CLI；切换供应商后部分历史会话可能被客户端按 provider 筛选，可到历史会话页查看。', CODEX_CONTEXT_WARNING],
 });
 const desktopPreview = codexDesktop.preview.bind(codexDesktop), desktopConnect = codexDesktop.connect.bind(codexDesktop);
 Object.defineProperty(codexDesktop, 'support', { enumerable: true, get: () => desktopDetection().supportsCodexConfig ? 'automatic' : 'manual' });

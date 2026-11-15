@@ -5,6 +5,7 @@ import type { IncomingMessage } from 'node:http';
 import * as zlib from 'node:zlib';
 import { parse } from 'smol-toml';
 import { codexHome } from '../codex.js';
+import { applyContextDefaults, isValidContextWindow } from '../modelContext.js';
 import type { AuroraStore } from '../store/index.js';
 
 /** Official identity and inference routing are separate. This module never writes or refreshes OAuth. */
@@ -229,10 +230,11 @@ function officialNativeModels(store: AuroraStore, persist = true): { models: Rec
 export function getCoexistCatalog(store: AuroraStore, persist = true): CoexistCatalog {
   const identity = readOfficialCodexIdentity(), discovered = officialNativeModels(store, persist), native = discovered.models, models: CoexistModel[] = [], nativeModels: Record<string, any>[] = [];
   for (const model of native) {
+    const contextWindow = applyContextDefaults({ id: model.slug, ...(isValidContextWindow(model.context_window) ? { contextWindow: model.context_window } : {}) }).contextWindow;
     const id = `${CODEX_OFFICIAL_MODEL_PREFIX}${model.slug}`, displayName = `官方 · ${String(model.display_name || model.slug)}`;
     models.push({ id, upstreamModel: model.slug, providerId: 'official', providerName: 'ChatGPT 官方账号', displayName, official: true,
-      ...(Number.isFinite(model.context_window) ? { contextWindow: model.context_window } : {}) });
-    nativeModels.push({ ...model, slug: id, display_name: displayName, prefer_websockets: false });
+      ...(contextWindow !== undefined ? { contextWindow } : {}) });
+    nativeModels.push({ ...model, ...(contextWindow !== undefined ? { context_window: contextWindow } : {}), slug: id, display_name: displayName, prefer_websockets: false });
   }
   for (const provider of store.listProviders()) {
     let local = false;
@@ -240,8 +242,9 @@ export function getCoexistCatalog(store: AuroraStore, persist = true): CoexistCa
     if (!provider.enabled || provider.id === 'official' || !provider.apiKeys.some(key => key.enabled && (key.key || local))) continue;
     for (const model of provider.models) {
       if (!model.id || model.id.length > 400 || /[\r\n\0]/.test(model.id)) continue;
+      const contextWindow = applyContextDefaults({ id: model.id, ...(isValidContextWindow(model.contextWindow) ? { contextWindow: model.contextWindow } : {}) }).contextWindow;
       const id = `${provider.id}/${model.id}`, displayName = `${provider.name} · ${model.displayName || model.id}`;
-      models.push({ id, upstreamModel: model.id, providerId: provider.id, providerName: provider.name, displayName, official: false, contextWindow: model.contextWindow });
+      models.push({ id, upstreamModel: model.id, providerId: provider.id, providerName: provider.name, displayName, official: false, contextWindow });
       // Keep the actual local client's schema, but do not advertise capabilities merely inherited from an official model.
       const template = native[0] ? structuredClone(native[0]) : {};
       for (const key of ['multi_agent_version', 'use_responses_lite', 'supports_image_detail_original']) delete template[key];
@@ -252,7 +255,7 @@ export function getCoexistCatalog(store: AuroraStore, persist = true): CoexistCa
         supports_parallel_tool_calls: false, supports_reasoning_summaries: false, support_verbosity: false,
         experimental_supported_tools: [], supports_search_tool: false, supports_tool_search: false,
         input_modalities: model.capabilities?.vision ? ['text', 'image'] : ['text'],
-        context_window: model.contextWindow || 32768, max_context_window: model.contextWindow || null,
+        context_window: contextWindow ?? 32768, max_context_window: contextWindow ?? null,
         effective_context_window_percent: 95, auto_compact_token_limit: null,
         prefer_websockets: false, shell_type: 'shell_command', truncation_policy: { mode: 'tokens', limit: 10000 } });
     }

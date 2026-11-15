@@ -6,6 +6,7 @@ import BalanceQueryEditor from '../components/BalanceQueryEditor';
 import { useProviderBalances } from '../hooks/useProviderBalances';
 import { persistProviderView, providerBalanceFacts, readProviderView, type BalanceFilter, type ProviderView } from '../lib/providerPresentation';
 import '../styles/providers.css';
+import { applyContextDefaults, DEFAULT_CHATGPT_CONTEXT_WINDOW, isChatgptTextModel, isValidContextWindow } from '../../../src/core/modelContext';
 import { LocalIdentityCard, LocalScanDetails, localTime, useLocalClientScan } from '../components/LocalClients';
 import type { PageProps } from '../App';
 import { Btn, Empty, Field, Ico, Modal, Toggle, useToast } from '../components/ui';
@@ -455,6 +456,17 @@ function ProviderCardDetails({ compact, name, children }: { compact: boolean; na
   return compact ? <details className="provider-list-details"><summary aria-label={`查看 ${name} 的模型与各 Key 余额`}>模型与各 Key 余额</summary>{content}</details> : content;
 }
 
+function initialContextDrafts(models: ProviderModel[]) {
+  return Object.fromEntries(models.map((model, index) => [index, String(applyContextDefaults(model).contextWindow ?? '')]));
+}
+
+function parseContextDraft(raw: string): { value?: number; error?: string } {
+  const text = raw.trim();
+  if (!text) return {};
+  const value = Number(text);
+  return /^\d+$/.test(text) && isValidContextWindow(value) ? { value } : { error: '请输入正整数 tokens，或留空；不支持小数、负数和科学计数法。' };
+}
+
 function ProviderEditor({
   value,
   presets,
@@ -479,12 +491,71 @@ function ProviderEditor({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [balanceError, setBalanceError] = useState('');
+  const [contextDrafts, setContextDrafts] = useState<Record<number, string>>(() => initialContextDrafts(value.models ?? []));
+  const [contextErrors, setContextErrors] = useState<Record<number, string>>({});
+  const contextInputs = useRef<Record<number, HTMLInputElement | null>>({});
+  const [batchOpen, setBatchOpen] = useState(false);
+  const [batchContext, setBatchContext] = useState(String(DEFAULT_CHATGPT_CONTEXT_WINDOW));
+  const [batchScope, setBatchScope] = useState<'chatgpt' | 'all'>('chatgpt');
+  const [batchMode, setBatchMode] = useState<'missing' | 'overwrite'>('missing');
+  const [batchError, setBatchError] = useState('');
+  const [batchResult, setBatchResult] = useState('');
   const running = useRef(false);
   const busy = fetching || saving;
   const onToast = useToast().push;
   const keys = value.apiKeys ?? [];
+  const models = value.models ?? [];
+  const contextDraft = (model: ProviderModel, index: number) => contextDrafts[index] ?? String(model.contextWindow ?? '');
+  const batchMatches = (model: ProviderModel, index: number) => (batchScope === 'all' || isChatgptTextModel(model.id)) && (batchMode === 'overwrite' || !contextDraft(model, index).trim());
+  const batchCount = models.filter(batchMatches).length;
+
+  function resetContextDrafts(next: ProviderModel[]) {
+    setContextDrafts(initialContextDrafts(next)); setContextErrors({}); setBatchResult('');
+  }
+
+  function validateModels(): ProviderModel[] | undefined {
+    const errors: Record<number, string> = {};
+    const next = models.map((model, index) => {
+      const result = parseContextDraft(contextDraft(model, index));
+      if (result.error) errors[index] = result.error;
+      return { ...model, contextWindow: result.value };
+    });
+    setContextErrors(errors);
+    if (Object.keys(errors).length) {
+      setError('请检查模型列表中的上下文窗口，修正后再保存或拉取。');
+      contextInputs.current[Number(Object.keys(errors)[0])]?.focus();
+      return;
+    }
+    return next;
+  }
+
+  function commitContext(index: number) {
+    const result = parseContextDraft(contextDraft(models[index], index));
+    setContextErrors(previous => { const next = { ...previous }; if (result.error) next[index] = result.error; else delete next[index]; return next; });
+    if (!result.error) set({ models: models.map((model, i) => i === index ? { ...model, contextWindow: result.value } : model) });
+  }
+
+  function removeModel(index: number) {
+    const shift = (items: Record<number, string>) => Object.fromEntries(Object.entries(items).filter(([key]) => Number(key) !== index).map(([key, item]) => [Number(key) > index ? Number(key) - 1 : Number(key), item]));
+    setContextDrafts(shift(contextDrafts)); setContextErrors(shift(contextErrors)); setBatchResult('');
+    set({ models: models.filter((_, i) => i !== index) });
+  }
+
+  function applyBatchContext() {
+    const parsed = parseContextDraft(batchContext);
+    if (parsed.error || parsed.value === undefined) { setBatchError(parsed.error || '请填写本次批量设置的正整数 tokens。'); return; }
+    const drafts = { ...contextDrafts }, errors = { ...contextErrors };
+    const next = models.map((model, index) => {
+      if (!batchMatches(model, index)) return model;
+      drafts[index] = String(parsed.value); delete errors[index];
+      return { ...model, contextWindow: parsed.value };
+    });
+    set({ models: next }); setContextDrafts(drafts); setContextErrors(errors); setBatchError('');
+    setBatchResult(`已在编辑草稿中设置 ${batchCount} 个模型，点击“保存”后生效。`);
+  }
 
   function applyPreset(p: Preset) {
+    resetContextDrafts(p.models);
     onChange({
       ...value,
       presetId: p.id,
@@ -512,8 +583,10 @@ function ProviderEditor({
           </Btn>
           <Btn variant="primary" disabled={busy || !!balanceError} onClick={async () => {
             if (running.current || balanceError) return;
+            const models = validateModels();
+            if (!models) return;
             running.current = true; setSaving(true); setError('');
-            try { await onSave(value); } catch (e: any) { setError(e.message || '保存失败，请重试'); }
+            try { await onSave({ ...value, models }); } catch (e: any) { setError(e.message || '保存失败，请重试'); }
             finally { running.current = false; setSaving(false); }
           }}>
             {saving ? '保存中…' : '保存'}
@@ -523,7 +596,7 @@ function ProviderEditor({
     >
       {error && <div className="notice warning" role="alert">{error}</div>}
       <fieldset disabled={busy} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
-      <Field label="官方厂商目录" hint="启动时自动同步并缓存，与客户端接入共用同一份目录。"><PresetPicker presets={presets} value={value.presetId} onChange={p => p ? applyPreset(p) : onChange({ ...EMPTY_PROVIDER(), id: value.id })} /></Field>
+      <Field label="官方厂商目录" hint="启动时自动同步并缓存，与客户端接入共用同一份目录。"><PresetPicker presets={presets} value={value.presetId} onChange={p => { if (p) applyPreset(p); else { resetContextDrafts([]); onChange({ ...EMPTY_PROVIDER(), id: value.id }); } }} /></Field>
 
       <div className="grid cols-2">
         <Field label="显示名称">
@@ -639,24 +712,26 @@ function ProviderEditor({
       </div>
 
       <Field label={`模型列表（${(value.models ?? []).length}）`}>
-        <div className="model-table">
+        <p className="provider-context-hint" id="provider-context-help">上下文窗口可直接输入正整数 tokens，空白也可以编辑。GPT/Codex 文本模型留空时，保存会采用推荐值 {DEFAULT_CHATGPT_CONTEXT_WINDOW}；其他模型留空表示未设置。推荐值不改变模型的真实能力，以上游限制为准。</p>
+        <p className="provider-context-hint">修改后，已接入的 ChatGPT/Codex 请到“客户端接入”重新预览并应用，再重启客户端。保存不会自动覆盖正在使用的客户端配置。</p>
+        <div className="provider-context-tools">
+          <button className="btn sm" type="button" aria-expanded={batchOpen} aria-controls="provider-context-batch" onClick={() => setBatchOpen(open => !open)}>批量设置上下文</button>
+        </div>
+        {batchOpen && <div className="provider-context-batch" id="provider-context-batch" role="group" aria-label="批量设置上下文">
+          <div className="provider-context-batch-fields">
+            <label>模型范围<select className="select" aria-label="批量上下文模型范围" value={batchScope} onChange={e => { setBatchScope(e.target.value as 'chatgpt' | 'all'); setBatchResult(''); }}><option value="chatgpt">GPT/Codex 文本模型</option><option value="all">当前供应商的全部模型</option></select></label>
+            <label>应用方式<select className="select" aria-label="批量上下文应用方式" value={batchMode} onChange={e => { setBatchMode(e.target.value as 'missing' | 'overwrite'); setBatchResult(''); }}><option value="missing">仅填写当前空白项</option><option value="overwrite">覆盖范围内的已有值</option></select></label>
+            <label>上下文窗口（tokens）<input className="input" type="text" inputMode="numeric" aria-label="批量上下文窗口" aria-invalid={!!batchError} value={batchContext} onChange={e => { setBatchContext(e.target.value); setBatchError(''); setBatchResult(''); }} /></label>
+          </div>
+          <p className="provider-context-hint">{batchScope === 'chatgpt' ? '根据模型 ID 识别 GPT/Codex 文本模型，跳过图像、音频和其他厂商模型。' : '将包含当前供应商所有类型及厂商的模型，请确认此范围适合本次修改。'}当前将修改 <b>{batchCount}</b> 项。</p>
+          {batchError && <p className="provider-context-error" role="alert">{batchError}</p>}
+          {batchResult && <p className="provider-context-hint" role="status">{batchResult}</p>}
+          <Btn size="sm" disabled={!batchCount} onClick={applyBatchContext}>应用到 {batchCount} 项</Btn>
+        </div>}
+        <div className="model-table provider-model-table">
           <div className="model-head">
             <span>模型 ID（发给上游的名字）</span>
-            <span>
-              上下文窗口
-              <a
-                style={{ cursor: "pointer", color: "var(--accent)", marginLeft: 6, fontWeight: 400 }}
-                onClick={() => {
-                  const v = prompt("把全部模型的上下文窗口统一改成多少？", "272000");
-                  if (!v) return;
-                  const n = Number(v);
-                  if (!n || n < 1000) return alert("请输入合理数字，例如 272000");
-                  set({ models: (value.models ?? []).map((m) => ({ ...m, contextWindow: n })) });
-                }}
-              >
-                批量
-              </a>
-            </span>
+            <span>上下文（tokens）</span>
             <span>输入价 $/M</span>
             <span>输出价 $/M</span>
             <span />
@@ -666,6 +741,7 @@ function ProviderEditor({
               <input
                 className="input mono"
                 placeholder="模型 API ID"
+                aria-label={`第 ${i + 1} 行模型 ID`}
                 value={m.id}
                 onChange={(e) => {
                   const next = [...(value.models ?? [])];
@@ -673,18 +749,23 @@ function ProviderEditor({
                   set({ models: next });
                 }}
               />
-              <input
-                className="input"
-                type="number"
-                placeholder="待确认"
-                title="上下文窗口（tokens）。超出这个长度会被自动裁剪，或直接报错"
-                value={m.contextWindow ?? ''}
-                onChange={(e) => {
-                  const next = [...(value.models ?? [])];
-                  next[i] = { ...m, contextWindow: e.target.value.trim() ? Number(e.target.value) : undefined };
-                  set({ models: next });
-                }}
-              />
+              <div className="provider-context-cell">
+                <input
+                  className="input"
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="未设置，可填写"
+                  aria-label={`第 ${i + 1} 行上下文窗口`}
+                  aria-describedby={contextErrors[i] ? `provider-context-error-${i} provider-context-help` : 'provider-context-help'}
+                  aria-invalid={!!contextErrors[i]}
+                  ref={element => { contextInputs.current[i] = element; }}
+                  title="填写正整数 tokens；此值不改变上游模型的实际限制。"
+                  value={contextDraft(m, i)}
+                  onChange={e => { setContextDrafts(previous => ({ ...previous, [i]: e.target.value })); setContextErrors(previous => { const next = { ...previous }; delete next[i]; return next; }); setBatchResult(''); }}
+                  onBlur={() => commitContext(i)}
+                />
+                {contextErrors[i] && <span className="provider-context-error" id={`provider-context-error-${i}`} role="alert">{contextErrors[i]}</span>}
+              </div>
               <input
                 className="input"
                 type="number"
@@ -715,7 +796,7 @@ function ProviderEditor({
                 size="sm"
                 variant="ghost"
                 title="删除这一行"
-                onClick={() => set({ models: (value.models ?? []).filter((_, j) => j !== i) })}
+                onClick={() => removeModel(i)}
               >
                 <Ico name="x" size={12} />
               </Btn>
@@ -728,7 +809,7 @@ function ProviderEditor({
               onClick={() => {
                 const n = (value.models ?? []).length;
                 if (!n) return;
-                if (confirm(`清空 ${n} 个模型？清空后可以点「从上游拉取」重新获取`)) set({ models: [] });
+                if (confirm(`清空 ${n} 个模型？清空后可以点「从上游拉取」重新获取`)) { resetContextDrafts([]); set({ models: [] }); }
               }}
             >
               清空
@@ -738,10 +819,13 @@ function ProviderEditor({
               disabled={!!balanceError}
               onClick={async () => {
                 if (running.current) return;
+                const models = validateModels();
+                if (!models) return;
                 running.current = true; setFetching(true); setError('');
                 try {
-                  const r = await onFetchModels({ ...value, models: value.models ?? [] });
-                  if (r?.providerId) set({ id: r.providerId, models: r.models || value.models });
+                  const r = await onFetchModels({ ...value, models });
+                  if (r?.ok && Array.isArray(r.models)) { resetContextDrafts(r.models); set({ ...(r.providerId ? { id: r.providerId } : {}), models: r.models }); }
+                  else if (r?.providerId) set({ id: r.providerId, models });
                   if (!r?.ok) setError(`供应商已保存，但模型同步失败：${r?.message || '请稍后重试'}`);
                   onToast(r?.ok ? `已拉取 ${r.models.length} 个模型` : (r?.message ?? "这家没有公开模型列表"), r?.ok ? "ok" : "bad");
                 } catch (e: any) { setError(e.message || '拉取失败'); } finally {
@@ -765,7 +849,7 @@ function ProviderEditor({
               <Ico name="plus" size={12} /> 添加模型
             </Btn>
             <span className="hint">
-              拉取前会先保存供应商。上下文和价格留空表示待确认，0 表示已确认免费；实际能力与计费以上游服务为准。
+              拉取前会先保存供应商。价格留空表示待确认，价格为 0 表示已确认免费；上下文必须为正整数或留空。
             </span>
           </div>
         </div>

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { PageProps } from '../App';
 import { Btn, Empty, Field, Ico, Modal, useToast } from '../components/ui';
 import { call, fmtCtx, fmtCost } from '../lib/api';
+import { DEFAULT_CHATGPT_CONTEXT_WINDOW, isChatgptTextModel } from '../../../src/core/modelContext';
 
 export default function Models({ state, reload, go }: PageProps) {
   const toast = useToast();
@@ -13,10 +14,12 @@ export default function Models({ state, reload, go }: PageProps) {
   const [operation, setOperation] = useState<'delete' | 'update' | null>(null);
   const [preview, setPreview] = useState<any>(null);
   const [error, setError] = useState('');
+  const [refreshError, setRefreshError] = useState('');
   const [draft, setDraft] = useState<Record<string, string>>({});
   const desktop = !!window.aurora;
   const all = useMemo(() => state.providers.flatMap(p => p.models.map(model => ({ providerId: p.id, providerName: p.name, model, key: JSON.stringify([p.id, model.id]) }))), [state.providers]);
   const rows = all.filter(r => (!provider || r.providerId === provider) && `${r.model.id} ${r.model.displayName || ''} ${r.providerName}`.toLowerCase().includes(query.toLowerCase()));
+  const chatgptRows = rows.filter(r => isChatgptTextModel(r.model.id));
   useEffect(() => { const keys = new Set(all.map(r => r.key)); setPicked(p => new Set([...p].filter(k => keys.has(k)))); }, [all]);
   const items = all.filter(r => picked.has(r.key)).map(r => ({ providerId: r.providerId, modelId: r.model.id }));
   const patch: any = {};
@@ -26,6 +29,15 @@ export default function Models({ state, reload, go }: PageProps) {
   const allVisible = rows.length > 0 && rows.every(r => picked.has(r.key));
   async function review() {
     if (running.current) return;
+    if (operation === 'update') {
+      for (const field of ['contextWindow', 'maxOutput']) {
+        const raw = draft[field]?.trim();
+        if (raw && (!/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw)) || Number(raw) <= 0)) {
+          setError(`${field === 'contextWindow' ? '上下文窗口' : '最大输出'}请输入正整数 Token 数，留空保持原值`);
+          setPreview(null); return;
+        }
+      }
+    }
     running.current = true;
     setBusy(true); setError('');
     try { const r = await call('model.batch.preview', payload); if (!r.ok) throw new Error(r.message); setPreview({ ...r, payload }); }
@@ -35,20 +47,43 @@ export default function Models({ state, reload, go }: PageProps) {
     if (running.current || !preview) return;
     running.current = true;
     setBusy(true); setError('');
-    try { const r = await call('model.batch.apply', { ...preview.payload, revision: preview.revision }); if (!r.ok) throw new Error(r.message); await reload(); setPicked(new Set()); setOperation(null); setPreview(null); toast.push(r.message, 'ok'); }
+    try {
+      const r = await call('model.batch.apply', { ...preview.payload, revision: preview.revision });
+      if (!r.ok) throw new Error(r.message);
+      setPicked(new Set()); setOperation(null); setPreview(null); toast.push(r.message, 'ok');
+      try { await reload(); setRefreshError(''); }
+      catch { setRefreshError('模型修改已保存，但列表刷新失败。请重新加载列表，不需要重复提交。'); }
+    }
     catch (e: any) { setPreview(null); setError(e.message); } finally { running.current = false; setBusy(false); }
   }
-  function open(op: 'delete' | 'update') { setOperation(op); setPreview(null); setError(''); setDraft({}); }
+  function open(op: 'delete' | 'update', initial: Record<string, string> = {}) { setOperation(op); setPreview(null); setError(''); setDraft(initial); }
   return <>
     <div className="page-head"><div><div className="eyebrow">MODELS</div><h1>模型管理</h1><p>{all.length} 条记录 · {new Set(all.map(r => r.model.id)).size} 个模型。批量修改能力与价格，清理不需要的模型。</p></div><Btn onClick={() => go('providers')}>从供应商同步模型</Btn></div>
     {!desktop && <div className="notice">远程控制台可查看模型；批量编辑请在电脑客户端完成。</div>}
+    {refreshError && <div className="notice warning" role="alert"><span>{refreshError}</span><Btn size="sm" disabled={busy} onClick={async () => {
+      if (running.current) return; running.current = true; setBusy(true);
+      try { await reload(); setRefreshError(''); } catch { /* Keep the committed-state explanation visible. */ }
+      finally { running.current = false; setBusy(false); }
+    }}>重新加载列表</Btn></div>}
     <div className="repair-toolbar"><div className="search-input"><Ico name="search" size={14} /><input aria-label="搜索模型" placeholder="搜索模型或供应商…" value={query} onChange={e => setQuery(e.target.value)} /></div><select className="select" style={{ width: 200 }} aria-label="按供应商筛选模型" value={provider} onChange={e => setProvider(e.target.value)}><option value="">全部供应商</option>{state.providers.map(p => <option key={p.id} value={p.id}>{p.name} · {p.models.length}</option>)}</select><div className="grow" /><span className="hint">已选 {picked.size} 条</span><Btn disabled={!desktop || !picked.size} onClick={() => open('update')}>批量编辑</Btn><Btn variant="danger" disabled={!desktop || !picked.size} onClick={() => open('delete')}>删除所选</Btn></div>
+    <div className="row wrap" style={{ marginBottom: 12 }}><Btn size="sm" disabled={!desktop || !chatgptRows.length} onClick={() => setPicked(new Set(chatgptRows.map(row => row.key)))}>选择当前 ChatGPT 文本模型（{chatgptRows.length}）</Btn><span className="hint">仅选择当前筛选结果中的 GPT / Codex 文本模型，图像、语音和辅助模型不自动选中。</span></div>
     {picked.size > 0 && <div className="notice"><span>选择跨筛选条件保留，共 {picked.size} 条。</span><button className="text-button" onClick={() => setPicked(new Set())}>清空选择</button></div>}
-    <div className="card" style={{ padding: 0, overflowX: 'auto' }}>{!rows.length ? <Empty icon="◇" title={all.length ? '没有匹配的模型' : '还没有模型'} hint="到我的供应商同步模型，或手动添加。" /> : <table className="tbl"><thead><tr><th><input aria-label="全选当前模型" type="checkbox" disabled={!desktop} checked={allVisible} onChange={e => setPicked(p => { const n = new Set(p); for (const r of rows) e.target.checked ? n.add(r.key) : n.delete(r.key); return n; })} /></th><th>供应商</th><th>模型 ID</th><th>上下文</th><th>输入 / 输出价</th><th>能力</th><th /></tr></thead><tbody>{rows.map(r => <tr key={r.key}><td><input type="checkbox" aria-label={`选择模型 ${r.providerName} ${r.model.id}`} disabled={!desktop} checked={picked.has(r.key)} onChange={e => setPicked(p => { const n = new Set(p); e.target.checked ? n.add(r.key) : n.delete(r.key); return n; })} /></td><td>{r.providerName}</td><td className="mono">{r.model.id}</td><td>{fmtCtx(r.model.contextWindow)}</td><td>{fmtCost(r.model.inputPrice)} / {fmtCost(r.model.outputPrice)}</td><td><div className="tag-list">{(['tools', 'vision', 'thinking'] as const).filter(c => r.model.capabilities?.[c]).map(c => <span className="chip accent" key={c}>{c === 'tools' ? '工具' : c === 'vision' ? '视觉' : '思考'}</span>)}</div></td><td><Btn size="sm" disabled={!desktop} onClick={() => { setPicked(new Set([r.key])); open('update'); }}>编辑</Btn></td></tr>)}</tbody></table>}</div>
-    <p className="hint" style={{ marginTop: 16 }}>价格为每百万 Token 的美元估算值。上下文与能力标记不改变服务商的实际限制；批量修改前保存本地备份。</p>
+    <div className="card" style={{ padding: 0, overflowX: 'auto' }}>{!rows.length ? <Empty icon="◇" title={all.length ? '没有匹配的模型' : '还没有模型'} hint="到我的供应商同步模型，或手动添加。" /> : <table className="tbl"><thead><tr><th><input aria-label="全选当前模型" type="checkbox" disabled={!desktop} checked={allVisible} onChange={e => setPicked(p => { const n = new Set(p); for (const r of rows) e.target.checked ? n.add(r.key) : n.delete(r.key); return n; })} /></th><th>供应商</th><th>模型 ID</th><th>上下文</th><th>输入 / 输出价</th><th>能力</th><th /></tr></thead><tbody>{rows.map(r => <tr key={r.key}><td><input type="checkbox" aria-label={`选择模型 ${r.providerName} ${r.model.id}`} disabled={!desktop} checked={picked.has(r.key)} onChange={e => setPicked(p => { const n = new Set(p); e.target.checked ? n.add(r.key) : n.delete(r.key); return n; })} /></td><td>{r.providerName}</td><td className="mono">{r.model.id}</td><td>{fmtCtx(r.model.contextWindow)}</td><td>{fmtCost(r.model.inputPrice)} / {fmtCost(r.model.outputPrice)}</td><td><div className="tag-list">{(['tools', 'vision', 'thinking'] as const).filter(c => r.model.capabilities?.[c]).map(c => <span className="chip accent" key={c}>{c === 'tools' ? '工具' : c === 'vision' ? '视觉' : '思考'}</span>)}</div></td><td><Btn size="sm" disabled={!desktop} onClick={() => { setPicked(new Set([r.key])); open('update', { contextWindow: String(r.model.contextWindow ?? (isChatgptTextModel(r.model.id) ? DEFAULT_CHATGPT_CONTEXT_WINDOW : '')) }); }}>编辑</Btn></td></tr>)}</tbody></table>}</div>
+    <p className="hint" style={{ marginTop: 16 }}>价格为每百万 Token 的美元估算值。上下文与能力标记不改变服务商的实际限制；批量修改前保存本地备份。修改窗口后，已接入的 ChatGPT / Codex 请到“客户端接入”重新预览、应用并重启；已有自动压缩阈值会保留。</p>
     {operation && <Modal title={operation === 'delete' ? '批量删除模型' : '批量编辑模型'} sub={`已选择 ${items.length} 条记录，先检查影响，再应用。`} width={760} onClose={() => !busy && setOperation(null)} foot={<><Btn disabled={busy} onClick={() => setOperation(null)}>取消</Btn>{preview ? <Btn variant={operation === 'delete' ? 'danger' : 'primary'} disabled={busy || !!preview.conflicts?.length} onClick={apply}>确认{operation === 'delete' ? '删除' : '更新'} {preview.count} 条</Btn> : <Btn variant="primary" disabled={busy} onClick={review}>{busy ? '检查中…' : '预览修改'}</Btn>}</>}>
       {error && <div className="notice warning" role="alert">{error}</div>}
-      {operation === 'update' && <><div className="notice">留空保持原值，只更新填写的字段。</div><fieldset disabled={busy} style={{ border: 0, padding: 0 }}><div className="grid cols-2">{[['contextWindow', '上下文窗口'], ['maxOutput', '最大输出'], ['inputPrice', '输入价格'], ['outputPrice', '输出价格'], ['cacheReadPrice', '缓存读取价格'], ['cacheWritePrice', '缓存写入价格']].map(([key, label]) => <Field label={label} key={key}><input className="input" type="number" min={0} step="any" aria-label={`批量${label}`} placeholder="保持原值" value={draft[key] || ''} onChange={e => { setDraft(d => ({ ...d, [key]: e.target.value })); setPreview(null); }} /></Field>)}{[['tools', '工具调用'], ['vision', '视觉'], ['thinking', '思考']].map(([key, label]) => <Field label={label} key={key}><select className="select" value={draft[key] || ''} onChange={e => { setDraft(d => ({ ...d, [key]: e.target.value })); setPreview(null); }}><option value="">保持原值</option><option value="true">支持</option><option value="false">不支持</option></select></Field>)}</div></fieldset></>}
+      {operation === 'update' && <>
+        <div className="notice">留空保持原值，只更新填写的字段。上下文窗口填写 Token 数，不代表修改服务商实际容量。</div>
+        <fieldset disabled={busy} style={{ border: 0, padding: 0 }}>
+          <div className="grid cols-2">{[['contextWindow', '上下文窗口'], ['maxOutput', '最大输出'], ['inputPrice', '输入价格'], ['outputPrice', '输出价格'], ['cacheReadPrice', '缓存读取价格'], ['cacheWritePrice', '缓存写入价格']].map(([key, label]) => {
+            const tokens = key === 'contextWindow' || key === 'maxOutput';
+            return <Field label={label} key={key} hint={key === 'contextWindow' ? 'ChatGPT 文本模型建议 272000；已有明确容量可保留或自定义。' : undefined}>
+              <input className="input" type={tokens ? 'text' : 'number'} inputMode={tokens ? 'numeric' : 'decimal'} min={tokens ? undefined : 0} step={tokens ? undefined : 'any'} aria-label={`批量${label}`} placeholder="保持原值" value={draft[key] || ''} onChange={e => { setDraft(d => ({ ...d, [key]: e.target.value })); setPreview(null); setError(''); }} />
+              {key === 'contextWindow' && <Btn size="sm" disabled={!items.length || !all.filter(row => picked.has(row.key)).every(row => isChatgptTextModel(row.model.id))} onClick={() => { setDraft(d => ({ ...d, contextWindow: String(DEFAULT_CHATGPT_CONTEXT_WINDOW) })); setPreview(null); setError(''); }}>填入 ChatGPT 建议值 272000</Btn>}
+            </Field>;
+          })}{[['tools', '工具调用'], ['vision', '视觉'], ['thinking', '思考']].map(([key, label]) => <Field label={label} key={key}><select className="select" value={draft[key] || ''} onChange={e => { setDraft(d => ({ ...d, [key]: e.target.value })); setPreview(null); }}><option value="">保持原值</option><option value="true">支持</option><option value="false">不支持</option></select></Field>)}</div>
+        </fieldset>
+      </>}
       {operation === 'delete' && <p>正在使用的客户端或路由分组会列出，完成调整后才能删除。删空的供应商会自动停用。</p>}
       {preview?.conflicts?.map((c: string) => <div key={c} className="notice warning">{c}</div>)}{preview && !preview.conflicts?.length && <div className="notice">检查完成，可以应用。{preview.emptied?.length ? `以下供应商将停用：${preview.emptied.join('、')}` : ''}</div>}
       <div className="scroll-y" style={{ maxHeight: 160 }}>{all.filter(r => picked.has(r.key)).map(r => <div className="list-row" key={r.key}><span>{r.providerName}</span><code>{r.model.id}</code></div>)}</div>

@@ -5,6 +5,7 @@ import { getLocalClientsSnapshot, syncLocalClients, restoreIgnoredLocalSource } 
 import { activeRequests } from './gateway/liveUsage.js';
 import path from 'node:path';
 import fs from 'node:fs';
+import { applyContextDefaults, isChatgptTextModel, isValidContextWindow } from './modelContext.js';
 import { readText, atomicWrite, digest } from './agents/configFiles.js';
 import { getCoexistCatalog } from './gateway/coexist.js';
 import { runExtensionAction } from './extensions/index.js';
@@ -257,7 +258,7 @@ export async function fetchProviderModels(deps: ActionDeps, payload: { providerI
         const id = rawId.replace(/^models\//, '').trim();
         if (!id || id.length > 512 || /[\s\u0000-\u001f]/.test(id)) return [];
         const context = x.context_window ?? x.input_token_limit ?? x.inputTokenLimit;
-        return [{ id, ...(Number.isSafeInteger(context) && context > 0 ? { contextWindow: context } : {}) }];
+        return [{ id, ...(isValidContextWindow(context) ? { contextWindow: context } : {}) }];
       });
       if (models.length) {
         // A network response must not restore a deleted provider or overwrite edits made while it was loading.
@@ -266,15 +267,16 @@ export async function fetchProviderModels(deps: ActionDeps, payload: { providerI
         if (connection(current) !== startedConnection) return { ok: false, models: current.models, message: '供应商连接配置已变化，请重新同步模型' };
         const merged = [...current.models];
         for (const m of models) {
-          if (!merged.find((x) => x.id === m.id) && !(startedModels.has(m.id) && !current.models.some(x => x.id === m.id)))
-            merged.push({
-              id: m.id,
-              contextWindow: m.contextWindow,
-            });
+          const index = merged.findIndex(x => x.id === m.id);
+          if (index >= 0) {
+            // Existing explicit limits are local choices; synchronization never replaces them.
+            if (merged[index].contextWindow === undefined && isChatgptTextModel(m.id)) merged[index] = applyContextDefaults({ ...merged[index], contextWindow: m.contextWindow });
+          } else if (!(startedModels.has(m.id) && !current.models.some(x => x.id === m.id))) merged.push(applyContextDefaults(m));
         }
-        try { if (merged.length !== current.models.length) deps.store.saveProvider({ ...current, models: merged }); }
+        let savedModels = merged;
+        try { if (merged.length !== current.models.length || merged.some((model, index) => model !== current.models[index])) savedModels = deps.store.saveProvider({ ...current, models: merged }).models; }
         catch { return { ok: false, models: current.models, message: '模型已获取，但本地保存失败，请检查数据目录后重试' }; }
-        return { ok: true, models: merged, added: merged.length - current.models.length };
+        return { ok: true, models: savedModels, added: merged.length - current.models.length };
       }
     } catch {
       continue;

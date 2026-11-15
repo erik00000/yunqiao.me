@@ -1,5 +1,6 @@
 import https from 'node:https';
 import http from 'node:http';
+import { isValidContextWindow } from './modelContext.js';
 import { createHash } from 'node:crypto';
 import { URL } from 'node:url';
 import type { AuroraStore, Provider, ProviderModel } from './store/index.js';
@@ -137,7 +138,7 @@ export function validateCloudProvider(raw: unknown): CloudProvider {
       throw new Error(`供应商「${p.name}」存在无效模型名称`);
     }
     return {
-      id: m.id.trim(), displayName: optionalText(m.displayName, 160), contextWindow: number(m.contextWindow), maxOutput: number(m.maxOutput), inputPrice: number(m.inputPrice), outputPrice: number(m.outputPrice), cacheReadPrice: number(m.cacheReadPrice), cacheWritePrice: number(m.cacheWritePrice),
+      id: m.id.trim(), displayName: optionalText(m.displayName, 160), contextWindow: isValidContextWindow(m.contextWindow) ? m.contextWindow : undefined, maxOutput: number(m.maxOutput), inputPrice: number(m.inputPrice), outputPrice: number(m.outputPrice), cacheReadPrice: number(m.cacheReadPrice), cacheWritePrice: number(m.cacheWritePrice),
       capabilities: {
         tools: typeof m.capabilities?.tools === 'boolean' ? m.capabilities.tools : undefined,
         vision: typeof m.capabilities?.vision === 'boolean' ? m.capabilities.vision : undefined,

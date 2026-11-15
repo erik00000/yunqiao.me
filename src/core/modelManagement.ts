@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { AuroraStore, ProviderModel } from './store/index.js';
 import { nowIso, newId } from './util.js';
+import { isValidContextWindow } from './modelContext.js';
 
 type Selection = { providerId: string; modelId: string };
 const key = (p: string, m: string) => JSON.stringify([p, m]);
@@ -45,6 +46,7 @@ export function manageModels(store: AuroraStore, payload: any, apply = false) {
     const input = payload.patch || {};
     for (const field of ['contextWindow', 'maxOutput', 'inputPrice', 'outputPrice', 'cacheReadPrice', 'cacheWritePrice'] as const) {
       if (input[field] !== undefined) {
+        if (field === 'contextWindow' && !isValidContextWindow(input[field])) throw new Error('上下文必须是正安全整数');
         if (typeof input[field] !== 'number' || !Number.isFinite(input[field]) || input[field] < 0) throw new Error(`${field} 应为非负数字`);
         patch[field] = input[field];
       }

@@ -40,3 +40,20 @@
   .provider-filters { flex: 1 1 100%; }
   .provider-filters .select { min-width: 0; flex: 1 1 140px; }
 }
+
+.provider-context-hint { font-size: 11px; line-height: 1.7; color: var(--text-2); margin: 8px 0; overflow-wrap: anywhere; }
+.provider-context-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0; }
+.provider-context-batch { padding: 14px; margin-bottom: 12px; border: 1px solid var(--stroke); border-radius: 9px; background: var(--bg); }
+.provider-context-batch-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.provider-context-batch-fields > label { display: flex; flex-direction: column; gap: 7px; min-width: 0; font-size: 11px; color: var(--text-2); }
+.provider-context-batch-fields .select, .provider-context-batch-fields .input { width: 100%; min-width: 0; }
+.model-table.provider-model-table { background: var(--bg); max-height: 360px; overflow: auto; }
+.provider-model-table .model-head, .provider-model-table .model-row { grid-template-columns: minmax(180px, 1fr) 160px 88px 88px 30px; min-width: 570px; align-items: start; }
+.provider-model-table .model-head { background: var(--bg); padding-bottom: 9px; }
+.provider-context-cell { min-width: 0; }
+.provider-model-table .provider-context-cell .input { width: 100%; min-width: 0; }
+.provider-context-error { display: block; color: var(--danger); font-size: 11px; line-height: 1.6; margin-top: 5px; overflow-wrap: anywhere; }
+.provider-model-table .input[aria-invalid='true'], .provider-context-batch .input[aria-invalid='true'] { border-color: var(--danger); }
+@media (max-width: 600px) {
+  .provider-context-batch-fields { grid-template-columns: minmax(0, 1fr); }
+}

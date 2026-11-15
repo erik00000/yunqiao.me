@@ -73,6 +73,8 @@ jobs:
           python scripts/test-client-restart-ui.py
           python scripts/test-client-diagnostics-ui.py
           python scripts/test-provider-views-ui.py
+          python scripts/test-model-context-ui.py
+          python scripts/test-model-batch-context-ui.py
           python scripts/test-session-relations-ui.py
           python scripts/test-plugin-ui.py
           python scripts/test-history-ui.py
