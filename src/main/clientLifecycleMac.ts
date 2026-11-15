@@ -60,6 +60,7 @@ const processScript = `
 ObjC.import('AppKit'); ObjC.import('Foundation');
 function stringValue(value) { try { return value ? String(ObjC.unwrap(value)) : ''; } catch (_) { return ''; } }
 function urlPath(value) { try { return value ? stringValue(value.URLByResolvingSymlinksInPath.path) : ''; } catch (_) { return ''; } }
+function filePath(value) { try { return value ? urlPath($.NSURL.fileURLWithPath(value)) : ''; } catch (_) { return ''; } }
 function processInfo(pid) {
   var task = $.NSTask.alloc.init, output = $.NSPipe.pipe;
   task.launchPath = '/bin/ps'; task.arguments = $(['-p', String(pid), '-o', 'uid=', '-o', 'ppid=', '-o', 'lstart=']);
@@ -85,7 +86,12 @@ function applicationIdentity(application) {
 }
 function sameApplication(actual, target) { return actual.executable === target.executable && actual.bundlePath === target.bundlePath && actual.bundleId === target.bundleId; }
 function run(argv) {
-  var data = JSON.parse(argv[0]), target = data.target, protectedProcesses = protectedIds(data.ownerPid);
+  var data = JSON.parse(argv[0]), requestedTarget = data.target;
+  // Foundation and POSIX realpath can choose different spellings for /private/var.
+  // Resolve both sides with Foundation, retaining the caller's paths only after a full match.
+  var target = { executable: filePath(requestedTarget.executable), bundlePath: filePath(requestedTarget.bundlePath), bundleId: requestedTarget.bundleId };
+  if (!target.executable || !target.bundlePath) return JSON.stringify(data.mode === 'close' ? { result: 'changed' } : { processes: [], uncertain: true });
+  var protectedProcesses = protectedIds(data.ownerPid);
   if (data.mode === 'close') {
     var expected = data.process;
     var application = $.NSRunningApplication.runningApplicationWithProcessIdentifier(expected.pid);
@@ -107,7 +113,7 @@ function run(argv) {
     var information = processInfo(actual.pid);
     if (!information) { uncertain = true; continue; }
     if (information.uid !== data.ownerUid) continue;
-    processes.push({ pid: actual.pid, executable: actual.executable, bundlePath: actual.bundlePath, bundleId: actual.bundleId,
+    processes.push({ pid: actual.pid, executable: requestedTarget.executable, bundlePath: requestedTarget.bundlePath, bundleId: actual.bundleId,
       started: actual.launched + '|' + information.started, ownerSid: 'uid:' + information.uid, sessionId: 0, hasWindow: false, protected: !!protectedProcesses[actual.pid] });
   }
   return JSON.stringify({ processes: processes, uncertain: uncertain });

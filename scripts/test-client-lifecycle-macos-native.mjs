@@ -78,8 +78,8 @@ function run(argv) {
     try { row.bundlePath = ObjC.unwrap(app.bundleURL.path); } catch(e) { row.bundleError = String(e); }
     try { row.executablePath = ObjC.unwrap(app.executableURL.path); } catch(e) { row.executableError = String(e); }
     try { row.canonicalBundle = ObjC.unwrap(app.bundleURL.URLByResolvingSymlinksInPath.path); } catch(e) { row.canonicalError = String(e); }
-    try { row.isTerminated = Boolean(app.isTerminated); row.terminated = Boolean(app.terminated); } catch(e) { row.terminatedError = String(e); }
-    try { row.launchTime = Number(app.launchDate.timeIntervalSince1970); } catch(e) { row.launchError = String(e); }
+    try { row.isTerminatedType = typeof app.isTerminated; row.isTerminated = Boolean(app.isTerminated); row.terminatedType = typeof app.terminated; row.terminated = Boolean(app.terminated); } catch(e) { row.terminatedError = String(e); }
+    try { row.launchDateNil = app.launchDate.isNil(); row.launchTime = Number(app.launchDate.timeIntervalSince1970); } catch(e) { row.launchError = String(e); }
     output.push(row);
   }
   return JSON.stringify({ count: Number(applications.count), fixtures: output });

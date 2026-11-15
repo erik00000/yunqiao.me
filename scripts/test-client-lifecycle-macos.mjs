@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import vm from 'node:vm';
 import { build } from 'esbuild';
 
 // These tests mock macOS system APIs. Passing on another OS is not native macOS validation.
@@ -68,6 +69,26 @@ try {
     const found = await f.driver.listProcesses(target); assert.equal(found.uncertain, false); assert.equal(found.processes.length, 1); assert.equal(found.processes[0].hasWindow, false);
     const payload = JSON.parse(f.state.calls[0].args.at(-1)); assert.equal(payload.ownerUid, 501); assert.equal(payload.ownerPid, 987700); assert.equal(payload.target.bundlePath, target.bundlePath);
     assert(!f.state.calls[0].args[3].includes(f.home), 'paths are data, not JavaScript source');
+  });
+  await check('Native enumeration and quit compare Foundation-normalized aliases on both sides', async () => {
+    const f = fixture(); const target = await f.driver.resolveTarget('claude-desktop', definition, { installed: true, configured: false, command: f.bundle });
+    await f.driver.listProcesses(target); const source = f.state.calls[0].args[3];
+    const original = { executable: '/private/var/fixture/Claude.app/Contents/MacOS/Claude', bundlePath: '/private/var/fixture/Claude.app', bundleId: 'io.yunqiao.fixture.claude' };
+    const aliases = new Map([[original.executable, '/var/fixture/Claude.app/Contents/MacOS/Claude'], [original.bundlePath, '/var/fixture/Claude.app']]);
+    const url = value => ({ URLByResolvingSymlinksInPath: { path: aliases.get(value) ?? value } });
+    let requestedQuits = 0;
+    const app = { processIdentifier: 1234, executableURL: url(original.executable), bundleURL: url(original.bundlePath), bundleIdentifier: original.bundleId, launchDate: { timeIntervalSince1970: 1234567.5 }, isTerminated: false, get terminate() { requestedQuits++; return true; } };
+    const execute = (mode, overrides = {}) => JSON.parse(vm.runInNewContext(source + '\nprocessInfo = function () { return { uid: 501, parent: 1, started: "native-start" }; }; protectedIds = function () { return {}; }; run(argv);', {
+      ObjC: { import() {}, unwrap: value => value },
+      $: { NSURL: { fileURLWithPath: url }, NSWorkspace: { sharedWorkspace: { runningApplications: { count: 1, objectAtIndex: () => app } } }, NSRunningApplication: { runningApplicationWithProcessIdentifier: () => app } },
+      argv: [JSON.stringify({ mode, target: original, ownerUid: 501, ownerPid: 987700, ...overrides })],
+    }));
+    const listed = execute('list'); assert.equal(listed.uncertain, false); assert.equal(listed.processes.length, 1); assert.equal(listed.processes[0].executable, original.executable); assert.equal(listed.processes[0].bundlePath, original.bundlePath);
+    assert.equal(execute('close', { process: listed.processes[0] }).result, 'requested'); assert.equal(requestedQuits, 1);
+    assert.equal(execute('close', { process: { ...listed.processes[0], started: 'different-start' } }).result, 'changed'); assert.equal(requestedQuits, 1);
+    app.bundleURL = url('/var/different/Claude.app');
+    assert.equal(execute('list').uncertain, true); assert.equal(execute('close', { process: listed.processes[0] }).result, 'changed'); assert.equal(requestedQuits, 1);
+    aliases.set(original.executable, ''); assert.deepEqual(execute('list'), { processes: [], uncertain: true });
   });
   await check('Wrong-owner or incomplete native records are never treated as a trusted process', async () => {
     const f = fixture(); const target = await f.driver.resolveTarget('claude-desktop', definition, { installed: true, configured: false, command: f.bundle });
