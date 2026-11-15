@@ -27,6 +27,7 @@ CALLS = []
 PENDING = []
 DEFER_PREVIEW = False
 FAIL_APPLY = False
+FAIL_BALANCE = False
 LIVE = [{'id': 'live-1', 'model': 'deepseek-flash', 'agent': 'Claude Code', 'providerName': 'DeepSeek 官方', 'phase': 'streaming', 'startedAtMs': 1794704400000, 'estimatedOutputTokens': 24, 'cacheRead': 0}]
 
 
@@ -57,6 +58,14 @@ def route_rpc(route):
         result = [{'model': 'deepseek-flash', 'agent': 'Claude Code', 'providerName': 'DeepSeek 官方', 'status': 200, 'ts': '2026-11-15T12:00:00Z', 'inputTokens': 800, 'outputTokens': 340, 'cacheRead': 600, 'cacheReadKnown': True, 'cacheWrite': 0, 'cacheWriteKnown': False, 'cost': 0, 'costKnown': False}]
     elif action == 'usage.live':
         result = LIVE
+    elif action == 'provider.balance':
+        if FAIL_BALANCE:
+            route.fulfill(status=503, headers=headers, json={'error': 'isolated upstream failure'})
+            return
+        result = {'providerId': payload['providerId'], 'adapter': 'deepseek', 'items': [
+            {'keyId': 'wallet-key', 'keyLabel': '钱包密钥', 'status': 'ok', 'updatedAt': '2026-11-15T12:00:00Z', 'entries': [{'label': '账户余额', 'scope': 'account', 'currency': 'CNY', 'remaining': 0}]},
+            {'keyId': 'limited-key', 'keyLabel': '限额密钥', 'status': 'ok', 'updatedAt': '2026-11-15T12:00:00Z', 'entries': [{'label': 'API Key 总额度', 'scope': 'key', 'currency': 'USD', 'remaining': 18.5, 'total': 20, 'used': 1.5}]},
+        ]}
     elif action == 'agent.preview':
         result = {'ok': True, 'revision': 'revision-1', 'files': [{'path': '~/.claude/settings.json', 'after': '{"env":{"ANTHROPIC_MODEL":"deepseek-flash"}}'}], 'warnings': [], 'message': '已生成预览'}
     elif action == 'agent.connect':
@@ -81,7 +90,7 @@ def route_rpc(route):
 
 
 def main():
-    global DEFER_PREVIEW, FAIL_APPLY
+    global DEFER_PREVIEW, FAIL_APPLY, FAIL_BALANCE
     handler = functools.partial(QuietHandler, directory=str(ROOT / 'www'))
     server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -146,8 +155,23 @@ def main():
         expect(page.get_by_role('button', name='预览电脑上的配置变更')).to_have_count(0)
         page.get_by_role('button', name='关闭', exact=True).click()
         page.get_by_role('button', name='供应商', exact=True).click()
+        balance = page.get_by_label('DeepSeek 官方 余额与额度', exact=True)
+        expect(balance.get_by_text('0 CNY', exact=True)).to_be_visible()
+        expect(balance.get_by_text('18.5 USD', exact=True)).to_be_visible()
+        expect(balance.get_by_text('密钥额度 · API Key 总额度', exact=True)).to_be_visible()
+        FAIL_BALANCE = True
+        balance.get_by_role('button', name='刷新 DeepSeek 官方 余额', exact=True).click()
+        expect(balance.get_by_role('alert')).to_contain_text('余额刷新失败')
+        expect(balance.get_by_text('0 CNY', exact=True)).to_be_visible()
+        expect(balance.get_by_text('18.5 USD', exact=True)).to_be_visible()
+        expect(balance.get_by_text('上次成功', exact=False)).to_have_count(2)
+        FAIL_BALANCE = False
+        balance.get_by_role('button', name='刷新 DeepSeek 官方 余额', exact=True).click()
+        expect(balance.get_by_role('alert')).to_have_count(0)
         page.get_by_role('switch', name='DeepSeek 官方 启用状态').click()
         expect(page.get_by_role('switch')).to_have_attribute('aria-checked', 'false')
+        expect(page.get_by_text('供应商已停用，不查询余额', exact=True)).to_be_visible()
+        expect(page.get_by_role('button', name='刷新 DeepSeek 官方 余额', exact=True)).to_be_disabled()
         page.get_by_text('查看模型', exact=True).click()
         expect(page.get_by_text('上下文 · 工具', exact=False)).to_be_visible()
         page.get_by_role('button', name='会话', exact=True).click()
@@ -174,7 +198,7 @@ def main():
         assert any(c['action'] == 'agent.connect' for c in CALLS)
         browser.close()
     server.shutdown()
-    print(json.dumps({'passed': True, 'checks': ['auth failure', 'connect', 'brand', 'cache hit rate', 'unpriced requests are not free', 'live reported zero vs missing cache', 'live estimates', 'completion refresh', 'late preview discarded after selection change', 'apply failure requires fresh preview', 'preview/apply revision', 'existing official coexist mode preserved', 'unsupported client', 'provider toggle', 'models', 'sessions safe text', 'theme', 'no overflow', 'no persisted token', 'disconnect stops polling'], 'rpc_calls': len(CALLS)}, ensure_ascii=True))
+    print(json.dumps({'passed': True, 'checks': ['auth failure', 'connect', 'brand', 'cache hit rate', 'unpriced requests are not free', 'live reported zero vs missing cache', 'live estimates', 'completion refresh', 'late preview discarded after selection change', 'apply failure requires fresh preview', 'preview/apply revision', 'existing official coexist mode preserved', 'unsupported client', 'provider balance: zero and currencies', 'provider balance: independent account and key scopes', 'provider balance: failed refresh retains prior timestamp and data', 'provider balance: recovery clears warning', 'provider balance: disabled provider prevents query', 'provider toggle', 'models', 'sessions safe text', 'theme', 'no overflow', 'no persisted token', 'disconnect stops polling'], 'rpc_calls': len(CALLS)}, ensure_ascii=True))
 
 
 if __name__ == '__main__':

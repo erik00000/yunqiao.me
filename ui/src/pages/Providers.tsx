@@ -1,5 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import PresetPicker from '../components/PresetPicker';
+import ProviderBalance from '../components/ProviderBalance';
+import BalanceQueryEditor from '../components/BalanceQueryEditor';
+import { useProviderBalances } from '../hooks/useProviderBalances';
 import { LocalIdentityCard, LocalScanDetails, localTime, useLocalClientScan } from '../components/LocalClients';
 import type { PageProps } from '../App';
 import { Btn, Empty, Field, Ico, Modal, Toggle, useToast } from '../components/ui';
@@ -28,6 +31,7 @@ const EMPTY_PROVIDER = (): Partial<Provider> => ({
 
 export default function Providers({ state, reload, go }: PageProps) {
   const toast = useToast();
+  const balances = useProviderBalances(state.providers, state.settings.proxy);
   const scan = useLocalClientScan(reload);
   const snapshot = state.localClients;
   const [editing, setEditing] = useState<Partial<Provider> | null>(null);
@@ -190,6 +194,7 @@ export default function Providers({ state, reload, go }: PageProps) {
             onChange={(e) => setQuery(e.target.value)}
           />
           <Btn disabled={!window.aurora || !!scan.busy} onClick={scan.scan}><Ico name="refresh" size={13} />{scan.busy ? '扫描中…' : '重新扫描本机'}</Btn>
+          <Btn disabled={balances.batchBusy || balances.anyBusy || !state.providers.some(provider => provider.enabled)} onClick={() => { void balances.refreshAll(true); }}><Ico name="refresh" size={13} />{balances.batchBusy ? '正在刷新余额…' : '刷新全部余额'}</Btn>
           <Btn disabled={!window.aurora || !!mutating} onClick={openCloud}>
             <Ico name="cloud" size={13} /> 云端目录
           </Btn>
@@ -259,6 +264,8 @@ export default function Providers({ state, reload, go }: PageProps) {
                 ))}
                 {p.models.length > 3 && <span className="chip">+{p.models.length - 3}</span>}
               </div>
+
+              <ProviderBalance provider={p} result={balances.views[p.id]?.result} error={balances.views[p.id]?.error} busy={balances.busy[p.id]} onRefresh={keyId => { void balances.refresh(p.id, keyId, true); }} />
 
               {testResult[p.id] && (
                 <div className="mono" style={{ fontSize: 10.5, color: testResult[p.id].ok ? 'var(--ok)' : 'var(--danger)' }}>
@@ -431,6 +438,7 @@ function ProviderEditor({
   const [fetching, setFetching] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [balanceError, setBalanceError] = useState('');
   const running = useRef(false);
   const busy = fetching || saving;
   const onToast = useToast().push;
@@ -462,8 +470,8 @@ function ProviderEditor({
           <Btn variant="ghost" disabled={busy} onClick={onClose}>
             取消
           </Btn>
-          <Btn variant="primary" disabled={busy} onClick={async () => {
-            if (running.current) return;
+          <Btn variant="primary" disabled={busy || !!balanceError} onClick={async () => {
+            if (running.current || balanceError) return;
             running.current = true; setSaving(true); setError('');
             try { await onSave(value); } catch (e: any) { setError(e.message || '保存失败，请重试'); }
             finally { running.current = false; setSaving(false); }
@@ -579,6 +587,8 @@ function ProviderEditor({
         </div>
       </Field>
 
+      <BalanceQueryEditor value={value.balanceQuery} baseUrl={value.baseUrl || ''} onChange={balanceQuery => set({ balanceQuery })} onValidityChange={setBalanceError} />
+
       <div className="grid cols-2">
         <Field label="单独代理（可选）" hint="只对这家供应商生效，例如 http://127.0.0.1:7890">
           <input className="input mono" value={value.proxy ?? ''} onChange={(e) => set({ proxy: e.target.value })} />
@@ -685,6 +695,7 @@ function ProviderEditor({
             </Btn>
             <Btn
               size="sm"
+              disabled={!!balanceError}
               onClick={async () => {
                 if (running.current) return;
                 running.current = true; setFetching(true); setError('');

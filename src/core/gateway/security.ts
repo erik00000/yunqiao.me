@@ -35,13 +35,14 @@ export function allowedOrigin(req: IncomingMessage): boolean {
 /** The gateway is not a remote shell. Native desktop IPC has a separate action boundary. */
 export const REMOTE_ACTIONS = new Set([
   'state.get', 'usage.summary', 'usage.recent', 'usage.live', 'sessions.scan', 'sessions.read', 'sessions.resume', 'sessions.export',
-  'cloud.catalog', 'update.check', 'gateway.status', 'gateway.url', 'provider.test', 'provider.models',
+  'cloud.catalog', 'update.check', 'gateway.status', 'gateway.url', 'provider.test', 'provider.models', 'provider.balance',
   'provider.resetCooldown', 'provider.save', 'provider.toggle', 'agent.detect', 'agents.detect', 'agent.preview',
   'agent.connect', 'agent.disconnect', 'account.scan', 'codex.diagnose', 'codex.assets', 'codex.flags',
 ]);
 
 /** Return metadata only; API keys and executable plugin source never leave the host through RPC. */
 export function redactRemoteResult(value: any, field = '', credentialEntry = false): any {
+  if (field === 'balanceQuery' && value && typeof value === 'object') return { adapter: value.adapter, auth: value.auth };
   if (/^(apiKey|token|accessToken|access_token|refreshToken|refresh_token|gatewayToken|webdavPass|password|passwordHash|code)$/i.test(field)) return '';
   if (field === 'headers') return {};
   if (Array.isArray(value)) return value.map((entry) => redactRemoteResult(entry, '', field === 'apiKeys'));

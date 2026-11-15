@@ -1,4 +1,5 @@
 import type { ProtocolName } from '../types.js';
+import type { ProviderBalanceQuery } from '../providerBalanceTypes.js';
 
 export interface ProviderModel {
   /** 发给上游的模型名 */
@@ -54,6 +55,7 @@ export interface Provider {
   notes?: string;
   /** 中转站倍率，用于费用估算 */
   rateMultiplier?: number;
+  balanceQuery?: ProviderBalanceQuery;
   quota?: {
     balance?: number;
     currency?: string;

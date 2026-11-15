@@ -31,6 +31,7 @@ window.renderProvider=()=>root.render(<ToastHost key={window.generation}><Provid
             page.evaluate("""()=>{window.generation=0;window.calls=[];window.reloads=0;
 window.state={settings:{autoSyncModels:false},presets:[],providers:[]};
 window.aurora={invoke:async(action,payload)=>{window.calls.push({action,payload:structuredClone(payload)});
+if(action==='provider.balance')return {providerId:payload.providerId,adapter:'auto',items:[]};
 if(action==='provider.save')return structuredClone(window.state.providers[0]);
 if(action==='provider.models'){if(window.modelError)throw Error(window.modelError);return window.modelResult||{ok:true,added:1};}throw Error('Unexpected RPC '+action);}};}""")
             page.add_script_tag(path=str(bundle))
@@ -48,7 +49,7 @@ window.state.providers=[{id:'provider-fixture',name:'同步验证',format:'opena
                 expect(dialog).not_to_be_visible()
                 if should_sync:
                     page.wait_for_function("window.calls.some(call=>call.action==='provider.models')")
-                calls = page.evaluate('window.calls')
+                calls = page.evaluate("window.calls.filter(call=>['provider.save','provider.models'].includes(call.action))")
                 assert [call['action'] for call in calls] == ['provider.save'] + (['provider.models'] if should_sync else [])
                 if should_sync:
                     assert calls[-1]['payload'] == {'providerId': 'provider-fixture'}

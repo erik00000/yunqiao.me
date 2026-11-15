@@ -1,6 +1,7 @@
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { createRpcClient, normalizeEndpoint } from './connection.js';
 import { summaryCache, requestCache, requestOutput } from './usage.js';
+import { providerBalanceView } from './providerBalance.js';
 import packageInfo from '../package.json';
 
 const app = document.getElementById('app');
@@ -382,7 +383,7 @@ function openClient(agent) {
 }
 
 function renderProviders(content) {
-  content.append(heading('供应商与模型', '管理电脑上的连接状态，查看可用模型。'));
+  content.append(heading('供应商与模型', '查看余额、密钥额度与可用模型，查询配置在电脑端管理。'));
   if (!state.providers.length) { content.append(empty('还没有供应商', '在电脑端从云端目录导入，或手动添加 API 供应商。')); return; }
   const search = el('input', 'search'); search.type = 'search'; search.placeholder = '搜索供应商或模型'; search.setAttribute('aria-label', '搜索供应商或模型');
   const list = el('div', 'stack');
@@ -399,6 +400,9 @@ function renderProviders(content) {
       }), p.enabled ? 'toggle enabled' : 'toggle');
       toggle.setAttribute('role', 'switch'); toggle.setAttribute('aria-checked', String(p.enabled)); toggle.setAttribute('aria-label', `${p.name} 启用状态`);
       head.append(info, toggle); card.append(head);
+      const balanceEpoch = epoch, balanceRpc = rpc, balanceConfiguration = JSON.stringify(p);
+      card.append(providerBalanceView(p, balanceRpc, () => balanceEpoch === epoch && rpc === balanceRpc
+        && page === 'providers' && state?.providers.some(current => current.id === p.id && JSON.stringify(current) === balanceConfiguration)));
       const detail = el('details', 'models-detail'); detail.append(el('summary', '', '查看模型'));
       if (!p.models?.length) detail.append(el('p', 'muted', '请在电脑端同步模型列表。'));
       for (const m of p.models || []) {

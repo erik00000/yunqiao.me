@@ -26,6 +26,7 @@ import {
   importCloudProviders,
 } from './cloud.js';
 import { GITHUB_RELEASE_PAGE } from './releaseSources.js';
+import { providerBalance } from './providerBalance.js';
 
 /**
  * 与 Electron 无关的动作层：桌面端的 IPC 和网关的 /api/rpc 共用同一份实现，
@@ -414,6 +415,8 @@ export async function runAction(deps: ActionDeps, action: string, payload: any):
       return testProvider(deps, payload);
     case 'provider.models':
       return fetchProviderModels(deps, payload);
+    case 'provider.balance':
+      return providerBalance(store, payload);
     case 'provider.resetCooldown':
       deps.resetCooldowns?.();
       return { ok: true };

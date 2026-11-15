@@ -16,6 +16,7 @@ import { catalogPresets } from '../catalog.js';
 import { GITHUB_RELEASE_API } from '../releaseSources.js';
 import { newId, nowIso, dayKey } from '../util.js';
 import { validatePluginConfiguration, clearMiddlewareStatus, clearAllMiddlewareStatus } from '../plugins/middleware.js';
+import { validateBalanceQuery } from '../providerBalanceValidation.js';
 
 export * from './types.js';
 export { JsonFile, JsonLines } from './jsonFile.js';
@@ -42,6 +43,7 @@ function validateProvider(provider: Provider): Provider {
       if (value !== undefined && (!Number.isFinite(value) || value < 0)) throw new Error(`模型 ${model.id} 的 ${field} 必须是非负数字`);
     }
   }
+  validateBalanceQuery(provider.balanceQuery, provider.baseUrl);
   return provider;
 }
 
@@ -196,6 +198,7 @@ export class AuroraStore {
       proxy: input.proxy,
       notes: input.notes,
       rateMultiplier: input.rateMultiplier ?? 1,
+      balanceQuery: input.balanceQuery,
       official: input.official,
       createdAt: nowIso(),
       updatedAt: nowIso(),

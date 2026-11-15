@@ -1,4 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import type { ProviderBalanceQuery } from '../../../src/core/providerBalanceTypes';
+export type { BalanceAdapter, ProviderBalanceQuery, ProviderBalanceEntry, ProviderBalanceItem, ProviderBalanceResult } from '../../../src/core/providerBalanceTypes';
 
 export type ProtocolName = 'anthropic' | 'openai-chat' | 'openai-responses' | 'gemini';
 
@@ -46,6 +48,7 @@ export interface Provider {
   notes?: string;
   rateMultiplier?: number;
   quota?: { balance?: number; currency?: string; updatedAt?: string };
+  balanceQuery?: ProviderBalanceQuery;
   createdAt: string;
   updatedAt: string;
 }

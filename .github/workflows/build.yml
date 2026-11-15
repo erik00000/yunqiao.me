@@ -69,6 +69,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python scripts/test-provider-sync-ui.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/test-provider-balance-ui.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/test-provider-balance-electron.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python scripts/test-update-ui.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python scripts/test-plugin-ui.py
