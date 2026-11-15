@@ -1,4 +1,8 @@
-"""Isolated usage-page race and unknown-value checks. Requires Python Playwright + Chromium."""
+"""Isolated usage-page polling, race and unknown-value checks.
+
+Requires Python Playwright + Chromium. Compiles only this component to a temporary
+directory; never builds or launches the application or reads a real data profile.
+"""
 import json
 from pathlib import Path
 import subprocess
@@ -7,6 +11,111 @@ import tempfile
 from playwright.sync_api import sync_playwright, expect
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_external_cleanup(browser, bundle):
+    """Exercise the real component timers with an isolated clock and RPC fixture."""
+    page = browser.new_page()
+    errors = []
+    page.on('pageerror', lambda error: errors.append(str(error)))
+    # Install before the component registers its actual 8-second interval. Advancing
+    # this clock exercises the timer; the test never clicks Refresh or sends onUsage.
+    page.clock.install()
+    page.set_content('<div id="root"></div>')
+    page.evaluate("""() => {
+      window.hiddenFixture=false;
+      Object.defineProperty(document,'hidden',{configurable:true,get:()=>window.hiddenFixture});
+      window.calls={summary:0,recent:0,live:0};
+      window.failSummary=false;window.failRecent=false;
+      const ts=new Date().toISOString(),day=ts.slice(0,10);
+      window.populatedSummary={
+        totals:{calls:153,cost:7.42,inputTokens:12000,outputTokens:3000,errors:0,
+          cacheRead:2000,cacheWrite:0,cacheReports:72,cacheWriteReports:0,cacheRate:1/6,unpricedCalls:0},
+        byDay:[{day,cost:7.42,tokens:15000,calls:153,unpricedCalls:0}],
+        byProvider:[{id:'isolated-provider',name:'某某中转站',cost:7.42,tokens:15000,calls:153,unpricedCalls:0}],
+        byModel:[{id:'Kimi',cost:7.42,tokens:15000,calls:153,unpricedCalls:0}],
+        byAgent:[{id:'isolated-client',calls:153,tokens:15000}]
+      };
+      window.emptySummary={totals:{calls:0,cost:0,inputTokens:0,outputTokens:0,errors:0,
+        cacheRead:0,cacheWrite:0,cacheReports:0,cacheWriteReports:0,cacheRate:0,unpricedCalls:0},
+        byDay:[],byProvider:[],byModel:[],byAgent:[]};
+      window.populatedRecent=Array.from({length:72},(_,i)=>({ts,requestId:'isolated-'+i,
+        status:200,agent:'isolated-client',providerId:'isolated-provider',providerName:'某某中转站',
+        model:'Kimi',requestModel:'Kimi',inputTokens:100,outputTokens:20,cacheRead:0,cacheWrite:0,
+        latencyMs:10,cost:0.01,costKnown:true,attempts:1}));
+      window.sourceSummary=structuredClone(window.populatedSummary);
+      window.sourceRecent=structuredClone(window.populatedRecent);
+      window.setPopulatedSource=()=>{window.sourceSummary=structuredClone(window.populatedSummary);window.sourceRecent=structuredClone(window.populatedRecent);};
+      window.setEmptySource=()=>{window.sourceSummary=structuredClone(window.emptySummary);window.sourceRecent=[];};
+      window.aurora={invoke:async(action)=>{
+        if(action==='usage.summary'){window.calls.summary++;if(window.failSummary)throw new Error('统计读取失败');return structuredClone(window.sourceSummary);}
+        if(action==='usage.recent'){window.calls.recent++;if(window.failRecent)throw new Error('日志读取失败');return structuredClone(window.sourceRecent);}
+        if(action==='usage.live'){window.calls.live++;return [];}
+        throw new Error('Unexpected action '+action);
+      },onUsage:()=>()=>{}};
+    }""")
+    page.add_script_tag(path=bundle)
+    stats = page.locator('.grid.cols-4').first.locator('.stat')
+
+    def populated():
+        expect(stats.nth(0)).to_have_text('已知价格估算$7.42')
+        expect(stats.nth(2)).to_have_text('调用次数153')
+        expect(page.get_by_role('button', name='请求日志 (72)', exact=True)).to_be_visible()
+        expect(page.get_by_text('Kimi', exact=True)).to_be_visible()
+        expect(page.get_by_text('某某中转站', exact=True)).to_be_visible()
+        expect(page.locator('.bars .bar')).to_have_count(1)
+
+    def empty():
+        expect(stats.nth(0)).to_have_text('已知价格估算$0')
+        expect(stats.nth(1)).to_have_text('总 tokens0')
+        expect(stats.nth(2)).to_have_text('调用次数0')
+        expect(page.get_by_role('button', name='请求日志 (0)', exact=True)).to_be_visible()
+        expect(page.get_by_text('Kimi', exact=True)).to_have_count(0)
+        expect(page.get_by_text('某某中转站', exact=True)).to_have_count(0)
+        expect(page.locator('.bars .bar')).to_have_count(0)
+        expect(page.locator('.grid.cols-2 .list-row')).to_have_count(0)
+
+    try:
+        populated()
+        baseline = page.evaluate('({...window.calls})')
+        page.evaluate('window.setEmptySource()')
+        page.clock.run_for(8000)
+        empty()
+        assert page.evaluate('window.calls.summary') == baseline['summary'] + 1
+        assert page.evaluate('window.calls.recent') == baseline['recent'] + 1
+        expect(page.get_by_role('alert')).to_have_count(0)
+        print('PASS One automatic 8-second poll removes 153/$7.42, Kimi/provider/day groups and all 72 recent records after source cleanup', flush=True)
+
+        page.evaluate('window.setPopulatedSource()')
+        page.clock.run_for(8000)
+        populated()
+        baseline = page.evaluate('({...window.calls})')
+        page.evaluate("window.hiddenFixture=true;document.dispatchEvent(new Event('visibilitychange'));window.setEmptySource()")
+        page.clock.run_for(16000)
+        assert page.evaluate('({...window.calls})') == baseline
+        populated()
+        page.evaluate("window.hiddenFixture=false;document.dispatchEvent(new Event('visibilitychange'))")
+        empty()
+        assert page.evaluate('window.calls.summary') == baseline['summary'] + 1
+        assert page.evaluate('window.calls.recent') == baseline['recent'] + 1
+        print('PASS Hidden pages pause summary/recent/live polling; visibility restoration immediately replaces stale billing state', flush=True)
+
+        page.evaluate('window.setPopulatedSource()')
+        page.clock.run_for(8000)
+        populated()
+        page.evaluate('window.setEmptySource();window.failSummary=true;window.failRecent=true')
+        page.clock.run_for(8000)
+        populated()
+        expect(page.get_by_role('alert')).to_contain_text('用量统计：统计读取失败')
+        expect(page.get_by_role('alert')).to_contain_text('请求日志：日志读取失败')
+        page.evaluate('window.failSummary=false;window.failRecent=false')
+        page.clock.run_for(8000)
+        empty()
+        expect(page.get_by_role('alert')).to_have_count(0)
+        print('PASS Failed reads preserve the last valid billing state with visible errors; the next successful poll clears stale data', flush=True)
+        assert errors == [], errors
+    finally:
+        page.close()
 
 
 def main():
@@ -84,8 +193,10 @@ window.usageRoot.render(<Usage state={{}}/>);"""
             page.evaluate('window.usageRoot.unmount()')
             page.evaluate('window.pending.forEach(p=>p.resolve(window.summaryFixture(999)))')
             assert errors == [], errors
+            page.close()
+            test_external_cleanup(browser, bundle)
             browser.close()
-            print('5 usage-page browser checks passed.', flush=True)
+            print('8 usage-page browser checks passed.', flush=True)
 
 
 if __name__ == '__main__':
