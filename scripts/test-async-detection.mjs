@@ -28,7 +28,9 @@ try {
   write(path.join(root, 'bin', cliName), 'fixture program, never execute');
   if (process.platform !== 'win32') fs.chmodSync(path.join(root, 'bin', cliName), 0o700);
   process.env.AURORA_CLIENT_HOME = home; process.env.AURORA_HOME = path.join(root, 'store'); process.env.YUNQIAO_HOME = path.join(root, 'store');
-  process.env.PATH = path.join(root, 'bin'); process.env.APPDATA = path.join(root, 'appdata'); process.env.LOCALAPPDATA = path.join(root, 'localappdata');
+  if (process.platform === 'win32') { delete process.env.PATH; process.env.Path = path.join(root, 'bin'); }
+  else process.env.PATH = path.join(root, 'bin');
+  process.env.APPDATA = path.join(root, 'appdata'); process.env.LOCALAPPDATA = path.join(root, 'localappdata');
   delete process.env.ELECTRON_RUN_AS_NODE;
   const api = require(bundle), fallback = () => ({ 'codex-cli': { installed: false, configured: true }, 'chatgpt-desktop': { installed: false, configured: true } });
   const complete = marker => ({ 'codex-cli': { installed: true, configured: true, version: marker }, 'chatgpt-desktop': { installed: true, configured: true, version: marker } });

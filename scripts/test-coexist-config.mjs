@@ -219,7 +219,7 @@ try {
     const context = { provider: supplier, model: 'relay-model', mode, gatewayUrl: deps.gatewayUrl(), token: store.getSettings().gatewayToken, authMode: 'api' };
     const preview = adapter.preview(context);
     assert(preview.ok, preview.message); assert.equal(read(configFile), legacyConfig);
-    assert(preview.warnings.some(message => message.includes('aurora') && message.includes('yunqiao') && message.includes('不会自动迁移历史')));
+    assert(preview.warnings.some(message => message.includes('旧版供应商配置表与历史会话保留') && message.includes('yunqiao') && message.includes('不会自动迁移历史')));
     for (const secret of ['fixture-legacy-auth-secret', 'fixture-legacy-aws-secret']) assert(!JSON.stringify(preview).includes(secret));
     const applied = adapter.connect({ ...context, expectedRevision: preview.revision });
     check(`${mode} API moves the active aurora selection to yunqiao while preserving legacy tables and exact restore`, () => {
@@ -242,7 +242,7 @@ try {
   check('legacy migration guidance appears only for API mode with root or active-profile aurora state', () => {
     const adapter = api.getAdapter('codex-cli');
     const apiContext = { provider: supplier, model: 'relay-model', mode: 'gateway', gatewayUrl: deps.gatewayUrl(), token: store.getSettings().gatewayToken, authMode: 'api' };
-    const notice = preview => preview.warnings.some(message => message.includes('原 aurora'));
+    const notice = preview => preview.warnings.some(message => message.includes('旧版供应商配置表与历史会话保留'));
     for (const before of [
       originalConfig.replace('model_provider = "old-provider"', 'model_provider = "aurora"'),
       originalConfig.replace('"model_provider" = "profile-old"', '"model_provider" = "aurora"'),

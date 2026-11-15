@@ -46,6 +46,14 @@ try {
     for (const prefix of ['/Users/a/.local/bin', '/Users/a/.npm-global/bin', '/Users/a/.volta/bin', '/opt/homebrew/bin', '/usr/local/bin', '/Users/a/npm custom/bin', '/opt/custom-brew/bin', '/Users/a/.nvm/versions/node/v22.0.0/bin']) assert(candidates.includes(`${prefix}/claude`));
     assert(candidates.indexOf('/usr/bin/claude') < candidates.indexOf('/opt/homebrew/bin/claude'));
   });
+  check('Windows worker environment preserves case-insensitive path and application-root lookup', () => {
+    const ctx = { platform: 'win32', home: 'C:\\Users\\fixture', environment: { Path: 'D:\\Tools', LocalAppData: 'E:\\Local', AppData: 'E:\\Roaming' } };
+    assert(api.cliCandidates('gemini', ctx).includes('D:\\Tools\\gemini.cmd'));
+    const candidates = api.desktopCandidates(['Claude'], ctx);
+    assert(candidates.includes('E:\\Local\\Programs\\Claude\\Claude.exe'));
+    assert(candidates.includes('E:\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Claude.lnk'));
+    assert(!api.cliCandidates('gemini', { ...ctx, platform: 'darwin', home: '/Users/fixture', isolated: true, environment: { Path: '/mixed-case' } }).includes('/mixed-case/gemini'));
+  });
   check('PATH ignores empty/relative entries and deduplicates Windows directories case-insensitively', () => {
     assert.deepEqual(api.cliCandidates('codex', { platform: 'win32', home: 'C:\\Users\\a', environment: { PATH: ';.;relative;"C:\\Tools";c:\\tools;' } }), ['C:\\Tools\\codex', 'C:\\Tools\\codex.exe', 'C:\\Tools\\codex.cmd', 'C:\\Tools\\codex.bat']);
     const candidates = api.cliCandidates('codex', { platform: 'darwin', home: '/Users/a', isolated: true, environment: { PATH: ':.:relative:/custom/bin:/custom/bin:' } });

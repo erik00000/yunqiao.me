@@ -31,12 +31,13 @@ window.renderAgents=()=>root.render(<ToastHost key={window.generation}><Agents s
             page.evaluate("""()=>{
               window.generation=0;
               window.reset=()=>{window.generation++;window.calls=[];window.reloads=0;window.infoOverride={};window.infoError='';window.operationError='';window.operation='restarted';window.holdInfo=false;window.holdRestart=false;window.pendingInfo=null;window.pendingRestart=null;
-                window.state={settings:{},presets:[],providers:[{id:'fixture-provider',name:'已配置的模型服务',baseUrl:'https://fixture.invalid',format:'anthropic',enabled:true,models:[{id:'fixture-model'}],apiKeys:[]}],agents:{'claude-desktop':{id:'claude-desktop',connected:true,providerId:'fixture-provider',model:'fixture-model'}},detected:{'claude-desktop':{installed:true},'codex-cli':{installed:true}},
+                window.state={settings:{},gateway:{running:true},presets:[],providers:[{id:'fixture-provider',name:'已配置的模型服务',baseUrl:'https://fixture.invalid',format:'anthropic',enabled:true,models:[{id:'fixture-model'}],apiKeys:[]}],agents:{'claude-desktop':{id:'claude-desktop',connected:true,providerId:'fixture-provider',model:'fixture-model'}},detected:{'claude-desktop':{installed:true},'codex-cli':{installed:true}},
                   agentCatalog:[{id:'claude-desktop',name:'Claude Desktop',vendor:'Anthropic',description:'通过云桥连接已配置的模型服务。',support:'automatic',category:'desktop',protocol:'anthropic'},
                     {id:'codex-cli',name:'Codex CLI',vendor:'OpenAI',description:'在命令行终端中使用编程助手。',support:'automatic',category:'cli',protocol:'openai-responses'},
                     {id:'deepseek',name:'DeepSeek API',vendor:'DeepSeek',description:'为支持自定义接口的应用提供连接参数。',support:'manual',category:'service',protocol:'openai-chat'}],codexCoexist:{identity:{available:false},models:[],warnings:[]}};
                 window.aurora=window.mockApi;window.renderAgents?.();};
               window.mockApi={invoke:async(action,payload={})=>{window.calls.push({action,payload:structuredClone(payload)});
+                if(action==='usage.recent')return [];
                 if(action==='agent.lifecycle'){
                   if(window.holdInfo)await new Promise(resolve=>window.pendingInfo=resolve);
                   if(window.infoError)throw Error(window.infoError);
@@ -75,7 +76,7 @@ window.renderAgents=()=>root.render(<ToastHost key={window.generation}><Agents s
             expect(desktop_button()).to_be_visible()
             expect(card('Codex CLI').get_by_role('button', name='新终端打开', exact=True)).to_be_visible()
             expect(card('DeepSeek API').locator('.client-restart')).to_have_count(0)
-            assert page.evaluate('window.calls.length') == 0
+            assert page.evaluate("window.calls.every(call=>call.action==='usage.recent')")
             desktop_button().click()
             dialog = restart_dialog()
             expect(dialog).to_contain_text('将退出客户端后重新打开；未运行时直接启动。')
@@ -176,7 +177,7 @@ window.renderAgents=()=>root.render(<ToastHost key={window.generation}><Agents s
             page.evaluate('window.aurora=undefined;window.generation++;window.renderAgents()')
             expect(page.locator('.client-card')).to_have_count(3)
             expect(page.locator('.client-restart')).to_have_count(0)
-            assert page.evaluate('window.calls.length') == 0
+            assert page.evaluate("window.calls.every(call=>call.action==='usage.recent')")
             checks.append('Browser mode and API services expose no application or terminal launch controls')
 
             reset()

@@ -2,8 +2,10 @@
   "checks": [
     "Electron sandbox + IPC + initial client workspace",
     "Client category filtering",
-    "Client -> add provider -> model -> live connection test -> redacted preview -> apply",
+    "Client -> provider -> upstream and local protocol tests -> reviewed permission/onboarding choices -> apply -> new terminal entry",
+    "Selective permission restore through IPC preserves supplier, model, environment and onboarding; tool tests do not certify the client",
     "Restore original client configuration byte-for-byte",
+    "Dedicated manual wizard uses real reviewed gateway parameters, explicit client variants and placeholder-only previews without modifying client files",
     "Session discovery, reading and real Markdown download",
     "Batch repair UI previews real JSONL and SQLite without writing",
     "Bulk model selection, edit preview, save and delete through real IPC",
@@ -18,7 +20,7 @@
     "Membership onboarding renders without embedding administrator credentials",
     "Authenticated browser console + mobile responsive layout"
   ],
-  "count": 17,
+  "count": 19,
   "profile": "isolated temporary data and client directories",
   "mockUpstream": true
 }

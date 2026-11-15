@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { AuroraStore } from '../store/index.js';
-import { desktopInfo, inspectCodingDesktop, validateDebugPort } from '../injector.js';
+import { desktopInfo, inspectCodingDesktop, validateDebugPort, type CodexDesktopInfo } from '../injector.js';
 import { BUILTINS, BUNDLED, effectiveEntry, loadState, saveState, manifest, validateConfig, validatePackageConfig } from './catalog.js';
 import { installedPlugins, installNative, loadIndex, nativeKey, packagePresent, refreshMarkets, removeNative, resourceRoot, toggleNative, type MarketSource } from './market.js';
 import { runtimeFor } from './runtime.js';
@@ -12,9 +12,14 @@ import { stepwiseSettings } from './stepwise.js';
 import { extensionOperation } from './operations.js';
 import { planned } from '../agents/configFiles.js';
 function sourceKey(id:string):{source:MarketSource;id:string}|null{const m=/^(public|full):(.+)$/.exec(id);return m?{source:m[1] as MarketSource,id:m[2]}:null;}
+const clientSnapshots=new WeakMap<AuroraStore,{key:string;value:CodexDesktopInfo}>();
 export async function listExtensions(store:AuroraStore,payload:any={}):Promise<any>{
   const state=loadState(store),rt=runtimeFor(store);
-  const [runtime,client]=await Promise.all([rt.status(),desktopInfo(state.connection.lastVersion,state.connection.exePath,state.connection.port)]);
+  const probeClient=payload.probeClient!==false,key=JSON.stringify(state.connection),previous=clientSnapshots.get(store);
+  const [runtime,client]=probeClient
+    ?await Promise.all([rt.status(),desktopInfo(state.connection.lastVersion,state.connection.exePath,state.connection.port)])
+    :[rt.snapshot(),previous?.key===key?previous.value:{installed:false,supportsCodexConfig:false,evidence:[],running:false,debugPortOpen:false,versionChanged:false,lastVersion:state.connection.lastVersion} as CodexDesktopInfo];
+  if(probeClient)clientSnapshots.set(store,{key,value:client});
   const upstream=JSON.parse(fs.readFileSync(path.join(resourceRoot(),'UPSTREAM.json'),'utf8'));const applied=new Set(runtime.applied),errors=new Map(runtime.errors.map(e=>[e.id,e.message]));
   const missingConfig=new Map<string,string>(),dictation=dictationConfiguration(store).status,stepwise=stepwiseSettings(store).settings;
   if(dictation.enabled&&!dictation.configured)missingConfig.set('builtin:dictation',dictation.message);
@@ -30,7 +35,7 @@ export async function listExtensions(store:AuroraStore,payload:any={}):Promise<a
   if(payload.source)items=items.filter(i=>i.source===payload.source);
   if(payload.query){const q=String(payload.query).toLowerCase();items=items.filter(i=>`${i.name} ${i.description} ${(i.tags||[]).join(' ')}`.toLowerCase().includes(q));}
   const total=items.length;if(payload.limit)items=items.slice(Math.max(0,Number(payload.offset)||0),Math.max(0,Number(payload.offset)||0)+Math.min(1000,Math.max(1,Number(payload.limit)||200)));
-  return{ok:true,upstream:{repository:upstream.repository,version:'2.6.9',revision:upstream.commit,license:upstream.license},client:{...client,connected:runtime.connected,compatible:runtime.connected||client.supportsCodexConfig},items,total,catalogs,connection:state.connection,runtime};
+  return{ok:true,upstream:{repository:upstream.repository,version:'2.6.9',revision:upstream.commit,license:upstream.license},client:{...client,connected:runtime.connected,compatible:runtime.connected||client.supportsCodexConfig,detecting:!probeClient},items,total,catalogs,connection:state.connection,runtime};
 }
 export async function runExtensionAction(deps:{store:AuroraStore},action:string,payload:any={}):Promise<any|null>{
   if(!action.startsWith('extension.'))return null;const store=deps.store;

@@ -29,7 +29,7 @@ try {
   const original = '# keep this comment\nmodel = "old"\nmodel_reasoning_effort = "high"\n\n[projects."D:/important"]\ntrust_level = "trusted"\nmodel = "project-model"\n\n[mcp_servers.example]\ncommand = "npx"\nargs = ["example"]\n';
   write(codexFile, original);
   const pre = codex.preview(context);
-  check('Codex preview has no write and hides credentials', () => { assert(pre.ok, pre.message); assert.equal(read(codexFile), original); assert(pre.revision); assert(!pre.files[0].after.includes(context.token)); assert(!pre.warnings.some(message => message.includes('原 aurora'))); });
+  check('Codex preview has no write and hides credentials', () => { assert(pre.ok, pre.message); assert.equal(read(codexFile), original); assert(pre.revision); assert(!pre.files[0].after.includes(context.token)); assert(!pre.warnings.some(message => message.includes('旧版供应商配置表与历史会话保留'))); });
   const connected = codex.connect({ ...context, expectedRevision: pre.revision });
   check('Codex keeps top-level values, comments and unrelated tables', () => { assert(connected.ok, connected.message); const text = read(codexFile); assert(text.includes('# keep this comment')); assert(text.includes('model_provider = "yunqiao"')); assert(text.indexOf('model_provider = "yunqiao"') < text.indexOf('[projects.')); assert(text.includes('model = "project-model"')); assert(text.includes('requires_openai_auth = false')); assert(text.includes('stream_idle_timeout_ms = 300000')); assert(!text.includes('/v1/v1')); });
   const toml = spawnSync('python', ['-c', 'import sys,tomllib,json; print(json.dumps(tomllib.loads(sys.stdin.read())))'], { input: read(codexFile), encoding: 'utf8' });

@@ -47,7 +47,7 @@ export function buildRuntimeSource(store:AuroraStore,state:ExtensionState,bridge
   const statsig={enabled:enabled('statsig-overrides'),gates:{'1174206456':true},dynamicConfigs:{'3165814200':{MIN_RETRY_INTERVAL:400,MAX_RETRY_INTERVAL:8000,RETRY_FACTOR:1.6,MAX_RETRY_COUNT:15},'3608673692':{sse_initial_open_timeout_ms:90000,sse_between_bytes_timeout_ms:90000},'339548201':{websocket_initial_idle_timeout_ms:15000,websocket_idle_timeout_ms:45000},'2808262316':{enabled:true}}};
   return `(()=>{if(window!==top||!/^app:\\/\\/-\\//i.test(location.href))return;\n${bridge}\n${flags}\nwindow.__CODEX_PLUS_STATSIG_OVERRIDES__=${JSON.stringify(statsig)};\n${prelude}\n${nativeModules}\nconst start=()=>{if(!window.electronBridge){window.__auroraExtensionError='此页面没有 electronBridge';return;}try{\n${augmentSessionRenderer(script('renderer-inject.js'))}\n${script('user-scripts-runtime.js')}\n${bundled}\n${floating}\n${theme}\nwindow.__auroraExtensionReady=true;}catch(e){window.__auroraExtensionError=String(e.stack||e.message||e)}};if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start,{once:true});else start();})();`;
 }
-interface RuntimeStatus { connected:boolean;targetTitle?:string;targetUrl?:string;applied:string[];errors:Array<{id:string;message:string}> }
+interface RuntimeStatus { connected:boolean;targetTitle?:string;targetUrl?:string;applied:string[];errors:Array<{id:string;message:string}>;checking?:boolean }
 const runtimes=new Map<string,ExtensionRuntime>();
 export function runtimeFor(store:AuroraStore):ExtensionRuntime{let rt=runtimes.get(store.dir);if(!rt){rt=new ExtensionRuntime(store);runtimes.set(store.dir,rt);}return rt;}
 export class ExtensionRuntime{
@@ -56,14 +56,23 @@ export class ExtensionRuntime{
   private stopCapture?:()=>Promise<void>;
   private historyTimer?:NodeJS.Timeout;private historyBusy=false;private historyError='';private historyGeneration=0;private reloadTimer?:NodeJS.Timeout;
   private petCdp?:DesktopCdp;private cursorTimer?:NodeJS.Timeout;private cursorBusy=false;private cursorError='';private cursorGeneration=0;
+  private observedStatus?:{client:DesktopCdp;value:RuntimeStatus};
   cdp?:DesktopCdp;private bridge='';private lastError='';private nativeErrors:Array<{id:string;message:string}>=[];private nativeRequested:string[]=[];private diagnostics:Array<{time:string,event:string,message:string}>=[];
   constructor(private store:AuroraStore){this.dictation=new DictationBridge(store);}
+  snapshot():RuntimeStatus{
+    const client=this.cdp,connected=!!client?.connected;
+    const errors=connected&&this.observedStatus?.client===client?this.observedStatus.value.errors.map(error=>({...error})):[];
+    if(this.lastError&&!errors.some(error=>error.id==='runtime'))errors.push({id:'runtime',message:this.lastError});
+    // A live transport confirms the connection, but only status() confirms loaded extensions.
+    return{connected,...(connected?{targetTitle:client!.target.title,targetUrl:client!.target.url}:{}),applied:[],errors,checking:true};
+  }
+  private rememberStatus(client:DesktopCdp,value:RuntimeStatus):RuntimeStatus{if(this.cdp===client)this.observedStatus={client,value};return value;}
   async status():Promise<RuntimeStatus>{
     const cdp=this.cdp;if(!cdp?.connected)return{connected:false,applied:[],errors:this.lastError?[{id:'runtime',message:this.lastError}]:[]};
     try{const result=await cdp.evaluate(`({ready:!!window.__auroraExtensionReady,error:window.__auroraExtensionError||'',scripts:Object.values(window.__codexPlusUserScripts?.scripts||{}).map(s=>({key:s.key,status:s.status,error:s.error||''})),builtins:window.codexPlus?.builtins?.()||[],nativeInstall:window.__auroraNativeInstallResult,nativeCompiled:window.__codexPlusNativeFastCompiled==='v1'})`);
       const errors=[...this.nativeErrors,...result.scripts.filter((s:any)=>s.status==='failed').map((s:any)=>({id:s.key,message:s.error}))];if(this.historyError)errors.push({id:'builtin:history-turn-recovery',message:this.historyError});if(this.cursorError)errors.push({id:'builtin:pet-real-mouse',message:this.cursorError});if(result.error||this.lastError)errors.push({id:'runtime',message:result.error||this.lastError});if(!result.ready&&!errors.some(e=>e.id==='runtime'))errors.push({id:'runtime',message:'桌面扩展尚未完成加载'});if(this.nativeRequested.length&&!this.nativeErrors.length&&!result.nativeCompiled)for(const id of this.nativeRequested)errors.push({id,message:'原生模块未完成加载：'+String(result.nativeInstall?.diagnostics?.reason||result.nativeInstall?.reason||'等待兼容模块')});
-      return{connected:true,targetTitle:cdp.target.title,targetUrl:cdp.target.url,applied:result.ready&&!errors.some(e=>e.id==='runtime')?[...result.scripts.filter((s:any)=>s.status==='loaded').map((s:any)=>s.key),...result.builtins.filter((b:any)=>b.active&&!errors.some(e=>e.id===`builtin:${b.id}`)).map((b:any)=>`builtin:${b.id}`)]:[],errors};
-    }catch(e){return{connected:cdp.connected,targetTitle:cdp.target.title,targetUrl:cdp.target.url,applied:[],errors:[{id:'runtime',message:(e as Error).message}]};}
+      return this.rememberStatus(cdp,{connected:true,targetTitle:cdp.target.title,targetUrl:cdp.target.url,applied:result.ready&&!errors.some(e=>e.id==='runtime')?[...result.scripts.filter((s:any)=>s.status==='loaded').map((s:any)=>s.key),...result.builtins.filter((b:any)=>b.active&&!errors.some(e=>e.id===`builtin:${b.id}`)).map((b:any)=>`builtin:${b.id}`)]:[],errors});
+    }catch(e){return this.rememberStatus(cdp,{connected:cdp.connected,targetTitle:cdp.target.title,targetUrl:cdp.target.url,applied:[],errors:[{id:'runtime',message:(e as Error).message}]});}
   }
   async connect(payload:any):Promise<any>{
     const state=loadState(this.store),info=await desktopInfo(state.connection.lastVersion,state.connection.exePath,state.connection.port,true);

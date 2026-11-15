@@ -70,17 +70,45 @@ function cacheContentHash(index: MarketIndex): string {
   const { fetchedAt, remoteBlobSha, cacheContentSha256, ...content } = index;
   return createHash('sha256').update(JSON.stringify(content)).digest('hex');
 }
-function localIndex(store: AuroraStore, source: MarketSource): { index: MarketIndex; sourceType: 'cache' | 'builtin'; blobSha: string } {
+type LocalIndex = { index: MarketIndex; sourceType: 'cache' | 'builtin'; blobSha: string };
+const localIndexes = new Map<string, { cacheStamp: string; builtinFile?: string; builtinStamp?: string; value: LocalIndex }>();
+function indexCacheKey(store: AuroraStore, source: MarketSource): string { return JSON.stringify([path.resolve(store.dir), source]); }
+function fileStamp(file: string): string {
+  try { const stat = fs.statSync(file); return `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`; }
+  catch { return 'unavailable'; }
+}
+function rememberIndex(key: string, entry: { cacheStamp: string; builtinFile?: string; builtinStamp?: string; value: LocalIndex }): LocalIndex {
+  // These shared values are read-only. Installation and configuration state are still read afresh.
+  for (const plugin of entry.value.index.plugins) { if (Array.isArray(plugin.tags)) Object.freeze(plugin.tags); Object.freeze(plugin); }
+  Object.freeze(entry.value.index.plugins); Object.freeze(entry.value.index);
+  localIndexes.delete(key); localIndexes.set(key, entry);
+  if (localIndexes.size > 32) localIndexes.delete(localIndexes.keys().next().value!);
+  return entry.value;
+}
+function localIndex(store: AuroraStore, source: MarketSource): LocalIndex {
   if (!Object.hasOwn(REPOSITORIES, source)) throw new Error('未知插件市场');
-  const cached = store.readExtra<any>(`extension-catalog-${source}.json`, null);
+  const file = path.join(store.dir, `extension-catalog-${source}.json`), stamp = fileStamp(file), key = indexCacheKey(store, source);
+  const previous = localIndexes.get(key);
+  if (previous?.cacheStamp === stamp && previous.value.sourceType === 'cache') return previous.value;
+  let builtinFile: string | undefined, builtinStamp: string | undefined;
+  if (previous?.cacheStamp === stamp && previous.value.sourceType === 'builtin') {
+    builtinFile = path.join(resourceRoot(), 'catalog', `${source}.json`); builtinStamp = fileStamp(builtinFile);
+    if (previous.builtinFile === builtinFile && previous.builtinStamp === builtinStamp) return previous.value;
+  }
+  let cached: any, cachedBytes: Buffer | undefined;
+  try { cachedBytes = fs.readFileSync(file); cached = JSON.parse(cachedBytes.toString('utf8')); } catch { /* Use the packaged snapshot. */ }
   if (cached) try {
     const index = validateIndex(cached, source);
     const blobSha = /^[a-f0-9]{40}$/.test(index.remoteBlobSha || '') && index.cacheContentSha256 === cacheContentHash(index)
-      ? index.remoteBlobSha! : gitBlobHash(fs.readFileSync(path.join(store.dir, `extension-catalog-${source}.json`)));
-    return { index, sourceType: 'cache', blobSha };
+      ? index.remoteBlobSha! : gitBlobHash(cachedBytes!);
+    return rememberIndex(key, { cacheStamp: stamp, value: { index, sourceType: 'cache', blobSha } });
   } catch { /* Packaged snapshot remains available. */ }
-  const bytes = fs.readFileSync(path.join(resourceRoot(), 'catalog', `${source}.json`));
-  return { index: validateIndex(JSON.parse(bytes.toString('utf8')), source), sourceType: 'builtin', blobSha: gitBlobHash(bytes) };
+  builtinFile ??= path.join(resourceRoot(), 'catalog', `${source}.json`); builtinStamp ??= fileStamp(builtinFile);
+  const bytes = fs.readFileSync(builtinFile);
+  const value: LocalIndex = { index: validateIndex(JSON.parse(bytes.toString('utf8')), source), sourceType: 'builtin', blobSha: gitBlobHash(bytes) };
+  // A transient read failure must not hide a still-existing cache until its contents change.
+  if (stamp !== 'unavailable' && !cachedBytes) return value;
+  return rememberIndex(key, { cacheStamp: stamp, builtinFile, builtinStamp, value });
 }
 export function loadIndex(store: AuroraStore, source: MarketSource): MarketIndex { return localIndex(store, source).index; }
 const refreshJobs = new Map<string, Promise<MarketIndex>>();
@@ -127,7 +155,7 @@ async function fetchIndex(store: AuroraStore, source: MarketSource): Promise<Mar
   } finally { clearTimeout(timer); clearTimeout(alternateTimer); controller.abort(); startAlternate(); }
   index = { ...index, fetchedAt: new Date().toISOString(), cacheContentSha256: cacheContentHash(index) };
   // Persistence is outside the network attempts: a failed write must not trigger another download.
-  try { store.writeExtra(`extension-catalog-${source}.json`, index); }
+  try { store.writeExtra(`extension-catalog-${source}.json`, index); localIndexes.delete(indexCacheKey(store, source)); }
   catch { throw new MarketDownloadError('已连接远端，但无法保存插件目录，请检查本地磁盘空间和目录权限后重试'); }
   return index;
 }

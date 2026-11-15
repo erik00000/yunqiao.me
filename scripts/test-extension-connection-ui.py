@@ -14,8 +14,9 @@ def main():
         bundle = Path(temporary) / 'ui.js'
         source = """import React from 'react';import {createRoot} from 'react-dom/client';
 import DesktopExtensions from './ui/src/pages/DesktopExtensions.tsx';import {ToastHost} from './ui/src/components/ui.tsx';
-const root=createRoot(document.getElementById('root'));
-window.renderPage=()=>root.render(<ToastHost key={window.generation}><DesktopExtensions/></ToastHost>);"""
+const root=createRoot(document.getElementById('root'));let fixtureGeneration;
+// Reset cases own separate transports; navigation-cache behavior has a dedicated suite.
+window.renderPage=()=>{if(fixtureGeneration!==window.generation&&window.aurora)window.aurora={...window.aurora};fixtureGeneration=window.generation;root.render(<ToastHost key={window.generation}><DesktopExtensions/></ToastHost>);};"""
         build = {'stdin': {'contents': source, 'resolveDir': str(ROOT), 'loader': 'tsx'}, 'bundle': True, 'platform': 'browser', 'format': 'iife', 'outfile': str(bundle), 'define': {'process.env.NODE_ENV': '"production"'}}
         subprocess.run(['node', '-e', 'require("esbuild").buildSync(' + json.dumps(build) + ')'], cwd=ROOT, check=True)
         with sync_playwright() as playwright:

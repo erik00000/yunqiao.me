@@ -7,10 +7,18 @@ export interface ClientPathContext {
   isolated?: boolean;
 }
 
+function environmentValue(ctx: ClientPathContext, name: string): string | undefined {
+  if (ctx.environment[name] !== undefined || ctx.platform !== 'win32') return ctx.environment[name];
+  // Windows worker_threads receive a case-sensitive copy of process.env.
+  // Preserve the OS lookup semantics for common names such as Path.
+  const key = Object.keys(ctx.environment).find(value => value.toUpperCase() === name.toUpperCase());
+  return key === undefined ? undefined : ctx.environment[key];
+}
+
 /** Pure path construction: these helpers never inspect the host or start a shell. */
 export function cliCandidates(command: string, ctx: ClientPathContext): string[] {
   const paths = ctx.platform === 'win32' ? path.win32 : path.posix;
-  const folders = (ctx.environment.PATH || '').split(ctx.platform === 'win32' ? ';' : ':');
+  const folders = (environmentValue(ctx, 'PATH') || '').split(ctx.platform === 'win32' ? ';' : ':');
   if (ctx.platform === 'darwin') {
     // Finder does not source shell startup files. Cover the standard native,
     // Homebrew and user npm installations without executing user shell code.
@@ -41,8 +49,8 @@ export function cliCandidates(command: string, ctx: ClientPathContext): string[]
 
 export function desktopCandidates(names: readonly string[], ctx: ClientPathContext): string[] {
   const paths = ctx.platform === 'win32' ? path.win32 : path.posix;
-  const local = !ctx.isolated && ctx.environment.LOCALAPPDATA || paths.join(ctx.home, 'AppData', 'Local');
-  const roaming = !ctx.isolated && ctx.environment.APPDATA || paths.join(ctx.home, 'AppData', 'Roaming');
+  const local = !ctx.isolated && environmentValue(ctx, 'LOCALAPPDATA') || paths.join(ctx.home, 'AppData', 'Local');
+  const roaming = !ctx.isolated && environmentValue(ctx, 'APPDATA') || paths.join(ctx.home, 'AppData', 'Roaming');
   return names.flatMap(name => ctx.platform === 'win32' ? [
     paths.join(local, 'Programs', name, `${name}.exe`), paths.join(local, name, `${name}.exe`),
     paths.join(local, 'OpenAI', name, `${name}.exe`), paths.join(local, 'Microsoft', 'WindowsApps', `${name}.exe`),

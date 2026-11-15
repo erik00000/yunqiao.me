@@ -164,10 +164,9 @@ def main():
             page.wait_for_function("window.pendingFor('extension.list').length===1")
             navigate('系统设置')
             navigate('插件中心')
-            page.wait_for_function("window.pendingFor('extension.list').length===2")
-            settle('extension.list', 1)
+            assert page.evaluate("window.pendingFor('extension.list').length") == 1
+            settle('extension.list')
             expect(page.get_by_text('current-extension-result', exact=True)).to_be_visible()
-            settle('extension.list', 0, 'obsolete extension error', True)
             expect(page.get_by_role('alert')).to_have_count(0)
             page.evaluate("window.held.delete('extension.list');window.held.add('extension.refresh');window.responses['extension.refresh']={ok:true,results:[]}")
             page.get_by_role('button', name='同步市场索引', exact=True).click()
@@ -176,9 +175,14 @@ def main():
             navigate('系统设置')
             settle('extension.refresh')
             page.evaluate("window.held.delete('extension.refresh')")
-            assert page.evaluate("window.calls.filter(c=>c.action==='extension.list').length") == before
+            page.wait_for_function("window.calls.filter(c=>c.action==='extension.list').length>" + str(before))
+            assert page.evaluate("window.calls.filter(c=>c.action==='extension.list').length") == before + 1
+            navigate('插件中心')
+            expect(page.get_by_text('current-extension-result', exact=True)).to_be_visible()
+            assert page.evaluate("window.calls.filter(c=>c.action==='extension.list').length") == before + 1
+            navigate('系统设置')
             expect(page.locator('.toast')).to_have_count(0)
-            checks.append('Held plugin detection permits navigation; late list errors and market completion cannot replace the current page, toast, or trigger another scan')
+            checks.append('Plugin navigation shares a held scan; off-page market completion refreshes the shared snapshot without toasts, and returning uses that fresh snapshot without another scan')
 
             page.evaluate("window.held.add('usage.summary')")
             navigate('用量与账单', '用量统计')

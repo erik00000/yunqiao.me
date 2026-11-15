@@ -13,8 +13,9 @@ def main():
         bundle = Path(temporary) / 'plugin-ui.js'
         source = """import React from 'react';import {createRoot} from 'react-dom/client';
 import Plugins from './ui/src/pages/Plugins.tsx';import CodexEnhance from './ui/src/pages/CodexEnhance.tsx';import {ToastHost} from './ui/src/components/ui.tsx';
-const root=createRoot(document.getElementById('root'));
-window.renderPage=(page='plugins')=>{window.page=page;const Page=page==='codex'?CodexEnhance:Plugins;root.render(<ToastHost><Page key={page+window.generation} state={structuredClone(window.appState)} reload={async()=>window.renderPage(window.page)} go={target=>{window.navigation=target;}}/></ToastHost>);};window.renderPage();"""
+const root=createRoot(document.getElementById('root'));let fixtureGeneration;
+// A fixture generation represents a new desktop workspace, not navigation in one workspace.
+window.renderPage=(page='plugins')=>{if(fixtureGeneration!==window.generation&&window.aurora)window.aurora={...window.aurora};fixtureGeneration=window.generation;window.page=page;const Page=page==='codex'?CodexEnhance:Plugins;root.render(<ToastHost><Page key={page+window.generation} state={structuredClone(window.appState)} reload={async()=>window.renderPage(window.page)} go={target=>{window.navigation=target;}}/></ToastHost>);};window.renderPage();"""
         build = "require('esbuild').buildSync(" + json.dumps({'stdin': {'contents': source, 'resolveDir': str(ROOT), 'loader': 'tsx'}, 'bundle': True, 'platform': 'browser', 'format': 'iife', 'outfile': str(bundle), 'define': {'process.env.NODE_ENV': '"production"'}}) + ')'
         subprocess.run(['node', '-e', build], cwd=ROOT, check=True)
         packages = []

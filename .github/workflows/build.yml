@@ -88,6 +88,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python scripts/test-extension-connection-ui.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/test-extension-snapshot-ui.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python scripts/test-provider-views-ui.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python scripts/test-model-context-ui.py
