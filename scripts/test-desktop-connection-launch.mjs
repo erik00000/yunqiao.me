@@ -76,6 +76,27 @@ try {
     assert.equal(f.calls('launchProcess').length, 0); assert.equal(f.calls('connect').length, 0); assert.equal(f.state.delays, 0);
   });
 
+  await test('Package-context activation without a trusted PID succeeds only after port readiness and compatible CDP', async () => {
+    const f = fixture(); let started = false, portProbes = 0, connected = 0;
+    f.runtime.launchPackaged = async () => { started = true; return { packaged: true }; };
+    f.runtime.portOpen = async () => started && ++portProbes >= 3;
+    f.runtime.connect = async () => { assert(started && portProbes >= 3); connected++; return fakeCdp; };
+    const opened = await api.openDesktopConnection(options, f.runtime);
+    assert.equal(opened.launched, true); assert.equal(opened.cdp, fakeCdp); assert.equal(connected, 1);
+    assert(f.state.delays >= 2); assert.equal(f.calls('launchProcess').length, 0);
+  });
+
+  await test('Package-context activation without a trusted PID cannot bypass readiness or fall back to bare execution', async () => {
+    const noPort = fixture({ launchPackaged: async () => ({ packaged: true }) });
+    await assert.rejects(api.openDesktopConnection(options, noPort.runtime), /调试端口未开启/);
+    assert.equal(noPort.calls('connect').length, 0); assert.equal(noPort.calls('launchProcess').length, 0);
+    const incompatible = fixture(); let attempts = 0;
+    incompatible.runtime.launchPackaged = async () => { incompatible.state.open = true; return { packaged: true }; };
+    incompatible.runtime.connect = async () => { attempts++; throw new Error('fixture package-context has no compatible renderer'); };
+    await assert.rejects(api.openDesktopConnection(options, incompatible.runtime), /no compatible renderer/);
+    assert(attempts > 0 && attempts <= 40); assert.equal(incompatible.calls('launchProcess').length, 0);
+  });
+
   await test('Ordinary Windows applications receive only the selected loopback debugging arguments', async () => {
     const f = fixture();
     const ordinary = path.join(scratch, "Programs", "ChatGPT 'quoted'", 'ChatGPT.exe');
