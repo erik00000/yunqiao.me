@@ -141,6 +141,24 @@ window.renderPage=()=>{if(fixtureGeneration!==window.generation&&window.aurora)w
             checks.append('Reconnect preserves version acknowledgements, prevents duplicate requests and retains actionable failures until success')
 
             reset()
+            page.evaluate("window.connectError='Windows 未能以商店包身份启动客户端。请完全退出客户端，确认开始菜单可以打开，并以普通权限重新连接。'")
+            page.get_by_role('button', name='启动并连接', exact=True).click()
+            expect(recovery.get_by_role('alert')).to_contain_text('商店包身份')
+            page.evaluate("window.selection='success';window.selectionPath='C:/Program Files/WindowsApps/Fixture/ChatGPT.exe'")
+            recovery.get_by_role('button', name='选择程序', exact=True).click()
+            expect(recovery.get_by_role('status')).to_contain_text('程序路径已保存')
+            expect(recovery.get_by_role('alert')).to_contain_text('商店包身份')
+            assert len(calls('extension.connect')) == 1
+            recovery.get_by_role('button', name='重新连接', exact=True).click()
+            expect(recovery.get_by_role('alert')).to_contain_text('商店包身份')
+            assert len(calls('extension.connect')) == 2
+            assert calls('extension.connect')[-1]['payload']['launch'] is True
+            page.evaluate("window.connectError=''")
+            recovery.get_by_role('button', name='重新连接', exact=True).click()
+            expect(recovery).not_to_be_visible()
+            checks.append('Store activation failures retain actionable guidance until reconnect succeeds; choosing the EXE never launches it')
+
+            reset()
             fail_connection()
             old_items = page.evaluate('structuredClone(window.ext.items)')
             recovery.get_by_role('button', name='恢复默认连接设置', exact=True).click()

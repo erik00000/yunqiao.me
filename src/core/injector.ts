@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import type { CodingDesktopDetection } from './desktopDetection.js';
 import { runningCodingClients, runningCodingClientsSync } from './clientProcesses.js';
 import { detectDesktopAsync } from './agents/detectionAsync.js';
+import { launchWindowsPackagedDesktop } from './windowsPackagedLaunch.js';
 export { detectCodingDesktop, inspectCodingDesktop, resolveMacApplication } from './desktopDetection.js';
 export type { CodingDesktopDetection, DesktopDetectionOptions, MacApplication } from './desktopDetection.js';
 
@@ -40,36 +41,65 @@ export class DesktopCdp {
   connected = true;
   private constructor(private ws: WebSocket, public readonly target: { title: string; url: string }) {
     ws.addEventListener('message', e => { void this.message(String(e.data)); });
-    ws.addEventListener('close', () => { this.connected = false; for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(new Error('桌面连接已断开')); } this.pending.clear(); });
+    ws.addEventListener('close', () => this.rejectPending());
   }
-  static async connect(port: number, surface: 'main' | 'avatar' = 'main'): Promise<DesktopCdp> {
+  private rejectPending(): void {
+    this.connected = false;
+    for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(new Error('桌面连接已断开')); }
+    this.pending.clear();
+  }
+  static async connect(port: number, surface: 'main' | 'avatar' = 'main', timeoutMs = 15_000): Promise<DesktopCdp> {
     validateDebugPort(port);
-    const response = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(3000), redirect: 'error' });
+    const deadline = performance.now() + Math.max(1, timeoutMs);
+    const remaining = (limit: number) => {
+      const budget = Math.ceil(deadline - performance.now());
+      if (budget <= 0) throw new Error('桌面页面连接超时，请等待客户端完成启动后重新连接');
+      return Math.min(limit, budget);
+    };
+    const response = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(remaining(3000)), redirect: 'error' });
     if (!response.ok) throw new Error('无法读取桌面调试目标');
     const list: any = await response.json();
     if (!Array.isArray(list)) throw new Error('调试目标返回格式无效');
     const isAvatar = (url: string) => /avatar-overlay|initialRoute=(?:%2F|\/)avatar/i.test(url);
     for (const page of list.filter(t => t.type === 'page' && /^app:\/\/-\//i.test(t.url || '') && (surface === 'avatar' ? isAvatar(t.url) : !isAvatar(t.url)))) {
       if (!page.webSocketDebuggerUrl) continue;
-      const target = new URL(page.webSocketDebuggerUrl);
+      let target: URL;
+      try { target = new URL(page.webSocketDebuggerUrl); } catch { continue; }
       if (target.protocol !== 'ws:' || !['127.0.0.1', 'localhost', '[::1]'].includes(target.hostname) || Number(target.port) !== port || target.username || target.password) continue;
+      const socketTimeout = remaining(5000);
       const ws = new WebSocket(target.href);
-      await new Promise<void>((resolve, reject) => { const timer = setTimeout(() => { ws.close(); reject(new Error('CDP 连接超时')); }, 5000); ws.addEventListener('open', () => { clearTimeout(timer); resolve(); }, { once: true }); ws.addEventListener('error', () => { clearTimeout(timer); reject(new Error('CDP 连接失败')); }, { once: true }); });
+      try {
+        await new Promise<void>((resolve, reject) => { const timer = setTimeout(() => { ws.close(); reject(new Error('CDP 连接超时')); }, socketTimeout); ws.addEventListener('open', () => { clearTimeout(timer); resolve(); }, { once: true }); ws.addEventListener('error', () => { clearTimeout(timer); ws.close(); reject(new Error('CDP 连接失败')); }, { once: true }); });
+      } catch (error) { ws.close(); if (performance.now() >= deadline) throw error; continue; }
       const cdp = new DesktopCdp(ws, { title: page.title || '', url: page.url });
-      const identity = await cdp.evaluate('({app:location.href,top:window===top,bridge:!!window.electronBridge})').catch(() => null);
-      if (identity?.top && identity.bridge && /^app:\/\/-\//i.test(identity.app)) {
-        const frame = (await cdp.send('Page.getFrameTree')).frameTree?.frame;
-        if (!frame?.id || !/^app:\/\/-\//i.test(frame.url || '')) { cdp.close(); continue; }
-        cdp.mainFrameId = frame.id; cdp.mainFrameUrl = frame.url;
-        await cdp.send('Runtime.enable'); await cdp.send('Page.enable'); return cdp;
+      try {
+        const identityResult = await cdp.send('Runtime.evaluate', { expression: '({app:location.href,top:window===top,bridge:!!window.electronBridge})', returnByValue: true }, remaining(5000));
+        const identity = identityResult?.result?.value;
+        if (identity?.top && identity.bridge && /^app:\/\/-\//i.test(identity.app)) {
+          const frame = (await cdp.send('Page.getFrameTree', {}, remaining(5000))).frameTree?.frame;
+          if (!frame?.id || !/^app:\/\/-\//i.test(frame.url || '')) { cdp.close(); continue; }
+          cdp.mainFrameId = frame.id; cdp.mainFrameUrl = frame.url;
+          await cdp.send('Runtime.enable', {}, remaining(5000)); await cdp.send('Page.enable', {}, remaining(5000)); return cdp;
+        }
+        cdp.close();
+      } catch (error) {
+        cdp.close();
+        // A page can disappear during startup. Still inspect other compatible
+        // targets within the same budget instead of repeatedly choosing it.
+        if (performance.now() >= deadline) throw error;
       }
-      cdp.close();
     }
     throw new Error('未找到兼容的 ChatGPT/Codex 桌面页面（需要 app://-/ 与 electronBridge），没有注入其他浏览器页面');
   }
-  send(method: string, params: any = {}): Promise<any> {
+  send(method: string, params: any = {}, timeoutMs = method === 'Runtime.evaluate' ? 45_000 : 15_000): Promise<any> {
     if (!this.connected) return Promise.reject(new Error('桌面连接已断开'));
-    return new Promise((resolve, reject) => { const id = ++this.seq; const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`${method} 超时`)); }, method === 'Runtime.evaluate' ? 45_000 : 15_000); this.pending.set(id, { resolve, reject, timer }); this.ws.send(JSON.stringify({ id, method, params })); });
+    return new Promise((resolve, reject) => {
+      const id = ++this.seq;
+      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`${method} 超时`)); }, timeoutMs);
+      this.pending.set(id, { resolve, reject, timer });
+      try { this.ws.send(JSON.stringify({ id, method, params })); }
+      catch (error) { clearTimeout(timer); this.pending.delete(id); reject(error); }
+    });
   }
   async evaluate(expression: string): Promise<any> {
     const result = await this.send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
@@ -117,7 +147,7 @@ export class DesktopCdp {
   async dispose(reload = true): Promise<void> {
     if (this.connected) { for (const identifier of this.scriptIds.splice(0)) await this.send('Page.removeScriptToEvaluateOnNewDocument', { identifier }).catch(() => {}); await this.send('Runtime.removeBinding', { name: this.binding }).catch(() => {}); if (reload) await this.send('Page.reload', { ignoreCache: false }).catch(() => {}); } this.close();
   }
-  close(): void { this.connected = false; this.ws.close(); }
+  close(): void { this.rejectPending(); this.ws.close(); }
 }
 export function desktopDebugLaunch(detected: CodingDesktopDetection, port: number, platform: NodeJS.Platform = process.platform): { command: string; args: string[] } {
   validateDebugPort(port);
@@ -131,21 +161,62 @@ export function desktopDebugLaunch(detected: CodingDesktopDetection, port: numbe
   if (platform !== 'win32') throw new Error('桌面增强自动启动目前支持 Windows 和 macOS');
   return { command: detected.executable, args };
 }
-export async function openDesktopConnection(options: { port: number; exePath?: string; launch?: boolean }): Promise<{ cdp: DesktopCdp; launched: boolean }> {
+/** Main-process dependencies for isolated tests; never accepted from renderer/IPC payloads. */
+export interface DesktopConnectionRuntime {
+  platform: NodeJS.Platform;
+  detect: typeof detectDesktopAsync;
+  running: (paths: string[]) => Promise<unknown[]>;
+  portOpen: (port: number) => Promise<boolean>;
+  launchPackaged: (executable: string, port: number) => Promise<{ packaged: boolean; pid?: number }>;
+  launchProcess: (command: string, args: string[]) => Promise<void>;
+  connect: (port: number, timeoutMs?: number) => Promise<DesktopCdp>;
+  delay: (ms: number) => Promise<void>;
+  now: () => number;
+}
+const desktopConnectionRuntime: DesktopConnectionRuntime = {
+  platform: process.platform, detect: detectDesktopAsync, running: runningCodingClients,
+  portOpen: debugPortOpen, launchPackaged: launchWindowsPackagedDesktop,
+  async launchProcess(command, args) {
+    const child = spawn(command, args, { detached: true, stdio: 'ignore', windowsHide: false, shell: false });
+    await new Promise<void>((resolve, reject) => { child.once('spawn', resolve); child.once('error', () => reject(new Error('无法启动桌面客户端，请确认程序仍已安装并重新选择程序'))); });
+    child.unref();
+  },
+  connect: (port, timeoutMs) => DesktopCdp.connect(port, 'main', timeoutMs),
+  delay: ms => new Promise(resolve => setTimeout(resolve, ms)), now: () => performance.now(),
+};
+export async function openDesktopConnection(options: { port: number; exePath?: string; launch?: boolean }, runtime: Partial<DesktopConnectionRuntime> = {}): Promise<{ cdp: DesktopCdp; launched: boolean }> {
+  const rt = { ...desktopConnectionRuntime, ...runtime };
   const port = validateDebugPort(options.port); let launched = false;
-  if (!await debugPortOpen(port)) {
+  if (!await rt.portOpen(port)) {
     if (!options.launch) throw new Error('调试端口未开启，请完全退出客户端后选择启动并连接');
-    const d = await detectDesktopAsync(options.exePath, true);
+    const d = await rt.detect(options.exePath, true);
     if (!d.executable) throw new Error(d.detectionError || '未找到桌面程序，请先指定程序路径');
-    if ((await runningCodingClients([d.executable])).length) throw new Error('客户端正在运行且未开启调试端口，请完全退出后重试');
-    const launch = desktopDebugLaunch(d, port);
-    const child = spawn(launch.command, launch.args, { detached: true, stdio: 'ignore', windowsHide: false, shell: false });
-    await new Promise<void>((resolve, reject) => { child.once('spawn', () => resolve()); child.once('error', reject); }); child.unref(); launched = true;
-    for (let i = 0; i < 40; i++) { if (await debugPortOpen(port)) break; await new Promise(r => setTimeout(r, 500)); }
+    if ((await rt.running([d.executable])).length) throw new Error('客户端正在运行且未开启调试端口，请完全退出后重试');
+    const launch = desktopDebugLaunch(d, port, rt.platform);
+    // Store/MSIX applications require their registered package identity. Activation
+    // failures must propagate: a raw EXE fallback reproduces APPMODEL_ERROR_NO_PACKAGE.
+    const packaged = rt.platform === 'win32' && (await rt.launchPackaged(d.executable, port)).packaged;
+    if (!packaged) await rt.launchProcess(launch.command, launch.args);
+    launched = true;
+    const readyDeadline = rt.now() + 30_000;
+    let ready = false;
+    while (rt.now() < readyDeadline) {
+      if (await rt.portOpen(port)) { ready = true; break; }
+      await rt.delay(Math.min(500, Math.max(0, readyDeadline - rt.now())));
+    }
+    if (!ready) throw new Error('客户端已收到启动请求，但调试端口未开启。请等待启动完成；若仍未连接，请完全退出客户端，再点击“启动并连接”。');
   }
+  const connectDeadline = rt.now() + 15_000;
   let last: unknown;
-  for (let i = 0; i < (launched ? 15 : 1); i++) { try { return { cdp: await DesktopCdp.connect(port), launched }; } catch (e) { last = e; if (launched) await new Promise(r => setTimeout(r, 500)); } }
-  throw last || new Error('桌面连接失败');
+  do {
+    try { return { cdp: await rt.connect(port, Math.max(1, Math.ceil(connectDeadline - rt.now()))), launched }; }
+    catch (error) { last = error; }
+    if (!launched || rt.now() >= connectDeadline) break;
+    await rt.delay(Math.min(500, Math.max(0, connectDeadline - rt.now())));
+  } while (rt.now() < connectDeadline);
+  const detail = last instanceof Error ? last.message : '';
+  if (detail && !/fetch failed|network|aborted|timed?\s*out/i.test(detail)) throw last;
+  throw new Error('无法连接客户端调试服务，请确认客户端已完成启动，再点击“重新连接”；若客户端已退出，请选择“启动并连接”。');
 }
 export interface InjectResult { ok: boolean; message: string; launched?: boolean; injected?: number }
 export async function launchAndInject(scripts: Array<{ id: string; name: string; code: string; enabled: boolean }>, port = 9222): Promise<InjectResult> {
