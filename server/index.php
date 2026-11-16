@@ -278,9 +278,12 @@ document.getElementById('pwd').addEventListener('keydown', e=>{ if(e.key==='Ente
         <div class="field"><label>更新说明</label><textarea id="uNotes" placeholder="本次更新内容…"></textarea></div>
         <div class="grid2">
           <div class="field"><label>Windows x64 下载地址</label><input id="uWin" placeholder="填写已上传的 Windows x64 安装包完整地址"></div>
-          <div class="field"><label>macOS 下载地址</label><input id="uMac" placeholder="填写已上传的 macOS arm64 安装包完整地址"></div>
+          <div class="field"><label>macOS Apple Silicon（arm64）下载地址</label><input id="uMac" placeholder="填写已上传的 macOS arm64 安装包完整地址"></div>
         </div>
-        <div class="field"><label>Linux 下载地址</label><input id="uLinux" placeholder="填写已上传的 Linux x64 安装包完整地址"></div>
+        <div class="grid2">
+          <div class="field"><label>macOS Intel（x64）下载地址</label><input id="uMacX64" placeholder="填写已上传的 macOS x64 安装包完整地址"></div>
+          <div class="field"><label>Linux x64 下载地址</label><input id="uLinux" placeholder="填写已上传的 Linux x64 安装包完整地址"></div>
+        </div>
         <div class="foot" style="position:static;background:none"><button class="btn primary" id="btnSaveUpdate">保存</button></div>
         <p class="sub" style="margin-top:10px">把安装包上传到 <code>/www/wwwroot/ai.haowucm.cn/releases/</code>，再用上面的地址引用即可。</p>
       </div>
@@ -561,10 +564,11 @@ document.getElementById('btnNew').onclick = ()=> openEdit(null);
 
 /* ---------- 更新 & 设置 ---------- */
 document.getElementById('btnSaveUpdate').onclick = async ()=>{
-  const files = {};
-  if(uWin.value.trim()) files['win-x64'] = uWin.value.trim();
-  if(uMac.value.trim()) files['mac-arm64'] = uMac.value.trim();
-  if(uLinux.value.trim()) files['linux-x64'] = uLinux.value.trim();
+  const files = { ...(state.update.files || {}) };
+  for (const [platform, input] of [['win-x64', uWin], ['mac-arm64', uMac], ['mac-x64', uMacX64], ['linux-x64', uLinux]]) {
+    const url = input.value.trim();
+    if (url) files[platform] = url; else delete files[platform];
+  }
   const j = await api('update.save', {
     version:uVersion.value.trim(), notes:uNotes.value.trim(),
     mandatory: uMandatory.value === '1', files
@@ -604,6 +608,7 @@ async function reload(){
   uMandatory.value = u.mandatory ? '1' : '0';
   uWin.value = (u.files||{})['win-x64'] || '';
   uMac.value = (u.files||{})['mac-arm64'] || '';
+  uMacX64.value = (u.files||{})['mac-x64'] || '';
   uLinux.value = (u.files||{})['linux-x64'] || '';
   sName.value = j.siteName || '';
 }

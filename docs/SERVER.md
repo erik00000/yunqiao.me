@@ -1,6 +1,6 @@
 # 远端目录与版本服务
 
-现有站点：`https://ai.haowucm.cn`，服务器网站目录 `/www/wwwroot/ai.haowucm.cn`。2026-11-15 只读核实已有四个 PHP 入口和 releases 目录；公开目录正常返回 v6、44 家供应商。本轮未覆盖正在运行的站点或发布更新元数据。
+现有站点：`https://ai.haowucm.cn`，服务器网站目录 `/www/wwwroot/ai.haowucm.cn`。2026-11-16 已将官网备用更新发布为 **0.6.0**，Windows x64、macOS Apple Silicon arm64 和 Intel x64 均提供对应安装包与 SHA256。
 
 ## 客户端读取
 
@@ -15,7 +15,15 @@
 
 官网仍使用现有更新接口，客户端传入 `platform`、`arch`、`current`。Windows 包名遵循 `YunQiaoAI-版本-win-架构-setup.exe`（或 `portable.exe`）；macOS 为 `YunQiaoAI-版本-mac-架构.dmg`，Linux 为 `YunQiaoAI-版本-linux-架构.AppImage`。备用文件应放在官网 HTTPS `/releases/` 下，并与后台版本一致。
 
-2026-11-15 只读检查：GitHub v0.5.0 标记为预发布，v0.6.0 为草稿，尚无正式版，`releases/latest` 返回 404；官网仍为 0.4.0。本地 0.6.0 会回退官网检查并判定无需更新，不会提示降级。本轮未改变线上发布状态。
+当前 GitHub [v0.6.0](https://github.com/jxb412/yunqiao.me/releases/tag/v0.6.0) 为公开正式版，官网备用元数据与之同步。官网此前停留在 0.4.0，且同名 0.6.0 Windows 包早于最终发布构建；这两个旧包已私下备份，再替换为与 GitHub 发布清单一致的最终文件。
+
+| 平台 | 官网更新安装包 |
+| --- | --- |
+| Windows x64 | [安装版 EXE](https://ai.haowucm.cn/releases/YunQiaoAI-0.6.0-win-x64-setup.exe) |
+| macOS Apple Silicon arm64 | [ARM DMG](https://ai.haowucm.cn/releases/YunQiaoAI-0.6.0-mac-arm64.dmg) |
+| macOS Intel x64 | [Intel DMG](https://ai.haowucm.cn/releases/YunQiaoAI-0.6.0-mac-x64.dmg) |
+
+已在线验证三平台：当前版本 0.5.0 返回 `hasUpdate:true`，当前版本 0.6.0 返回最新版本 0.6.0、`hasUpdate:false`。没有安装包的平台/架构返回空地址，不套用其他平台文件。后台版本页分别维护两种 Mac 架构；仅修改更新说明不会删除 Intel Mac 或未显示平台的链接。
 
 厂商模板与用户配置分离：导入目录创建供应商模板，用户自行填写密钥。列表中保留原始模型 ID；价格/上下文信息以服务商实际说明为准。
 
@@ -48,7 +56,7 @@
 | `scripts/test-catalog-sync.php` | 8项，候选白名单、失败保留缓存、精选和并发管理员修改 |
 | `scripts/test-catalog-publish.php` | 4项，模拟目录/审计写入失败，准确反馈已生效结果和幂等补记 |
 
-Windows 便携 PHP 没有全局 `php.ini`，会员测试需附加 `-d extension_dir=D:/btc/aurora/tmp/php/ext -d extension=pdo_sqlite -d extension=openssl`，HTTP 测试附加 `-d extension_dir=D:/btc/aurora/tmp/php/ext -d extension=mbstring`。所有 `server/*.php` 和 `scripts/*.php` 已通过该解释器 `php -l`。这些测试验证本地实现；Linux PHP-FPM、Nginx、实际磁盘权限和真实上游仍需部署环境验收。本轮没有部署或改写线上配置。
+Windows 便携 PHP 没有全局 `php.ini`，会员测试需附加 `-d extension_dir=D:/btc/aurora/tmp/php/ext -d extension=pdo_sqlite -d extension=openssl`，HTTP 测试附加 `-d extension_dir=D:/btc/aurora/tmp/php/ext -d extension=mbstring`。所有 `server/*.php` 和 `scripts/*.php` 已通过该解释器 `php -l`。这些测试验证本地实现，不代表整套源码均已部署。2026-11-16 官网更新修复仅部署版本页与公开更新判断的局部补丁、发布包及版本元数据，未整体覆盖服务器 PHP。两个 PHP 补丁均先通过服务器 PHP 8.2 语法检查再原子替换。
 
 精选目录和同步审计仍分别保存。目录写入失败返回错误；目录已生效后审计写入失败则返回成功与 `auditSaved:false` 警示，后台页面明确说明已生效及补记方法。重新选择相同模型可安全重试补记，不重复加入模型或递增公开版本。进程在两个文件提交之间被强制终止时仍可能缺少审计，需要管理员核对后补记；跨文件提交不具备数据库事务的崩溃恢复保证。
 
@@ -60,19 +68,29 @@ SSH 主机默认为 `58.49.150.136:4413`，用户默认为 `root`。所有密码
 # 只显示部署计划
 python scripts/deploy_php.py
 
-# 审阅源码后部署四个 PHP 文件
+# 审阅源码后部署 PHP 文件；仅发布安装包时不需要此步骤
 python scripts/deploy_php.py --apply
 
-# 只显示当前版本安装包及 SHA256
-python scripts/deploy_release.py
+# 指向已验证的完整交付目录，先核实全部文件与发布清单
+python scripts/deploy_release.py --release-dir release/yunqiao.me-0.6.0-f2e204f
 
-# 上传当前版本安装包，不自动发布更新元数据
-python scripts/deploy_release.py --apply
+# 上传安装包；默认拒绝覆盖不同内容的同名文件
+python scripts/deploy_release.py --release-dir release/yunqiao.me-0.6.0-f2e204f --apply
+
+# 校验三平台安装包并预览官网元数据
+python scripts/publish_update.py --release-dir release/yunqiao.me-0.6.0-f2e204f
+
+# 官网文件校验通过后发布；更新说明可另用 --notes-file 指定 UTF-8 文件
+python scripts/publish_update.py --release-dir release/yunqiao.me-0.6.0-f2e204f --apply
 ```
 
 PHP 脚本先暂存到网站目录之外并逐个运行 `php -l`，检查通过后保留旧文件至 `/www/aurora-backups/<时间>/`，再逐文件原子替换。不重新初始化供应商目录、账号密码或版本信息；也不递归修改网站所有权。若服务器 PHP CLI 路径不同，先调整脚本使用的 CLI 路径。
 
-安装包上传脚本只上传 package.json 当前版本的 setup/portable 两个文件，拒绝覆盖已经存在的同名版本。上传后，在后台另行核实版本、下载地址与说明，再发布更新信息。
+安装包上传与元数据发布是两个步骤，**只发布 GitHub Release 不会自动更新官网**。两条脚本必须使用同一个交付目录，其中 `BUILD-MANIFEST.json` 的版本须与 `package.json` 一致。上传脚本按清单核验 Windows 和两种 Mac 架构文件，私下暂存、校验远端内容后再原子替换；相同内容可跳过。默认拒绝覆盖不同内容的同名文件；确需纠正旧上传时，显式使用 `--replace-existing`，旧文件会先留在私有备份目录。
+
+`BUILD-MANIFEST.json` 和 `SHA256SUMS.txt` 是官网共用文件名，因此发布下一个版本时，也需加 `--replace-existing` 来备份并更新这两份文件；版本化安装包仍须来自已校验的交付目录。当前官网同步了全部 10 个 GitHub 发布文件，包括 Windows 免安装版、ZIP、Mac ZIP 和两份校验资料。
+
+元数据发布脚本校验本地清单、官网 HTTPS 文件长度与服务器 SHA256，核对全部三个安装包后，才在配置锁内备份原配置并仅替换更新字段。保留管理员、目录和统计配置，拒绝版本降级；配置不存在时拒绝自动初始化。新元数据只保留当前实际发布的平台链接，不把旧包标记为新版本。配置备份位于私有数据目录 `release-backups/`，禁止放进公开网站目录。发布后仍需分别验证旧版与同版本客户端的查询结果及下载链接。
 
 ## 目录示例
 
