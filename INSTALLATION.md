@@ -2,25 +2,25 @@
 
 云桥 AI 是独立的桌面工具。请先安装你要使用的 Claude、ChatGPT、Codex 或其他客户端，再用云桥连接自己的模型服务。
 
-本说明更新于 **2026 年 11 月 16 日**，对应已发布的 **0.6.1**。Windows 与 macOS 安装包可从 [Releases 下载页](https://github.com/jxb412/yunqiao.me/releases/tag/v0.6.1)直接下载。
+本说明更新于 **2026 年 11 月 16 日**，对应已发布的 **0.6.2**。Windows 与 macOS 安装包可从 [Releases 下载页](https://github.com/jxb412/yunqiao.me/releases/tag/v0.6.2)直接下载。
 
-[打开 0.6.1 下载页](https://github.com/jxb412/yunqiao.me/releases/tag/v0.6.1) · [使用指南](USER-GUIDE.md) · [返回介绍](README.md)
+[打开 0.6.2 下载页](https://github.com/jxb412/yunqiao.me/releases/tag/v0.6.2) · [使用指南](USER-GUIDE.md) · [返回介绍](README.md)
 
 ## 获取安装文件
 
-打开 [0.6.1 发布页](https://github.com/jxb412/yunqiao.me/releases/tag/v0.6.1)，展开 **Assets**，选择与你的系统一致的文件；也可直接点击下表下载。这里提供可使用的安装文件，通常无需登录 GitHub。不要将 GitHub 自动生成的 **Source code** 压缩包当作客户端安装包。
+打开 [0.6.2 发布页](https://github.com/jxb412/yunqiao.me/releases/tag/v0.6.2)，展开 **Assets**，选择与你的系统一致的文件；也可直接点击下表下载。这里提供可使用的安装文件，通常无需登录 GitHub。不要将 GitHub 自动生成的 **Source code** 压缩包当作客户端安装包。
 
-| 系统与用途 | 0.6.1 安装文件 |
+| 系统与用途 | 0.6.2 安装文件 |
 | --- | --- |
-| Windows x64 安装版 | [YunQiaoAI-0.6.1-win-x64-setup.exe](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.1/YunQiaoAI-0.6.1-win-x64-setup.exe) |
-| Windows x64 免安装版 | [YunQiaoAI-0.6.1-win-x64-portable.exe](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.1/YunQiaoAI-0.6.1-win-x64-portable.exe) |
-| Windows x64 完整解压版 | [YunQiaoAI-0.6.1-win-x64.zip](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.1/YunQiaoAI-0.6.1-win-x64.zip) |
-| macOS Apple M 系列 | [YunQiaoAI-0.6.1-mac-arm64.dmg](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.1/YunQiaoAI-0.6.1-mac-arm64.dmg) |
-| macOS Intel | [YunQiaoAI-0.6.1-mac-x64.dmg](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.1/YunQiaoAI-0.6.1-mac-x64.dmg) |
+| Windows x64 安装版 | [YunQiaoAI-0.6.2-win-x64-setup.exe](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.2/YunQiaoAI-0.6.2-win-x64-setup.exe) |
+| Windows x64 免安装版 | [YunQiaoAI-0.6.2-win-x64-portable.exe](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.2/YunQiaoAI-0.6.2-win-x64-portable.exe) |
+| Windows x64 完整解压版 | [YunQiaoAI-0.6.2-win-x64.zip](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.2/YunQiaoAI-0.6.2-win-x64.zip) |
+| macOS Apple M 系列 | [YunQiaoAI-0.6.2-mac-arm64.dmg](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.2/YunQiaoAI-0.6.2-mac-arm64.dmg) |
+| macOS Intel | [YunQiaoAI-0.6.2-mac-x64.dmg](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.2/YunQiaoAI-0.6.2-mac-x64.dmg) |
 
-更新内容见 [0.6.1 版本说明](docs/RELEASE-0.6.1.md)。
+更新内容见 [0.6.2 版本说明](docs/RELEASE-0.6.2.md)。
 
-macOS 同时提供 [Apple Silicon ZIP](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.1/YunQiaoAI-0.6.1-mac-arm64.zip) 和 [Intel ZIP](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.1/YunQiaoAI-0.6.1-mac-x64.zip)，可完整解压后将 `YunQiaoAI.app` 放入“应用程序”；一般优先使用 DMG。[SHA256SUMS.txt](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.1/SHA256SUMS.txt) 可用于核对下载文件是否完整。
+macOS 同时提供 [Apple Silicon ZIP](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.2/YunQiaoAI-0.6.2-mac-arm64.zip) 和 [Intel ZIP](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.2/YunQiaoAI-0.6.2-mac-x64.zip)，可完整解压后将 `YunQiaoAI.app` 放入“应用程序”；一般优先使用 DMG。[SHA256SUMS.txt](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.2/SHA256SUMS.txt) 可用于核对下载文件是否完整。
 
 需要体验开发构建时，打开 [GitHub Actions 的 build 页面](https://github.com/jxb412/yunqiao.me/actions/workflows/build.yml)，选择对应平台已成功完成的构建，在 **Artifacts** 中下载；通常需要登录 GitHub，下载后先解压外层压缩包。开发构建可能包含尚未正式发布的改动。
 
