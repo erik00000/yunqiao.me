@@ -101,7 +101,7 @@ function commitStoreFiles(changes: Array<{ file: JsonFile<any>; before: any; aft
 
 export const DEFAULT_SETTINGS = (): Settings => ({
   language: 'zh-CN',
-  theme: 'light',
+  theme: 'dark',
   accent: '#4f66e8',
   gatewayHost: '127.0.0.1',
   gatewayPort: 3425,

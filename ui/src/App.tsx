@@ -107,7 +107,8 @@ function Shell() {
   }, [state?.settings.autoCheckUpdate]);
   useEffect(() => {
     const media = matchMedia('(prefers-color-scheme: dark)');
-    const apply = () => { document.documentElement.dataset.theme = state?.settings.theme === 'dark' || (state?.settings.theme === 'system' && media.matches) ? 'dark' : 'light'; };
+    const theme = state?.settings.theme ?? 'dark';
+    const apply = () => { document.documentElement.dataset.theme = theme === 'dark' || (theme === 'system' && media.matches) ? 'dark' : 'light'; };
     apply(); media.addEventListener('change', apply);
     document.documentElement.style.setProperty('--accent', state?.settings.accent || '#4f66e8');
     return () => media.removeEventListener('change', apply);

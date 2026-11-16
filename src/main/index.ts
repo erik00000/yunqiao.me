@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Tray, Menu, nativeImage, dialog, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, Tray, Menu, nativeImage, nativeTheme, dialog, ipcMain, shell } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { spawn } from 'node:child_process';
@@ -76,7 +76,9 @@ function trustedFrame(raw?: string) {
   try { const u = new URL(raw); const normalize = (file: string) => process.platform === 'win32' ? path.resolve(file).toLowerCase() : path.resolve(file); return DEV ? u.origin === new URL(UI_URL).origin : u.protocol === 'file:' && normalize(fileURLToPath(u)) === normalize(uiFile); } catch { return false; }
 }
 function createWindow() {
-  win = new BrowserWindow({ width: 1380, height: 930, minWidth: 900, minHeight: 640, backgroundColor: '#f7f8fc', show: false, frame: process.platform === 'darwin',
+  const theme = store.getSettings().theme;
+  const backgroundColor = theme === 'dark' || (theme === 'system' && nativeTheme.shouldUseDarkColors) ? '#131720' : '#f7f8fc';
+  win = new BrowserWindow({ width: 1380, height: 930, minWidth: 900, minHeight: 640, backgroundColor, show: false, frame: process.platform === 'darwin',
     title: '云桥 AI · yunqiao.me', titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden', ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 16, y: 20 } } : {}),
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, offscreen: process.env.AURORA_UI_TEST === '1' && !app.isPackaged, backgroundThrottling: false },
   });
