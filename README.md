@@ -4,11 +4,11 @@
 
 从你正在使用的客户端开始：选择 Claude Code、兼容的 ChatGPT 桌面版或 Codex CLI，连接自己的 API 供应商，选好模型，预览后应用。支持国内外模型服务与自定义中转地址。新安装默认使用 **深夜** 主题，可在设置中切换为云白或跟随系统；升级保留已保存的主题选择。
 
-[下载 0.6.3](https://github.com/jxb412/yunqiao.me/releases/tag/v0.6.3) · [安装说明](INSTALLATION.md) · [使用指南](USER-GUIDE.md) · [反馈问题](https://github.com/jxb412/yunqiao.me/issues) · [用户讨论](https://github.com/jxb412/yunqiao.me/discussions)
+[下载 0.6.4](https://github.com/jxb412/yunqiao.me/releases/tag/v0.6.4) · [安装说明](INSTALLATION.md) · [使用指南](USER-GUIDE.md) · [反馈问题](https://github.com/jxb412/yunqiao.me/issues) · [用户讨论](https://github.com/jxb412/yunqiao.me/discussions)
 
-> 文档更新于 **2026 年 11 月 16 日**。**0.6.3 已发布**，Windows 与 macOS 安装包可从 [Releases 下载页](https://github.com/jxb412/yunqiao.me/releases/tag/v0.6.3)直接下载。旧版可能不包含下文全部功能。
+> 文档更新于 **2026 年 11 月 16 日**。**0.6.4 已发布**，Windows 与 macOS 安装包可从 [Releases 下载页](https://github.com/jxb412/yunqiao.me/releases/tag/v0.6.4)直接下载。旧版可能不包含下文全部功能。
 
-**本次更新：** 历史会话新增 Claude 存储来源角标与筛选，并可发现本机 Claude Desktop 会话；能明确匹配正文时直接阅读，只有会话记录时说明原因。同时修复 Windows 的 **新终端打开**，确认交互终端已建立后再报告成功。完整说明见 [0.6.3 版本说明](docs/RELEASE-0.6.3.md)。
+**本次更新：** 修正插件中心启动 Windows 商店版 ChatGPT / Codex 桌面客户端的方式，处理程序包身份相关错误；完善启动等待、兼容重试和连接失败指引。完整说明见 [0.6.4 版本说明](docs/RELEASE-0.6.4.md)。
 
 ![云桥 AI 客户端工作台](docs/images/clients-v0.6.png)
 
@@ -56,14 +56,14 @@
 
 ## 下载与安装
 
-| 平台 | 0.6.3 下载 |
+| 平台 | 0.6.4 下载 |
 | --- | --- |
-| Windows x64 | [安装版](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.3/YunQiaoAI-0.6.3-win-x64-setup.exe) · [免安装版](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.3/YunQiaoAI-0.6.3-win-x64-portable.exe) · [完整解压版](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.3/YunQiaoAI-0.6.3-win-x64.zip) |
-| macOS Apple Silicon | [DMG](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.3/YunQiaoAI-0.6.3-mac-arm64.dmg) · [ZIP](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.3/YunQiaoAI-0.6.3-mac-arm64.zip)，适用于 Apple M 系列芯片 |
-| macOS Intel | [DMG](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.3/YunQiaoAI-0.6.3-mac-x64.dmg) · [ZIP](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.3/YunQiaoAI-0.6.3-mac-x64.zip)，适用于 Intel 处理器 |
+| Windows x64 | [安装版](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.4/YunQiaoAI-0.6.4-win-x64-setup.exe) · [免安装版](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.4/YunQiaoAI-0.6.4-win-x64-portable.exe) · [完整解压版](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.4/YunQiaoAI-0.6.4-win-x64.zip) |
+| macOS Apple Silicon | [DMG](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.4/YunQiaoAI-0.6.4-mac-arm64.dmg) · [ZIP](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.4/YunQiaoAI-0.6.4-mac-arm64.zip)，适用于 Apple M 系列芯片 |
+| macOS Intel | [DMG](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.4/YunQiaoAI-0.6.4-mac-x64.dmg) · [ZIP](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.4/YunQiaoAI-0.6.4-mac-x64.zip)，适用于 Intel 处理器 |
 | iPhone / iPad | 目前没有可直接安装的正式 App，可通过浏览器连接电脑端 |
 
-普通用户请下载上表安装包；[Releases 的 Assets](https://github.com/jxb412/yunqiao.me/releases/tag/v0.6.3)同时提供 [SHA256 校验清单](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.3/SHA256SUMS.txt)。具体文件名和步骤见[安装说明](INSTALLATION.md)。[GitHub Actions](https://github.com/jxb412/yunqiao.me/actions/workflows/build.yml) 中的产物用于体验开发构建，可能包含尚未正式发布的改动。
+普通用户请下载上表安装包；[Releases 的 Assets](https://github.com/jxb412/yunqiao.me/releases/tag/v0.6.4)同时提供 [SHA256 校验清单](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.4/SHA256SUMS.txt)。具体文件名和步骤见[安装说明](INSTALLATION.md)。[GitHub Actions](https://github.com/jxb412/yunqiao.me/actions/workflows/build.yml) 中的产物用于体验开发构建，可能包含尚未正式发布的改动。
 
 Windows ZIP 版需完整解压后双击同目录的 `YunQiaoAI.exe`；portable 启动会显示准备提示。macOS 将 `YunQiaoAI.app` 拖入“应用程序”，未签名包的首次打开方法见[安装说明](INSTALLATION.md#安装和首次打开)。更新或切换包形式会保留已有本机数据。
 
@@ -74,13 +74,15 @@ Windows ZIP 版需完整解压后双击同目录的 `YunQiaoAI.exe`；portable �
 安装 [Node.js 22.x](https://nodejs.org/)（22.13 或更新版本，含 npm）和 [Git](https://git-scm.com/downloads) 后，可通过源码运行桌面应用：
 
 ```bash
-git clone --branch v0.6.3 --depth 1 https://github.com/jxb412/yunqiao.me.git yunqiao.me
+git clone --branch v0.6.4 --depth 1 https://github.com/jxb412/yunqiao.me.git yunqiao.me
 cd yunqiao.me
 npm install --include=dev
 npm start
 ```
 
 Windows PowerShell 请将最后两条命令写为 `npm.cmd install --include=dev` 和 `npm.cmd start`。首次安装需联网下载依赖；以后在保留的源码目录中运行启动命令，不会生成系统快捷方式。Windows、macOS 的完整命令与更新方法见 [npm 源码安装说明](INSTALLATION.md#npm-从源码安装运行)。
+
+版本说明：[0.6.4](docs/RELEASE-0.6.4.md) · [0.6.3](docs/RELEASE-0.6.3.md) · [0.6.2](docs/RELEASE-0.6.2.md) · [0.6.1](docs/RELEASE-0.6.1.md)。
 
 ## 数据与反馈
 
