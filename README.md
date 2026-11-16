@@ -69,6 +69,19 @@ Windows ZIP 版需完整解压后双击同目录的 `YunQiaoAI.exe`；portable �
 
 电脑端已运行时，可用手机浏览器访问远程控制台。局域网连接方法见[使用指南](USER-GUIDE.md)。
 
+### npm 从源码安装
+
+安装 [Node.js 22.x](https://nodejs.org/)（22.13 或更新版本，含 npm）和 [Git](https://git-scm.com/downloads) 后，可通过源码运行桌面应用：
+
+```bash
+git clone --branch v0.6.2 --depth 1 https://github.com/jxb412/yunqiao.me.git yunqiao.me
+cd yunqiao.me
+npm install --include=dev
+npm start
+```
+
+Windows PowerShell 请将最后两条命令写为 `npm.cmd install --include=dev` 和 `npm.cmd start`。首次安装需联网下载依赖；以后在保留的源码目录中运行启动命令，不会生成系统快捷方式。Windows、macOS 的完整命令与更新方法见 [npm 源码安装说明](INSTALLATION.md#npm-从源码安装运行)。
+
 ## 数据与反馈
 
 供应商密钥和配置保存在本机。云端目录提供公开的厂商信息；模型请求发送到你选择的服务。导出的配置包含密钥，请妥善保管。余额以供应商返回为准，用量费用按配置价格估算。

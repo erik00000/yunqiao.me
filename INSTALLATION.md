@@ -85,6 +85,42 @@ xattr -cr "/Applications/YunQiaoAI.app"
 - 点击命令行客户端的 **新终端打开** 时，macOS 可能询问是否允许云桥控制 Terminal；允许后才能自动打开命令行工具。
 - 开启关闭窗口后保留运行时，关窗口不会停止网关。要完全退出，可按 **⌘Q** 或使用应用退出菜单。
 
+## npm 从源码安装运行
+
+这种方式会下载项目源码、安装依赖，再启动云桥桌面应用。请先安装 **Node.js 22.x（22.13 或更新版本）**（安装时包含 npm）和 **Git**；本项目目前没有发布 npm 全局安装包。
+
+### Windows PowerShell
+
+打开 PowerShell，进入准备存放项目的目录，依次执行：
+
+```powershell
+git clone --branch v0.6.2 --depth 1 https://github.com/jxb412/yunqiao.me.git yunqiao.me
+cd yunqiao.me
+npm.cmd install --include=dev
+npm.cmd start
+```
+
+这里使用 `npm.cmd`，可避免 PowerShell 对 `npm.ps1` 的执行策略限制，无需修改系统执行策略。
+
+### macOS 终端
+
+打开“终端”，进入准备存放项目的目录，依次执行：
+
+```bash
+git clone --branch v0.6.2 --depth 1 https://github.com/jxb412/yunqiao.me.git yunqiao.me
+cd yunqiao.me
+npm install --include=dev
+npm start
+```
+
+首次安装需联网下载依赖和 Electron 运行文件。启动命令会构建所需资源并打开桌面窗口，请等待终端完成；若提示找不到 `node`、`npm` 或 `git`，确认已安装对应工具后重新打开终端。若安装时出现 `electron/install.js` 下载超时，请检查终端能否访问 GitHub 下载服务，网络恢复后重新执行安装命令；不要添加 `--ignore-scripts` 跳过下载，否则应用无法启动。
+
+### 再次启动与更新
+
+请保留下载的 `yunqiao.me` 源码目录。以后在该目录中执行 `npm.cmd start`（Windows PowerShell）或 `npm start`（macOS）即可打开；这种运行方式不会生成系统安装包或快捷方式。
+
+后续更新时，可从[发布页](https://github.com/jxb412/yunqiao.me/releases)选择新版本，按照上面的步骤将对应标签克隆到新的目录，再安装依赖并启动。也可在原源码目录运行 `git fetch --tags`，用 `git switch --detach 版本标签` 切换到选定的发布版本（将“版本标签”替换为实际的 `v` 开头标签），然后重新执行依赖安装和启动命令。保留自行修改的源码后再切换版本；发布标签安装请使用上述手动更新步骤，应用内的 Git 更新按钮不适用，也不要直接执行 `git pull`。
+
 ## 首次连接模型
 
 1. 打开 **客户端接入**，找到要配置的客户端，点击 **开始配置**。
