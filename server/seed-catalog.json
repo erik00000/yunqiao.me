@@ -12,7 +12,7 @@
       "color": "#6d8cff",
       "icon": "🌉",
       "docs": "https://api.yunqiao.me",
-      "note": "云桥AI 官方中转 · 新用户注册送 $10 · 登录后读取账号实际可用模型。",
+      "note": "云桥AI 官方中转 · 登录后查看会员活动与账号实际可用模型。",
       "models": [
         {
           "id": "gpt-6.1-sol"

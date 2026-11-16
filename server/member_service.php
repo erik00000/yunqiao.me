@@ -16,7 +16,8 @@ final class MemberError extends RuntimeException
 
 final class MemberService
 {
-    public const GIFT_USD = 10;
+    private const GIFT_POLICY_KEY = 'welcome_gift_policy';
+    private const GIFT_AMOUNT_CHECK = "CHECK(typeof(amount_cents)='integer' AND amount_cents BETWEEN 1 AND 1000000)";
     private const CAMPAIGN = 'aurora-first-member-v1';
     private const SESSION_LIFETIME = 30 * 86400;
     private const REFRESH_MARGIN = 60;
@@ -55,9 +56,83 @@ final class MemberService
 
     public function publicConfig(): array
     {
-        return ['ok' => true, 'enabled' => $this->configured(), 'giftUsd' => self::GIFT_USD,
+        $policy = $this->configured() ? $this->adminGiftPolicy() : $this->defaultGiftPolicy();
+        return ['ok' => true, 'enabled' => $this->configured(), 'giftEnabled' => $this->configured() && $policy['enabled'],
+            'giftUsd' => $policy['amountUsd'], 'giftMessage' => $policy['message'], 'giftPolicyRevision' => $policy['revision'],
             'currency' => 'USD', 'accountUrl' => $this->validOrigin() ? $this->config['origin'] : 'https://api.yunqiao.me',
             'campaign' => self::CAMPAIGN];
+    }
+
+    private function defaultGiftPolicy(): array
+    {
+        return ['enabled' => true, 'amountCents' => 1000, 'amountUsd' => 10, 'message' => '', 'revision' => 1];
+    }
+
+    private function dollars(int $cents): int|float
+    {
+        return $cents % 100 === 0 ? intdiv($cents, 100) : $cents / 100;
+    }
+
+    /** Parse decimal text without floating-point rounding or exponent coercion. */
+    private function decimalCents($value): ?int
+    {
+        if (is_int($value)) $value = (string)$value;
+        if (!is_string($value) || !preg_match('/^(0|[1-9][0-9]{0,4})(?:\.([0-9]{1,2}))?$/D', $value, $match)) return null;
+        $cents = (int)$match[1] * 100 + (int)str_pad($match[2] ?? '', 2, '0');
+        return $cents >= 1 && $cents <= 1000000 ? $cents : null;
+    }
+
+    private function receiptCents($value): ?int
+    {
+        // JSON upstream amounts may be numbers; stringify the exact decoded value,
+        // never round a mismatched fraction into a valid receipt.
+        if (is_float($value)) {
+            if (!is_finite($value)) return null;
+            $value = json_encode($value, JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR);
+        }
+        return $this->decimalCents($value);
+    }
+
+    /** These administrator methods must remain behind the web session and CSRF gate. */
+    public function adminGiftPolicy(): array
+    {
+        if (!$this->configured()) throw new MemberError('MEMBERS_DISABLED', '会员服务尚未启用', 503);
+        $raw = $this->execute('SELECT value FROM member_meta WHERE key=?', [self::GIFT_POLICY_KEY])->fetchColumn();
+        try { $policy = $raw === false ? null : json_decode($raw, true, 16, JSON_THROW_ON_ERROR); }
+        catch (Throwable $error) { $policy = null; }
+        if (!is_array($policy) || !is_bool($policy['enabled'] ?? null) || !is_int($policy['amountCents'] ?? null)
+            || $policy['amountCents'] < 1 || $policy['amountCents'] > 1000000 || !is_string($policy['message'] ?? null)
+            || !is_int($policy['revision'] ?? null) || $policy['revision'] < 1 || !$this->validGiftMessage($policy['message'])) {
+            throw new MemberError('STORAGE_UNAVAILABLE', '赠金设置记录异常，请联系管理员恢复备份', 503);
+        }
+        return ['enabled' => $policy['enabled'], 'amountCents' => $policy['amountCents'],
+            'amountUsd' => $this->dollars($policy['amountCents']), 'message' => $policy['message'], 'revision' => $policy['revision']];
+    }
+
+    private function validGiftMessage(string $message): bool
+    {
+        return strlen($message) <= 800 && preg_match('//u', $message) === 1
+            && !preg_match('/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/', $message)
+            && preg_match_all('/./us', $message) <= 200;
+    }
+
+    public function adminSaveGiftPolicy(array $input): array
+    {
+        if (!$this->configured()) throw new MemberError('MEMBERS_DISABLED', '会员服务尚未启用', 503);
+        if (array_diff(array_keys($input), ['enabled', 'amountUsd', 'message', 'revision'])
+            || !is_bool($input['enabled'] ?? null) || !is_string($input['amountUsd'] ?? null)
+            || ($cents = $this->decimalCents($input['amountUsd'])) === null
+            || (array_key_exists('message', $input) && !is_string($input['message'])) || !$this->validGiftMessage($input['message'] ?? '')
+            || !is_int($input['revision'] ?? null) || $input['revision'] < 1 || $input['revision'] >= PHP_INT_MAX) {
+            throw new MemberError('INVALID_GIFT_POLICY', '请输入有效开关、0.01 至 10000 美元的金额（最多两位小数）和不超过 200 字的说明');
+        }
+        return $this->transaction(function () use ($input, $cents): array {
+            $current = $this->adminGiftPolicy();
+            if ($current['revision'] !== $input['revision']) throw new MemberError('GIFT_POLICY_CONFLICT', '赠金设置已被其他管理员更新，请刷新后重试', 409);
+            $next = ['enabled' => $input['enabled'], 'amountCents' => $cents, 'message' => $input['message'] ?? '', 'revision' => $current['revision'] + 1];
+            $this->execute('UPDATE member_meta SET value=? WHERE key=?', [json_encode($next, JSON_THROW_ON_ERROR), self::GIFT_POLICY_KEY]);
+            return $this->adminGiftPolicy();
+        });
     }
 
     private function validOrigin(): bool
@@ -131,13 +206,14 @@ final class MemberService
                     CREATE TABLE IF NOT EXISTS installations (id_hash TEXT PRIMARY KEY, proof_hash TEXT NOT NULL, created_at INTEGER NOT NULL);
                     CREATE TABLE IF NOT EXISTS member_sessions (token_hash TEXT PRIMARY KEY, installation_hash TEXT NOT NULL REFERENCES installations(id_hash), user_id INTEGER NOT NULL, profile TEXT NOT NULL, upstream_token TEXT NOT NULL, expires_at INTEGER NOT NULL);
                     CREATE INDEX IF NOT EXISTS member_sessions_expiry ON member_sessions(expires_at);
-                    CREATE TABLE IF NOT EXISTS welcome_grants (user_id INTEGER PRIMARY KEY, installation_hash TEXT NOT NULL UNIQUE REFERENCES installations(id_hash), code TEXT NOT NULL UNIQUE, status TEXT NOT NULL CHECK(status IN (\'pending\',\'claimed\',\'review\')), amount_cents INTEGER NOT NULL CHECK(amount_cents=1000), created_at INTEGER NOT NULL, claimed_at INTEGER, upstream_id INTEGER, last_error TEXT);
+                    CREATE TABLE IF NOT EXISTS welcome_grants (user_id INTEGER PRIMARY KEY, installation_hash TEXT NOT NULL UNIQUE REFERENCES installations(id_hash), code TEXT NOT NULL UNIQUE, status TEXT NOT NULL CHECK(status IN (\'pending\',\'claimed\',\'review\')), amount_cents INTEGER NOT NULL ' . self::GIFT_AMOUNT_CHECK . ', created_at INTEGER NOT NULL, claimed_at INTEGER, upstream_id INTEGER, last_error TEXT);
                     CREATE TABLE IF NOT EXISTS member_rate_limits (key TEXT PRIMARY KEY, window_start INTEGER NOT NULL, attempts INTEGER NOT NULL);');
                     $statement = $db->prepare("INSERT INTO member_meta(key,value) VALUES('upstream_origin',?)");
                     $statement->execute([$this->config['origin']]);
                     $db->exec('COMMIT');
                 } catch (Throwable $error) { $db->exec('ROLLBACK'); throw $error; }
             }
+            $this->initializeGiftPolicy($db, $dir, $existing);
             // Migrate authentication metadata only after verifying the complete monetary ledger.
             // Old sessions have no recoverable refresh token and retain their original expiry.
             $columns = array_column($db->query('PRAGMA table_info(member_sessions)')->fetchAll(PDO::FETCH_ASSOC), 'name');
@@ -164,6 +240,119 @@ final class MemberService
             // Cache only a fully verified and durably initialized connection.
             return $this->db = $db;
         } finally { flock($lock, LOCK_UN); fclose($lock); }
+    }
+
+    /** Called only with members-init.lock held and after the complete ledger was verified. */
+    private function initializeGiftPolicy(PDO $db, string $dir, bool $existing): void
+    {
+        $version = $db->query("SELECT value FROM member_meta WHERE key='gift_policy_version'")->fetchColumn();
+        $schema = (string)$db->query("SELECT sql FROM sqlite_master WHERE type='table' AND name='welcome_grants'")->fetchColumn();
+        $hasPolicy = $db->query("SELECT value FROM member_meta WHERE key='" . self::GIFT_POLICY_KEY . "'")->fetchColumn() !== false;
+        if ($version !== false) {
+            if ($version !== '1' || !str_contains($schema, self::GIFT_AMOUNT_CHECK) || !$hasPolicy) {
+                throw new MemberError('STORAGE_UNAVAILABLE', '赠金账本结构异常，请联系管理员恢复备份', 503);
+            }
+            return;
+        }
+        if ($hasPolicy) throw new MemberError('STORAGE_UNAVAILABLE', '赠金设置版本记录缺失，请联系管理员恢复备份', 503);
+        $replacement = preg_replace('/CHECK\s*\(\s*amount_cents\s*=\s*1000\s*\)/i', self::GIFT_AMOUNT_CHECK, $schema, -1, $count);
+        if ($count === 0 && ($existing || !str_contains($schema, self::GIFT_AMOUNT_CHECK))) {
+            throw new MemberError('STORAGE_UNAVAILABLE', '赠金账本金额约束异常，请联系管理员恢复备份', 503);
+        }
+        if ($count > 1) throw new MemberError('STORAGE_UNAVAILABLE', '赠金账本金额约束异常，请联系管理员恢复备份', 503);
+        $backupAttached = false;
+        $begun = false;
+        $foreignKeys = (int)$db->query('PRAGMA foreign_keys')->fetchColumn();
+        $legacyAlter = (int)$db->query('PRAGMA legacy_alter_table')->fetchColumn();
+        try {
+            if ($count === 1) {
+                if ($db->query('PRAGMA quick_check')->fetchColumn() !== 'ok' || $db->query('PRAGMA foreign_key_check')->fetch()) {
+                    throw new RuntimeException('Ledger integrity failure');
+                }
+                $backupDir = $dir . '/backups';
+                if (is_link($backupDir) || (file_exists($backupDir) && !is_dir($backupDir))
+                    || (!is_dir($backupDir) && !@mkdir($backupDir, 0700)) || !@chmod($backupDir, 0700)) {
+                    throw new RuntimeException('Private backup directory unavailable');
+                }
+                $backup = $backupDir . '/members-before-gift-policy-' . gmdate('Ymd-His') . '-' . bin2hex(random_bytes(8)) . '.sqlite';
+                // VACUUM INTO includes committed WAL pages in one coherent SQLite snapshot.
+                // It never opens/truncates an existing backup and must succeed before mutation.
+                $db->exec('VACUUM INTO ' . $db->quote($backup));
+                if (!is_file($backup) || is_link($backup) || !@chmod($backup, 0600)
+                    || (PHP_OS_FAMILY !== 'Windows' && (fileperms($backup) & 0077) !== 0)) {
+                    throw new RuntimeException('Private SQLite backup unavailable');
+                }
+                $backupHandle = @fopen($backup, 'r+b');
+                if (!$backupHandle) throw new RuntimeException('Backup verification unavailable');
+                try { if (!fsync($backupHandle)) throw new RuntimeException('Backup persistence failed'); }
+                finally { fclose($backupHandle); }
+                $db->exec('ATTACH DATABASE ' . $db->quote($backup) . ' AS gift_backup');
+                $backupAttached = true;
+                if ($db->query('PRAGMA gift_backup.quick_check')->fetchColumn() !== 'ok') throw new RuntimeException('Backup integrity failure');
+                // Foreign keys are checked again before commit. Disabling enforcement prevents
+                // DROP TABLE from cascading into other ledger tables during the schema swap.
+                $db->exec('PRAGMA foreign_keys=OFF');
+                $db->exec('PRAGMA legacy_alter_table=ON');
+            }
+            $db->exec('BEGIN IMMEDIATE');
+            $begun = true;
+            if ($count === 1) {
+                $beforeSchema = $db->query('SELECT type,name,tbl_name,sql FROM main.sqlite_master ORDER BY type,name')->fetchAll(PDO::FETCH_ASSOC);
+                $backupSchema = $db->query('SELECT type,name,tbl_name,sql FROM gift_backup.sqlite_master ORDER BY type,name')->fetchAll(PDO::FETCH_ASSOC);
+                if ($beforeSchema !== $backupSchema) throw new RuntimeException('Ledger changed since backup');
+                // Existing workers can still use an already-open PDO. A post-backup write must
+                // make us retry, never migrate newer data using an out-of-date recovery copy.
+                $tables = $db->query("SELECT name FROM main.sqlite_master WHERE type='table'")->fetchAll(PDO::FETCH_COLUMN);
+                foreach ($tables as $table) if ($this->tableDigest($db, 'main', $table) !== $this->tableDigest($db, 'gift_backup', $table)) throw new RuntimeException('Ledger changed since backup');
+                $objects = $db->query("SELECT sql FROM sqlite_master WHERE tbl_name='welcome_grants' AND type IN ('index','trigger') AND sql IS NOT NULL ORDER BY type,name")->fetchAll(PDO::FETCH_COLUMN);
+                $columns = $db->query('PRAGMA table_xinfo(welcome_grants)')->fetchAll(PDO::FETCH_ASSOC);
+                $writeColumns = array_map(static fn(array $column): string => '"' . str_replace('"', '""', $column['name']) . '"',
+                    array_values(array_filter($columns, static fn(array $column): bool => (int)$column['hidden'] === 0)));
+                $temporary = 'welcome_grants_gift_migration';
+                if ($db->query("SELECT 1 FROM sqlite_master WHERE name='" . $temporary . "'")->fetchColumn()) throw new RuntimeException('Migration table conflict');
+                $create = preg_replace('/^CREATE\s+TABLE\s+(?:"welcome_grants"|`welcome_grants`|\[welcome_grants\]|welcome_grants)(?=\s*\()/i', 'CREATE TABLE ' . $temporary, $replacement, 1, $renamed);
+                if ($renamed !== 1) throw new RuntimeException('Unsupported grant schema');
+                $db->exec($create);
+                $columnList = implode(',', $writeColumns);
+                $db->exec('INSERT INTO ' . $temporary . '(' . $columnList . ') SELECT ' . $columnList . ' FROM welcome_grants');
+                $db->exec('DROP TABLE welcome_grants');
+                $db->exec('ALTER TABLE ' . $temporary . ' RENAME TO welcome_grants');
+                foreach ($objects as $sql) $db->exec($sql);
+                foreach ($tables as $table) if ($this->tableDigest($db, 'main', $table) !== $this->tableDigest($db, 'gift_backup', $table)) throw new RuntimeException('Migrated ledger data differs');
+                $otherSchema = static fn(array $rows): array => array_values(array_filter($rows, static fn(array $row): bool => !($row['type'] === 'table' && $row['name'] === 'welcome_grants')));
+                if ($otherSchema($beforeSchema) !== $otherSchema($db->query('SELECT type,name,tbl_name,sql FROM main.sqlite_master ORDER BY type,name')->fetchAll(PDO::FETCH_ASSOC))) {
+                    throw new RuntimeException('Unrelated ledger schema changed');
+                }
+                if ($db->query('PRAGMA foreign_key_check')->fetch() || $db->query('PRAGMA quick_check')->fetchColumn() !== 'ok') {
+                    throw new RuntimeException('Migrated ledger verification failed');
+                }
+            }
+            $policy = $this->defaultGiftPolicy();
+            unset($policy['amountUsd']);
+            $statement = $db->prepare('INSERT INTO member_meta(key,value) VALUES(?,?)');
+            $statement->execute([self::GIFT_POLICY_KEY, json_encode($policy, JSON_THROW_ON_ERROR)]);
+            $db->exec("INSERT INTO member_meta(key,value) VALUES('gift_policy_version','1')");
+            $db->exec('COMMIT');
+            $begun = false;
+        } catch (Throwable $error) {
+            if ($begun) $db->exec('ROLLBACK');
+            throw new MemberError('STORAGE_UNAVAILABLE', '赠金账本升级未完成，原账本已保留，请联系管理员检查备份后重试', 503);
+        } finally {
+            if ($backupAttached) $db->exec('DETACH DATABASE gift_backup');
+            $db->exec('PRAGMA foreign_keys=' . $foreignKeys);
+            $db->exec('PRAGMA legacy_alter_table=' . $legacyAlter);
+        }
+    }
+
+    /** Order-independent, duplicate-sensitive snapshot of exact SQLite cell values. */
+    private function tableDigest(PDO $db, string $schema, string $table): string
+    {
+        $rows = [];
+        $statement = $db->query('SELECT * FROM ' . $schema . '."' . str_replace('"', '""', $table) . '"');
+        while ($row = $statement->fetch(PDO::FETCH_NUM)) $rows[] = hash('sha256', serialize($row));
+        $statement->closeCursor();
+        sort($rows, SORT_STRING);
+        return hash('sha256', implode('', $rows));
     }
 
     private function execute(string $sql, array $parameters = []): PDOStatement
@@ -480,7 +669,7 @@ final class MemberService
     {
         $grant = $this->execute('SELECT * FROM welcome_grants WHERE user_id=?', [$userId])->fetch(PDO::FETCH_ASSOC);
         if ($grant) {
-            $result = ['status' => $grant['status'], 'amountUsd' => self::GIFT_USD, 'currency' => 'USD', 'campaign' => self::CAMPAIGN];
+            $result = ['status' => $grant['status'], 'amountUsd' => $this->dollars((int)$grant['amount_cents']), 'currency' => 'USD', 'campaign' => self::CAMPAIGN];
             if ($grant['status'] === 'claimed') {
                 $result['code'] = $grant['code'];
                 $result['claimedAt'] = gmdate('c', (int)$grant['claimed_at']);
@@ -489,15 +678,17 @@ final class MemberService
             return $result;
         }
         $used = $this->execute('SELECT 1 FROM welcome_grants WHERE installation_hash=?', [$installation])->fetchColumn();
-        return ['status' => $used ? 'ineligible' : 'eligible', 'amountUsd' => self::GIFT_USD,
+        $policy = $this->adminGiftPolicy();
+        return ['status' => $used ? 'ineligible' : ($policy['enabled'] ? 'eligible' : 'disabled'), 'amountUsd' => $policy['amountUsd'],
             'currency' => 'USD', 'campaign' => self::CAMPAIGN,
-            'message' => $used ? '此安装已为其他会员领取过首次使用赠金' : '首次绑定会员可领取 $10 体验额度'];
+            'message' => $used ? '此安装已为其他会员领取过首次使用赠金' : ($policy['message'] !== '' ? $policy['message']
+                : ($policy['enabled'] ? '首次绑定会员可领取 $' . $policy['amountUsd'] . ' 体验额度' : '首次使用赠金暂未开放，会员登录和客户端配置仍可正常使用'))];
     }
 
     private function validateReceipt(array $grant, array $receipt): void
     {
         if (($receipt['code'] ?? '') !== $grant['code'] || ($receipt['type'] ?? '') !== 'balance'
-            || !is_numeric($receipt['value'] ?? null) || (float)$receipt['value'] !== (float)self::GIFT_USD
+            || $this->receiptCents($receipt['value'] ?? null) !== (int)$grant['amount_cents']
             || ($receipt['used_by'] ?? null) !== (int)$grant['user_id'] || ($receipt['status'] ?? '') !== 'used'
             || !is_int($receipt['id'] ?? null) || $receipt['id'] <= 0) {
             $this->execute("UPDATE welcome_grants SET status='review',last_error='RECEIPT_MISMATCH' WHERE user_id=? AND code=? AND status='pending'", [$grant['user_id'], $grant['code']]);
@@ -554,7 +745,7 @@ final class MemberService
             $this->fulfill($current, $readOnly);
             return;
         }
-        if ($receipt !== null && (($receipt['type'] ?? '') !== 'balance' || (float)($receipt['value'] ?? 0) !== (float)self::GIFT_USD)) {
+        if ($receipt !== null && (($receipt['type'] ?? '') !== 'balance' || $this->receiptCents($receipt['value'] ?? null) !== (int)$grant['amount_cents'])) {
             $this->validateReceipt($grant, $receipt);
         }
         if ($receipt === null || ($receipt['status'] ?? '') !== 'used') {
@@ -563,7 +754,7 @@ final class MemberService
             if ($latest['code'] !== $grant['code'] || $latest['status'] !== $grant['status']) { $this->fulfill($latest); return; }
             $result = $this->request('POST', '/admin/redeem-codes/create-and-redeem',
                 array_merge($headers, ['Idempotency-Key: ' . $grant['code']]),
-                ['code' => $grant['code'], 'type' => 'balance', 'value' => self::GIFT_USD, 'user_id' => (int)$grant['user_id'], 'notes' => self::CAMPAIGN]);
+                ['code' => $grant['code'], 'type' => 'balance', 'value' => $this->dollars((int)$grant['amount_cents']), 'user_id' => (int)$grant['user_id'], 'notes' => self::CAMPAIGN]);
             $receipt = is_array($result['redeem_code'] ?? null) ? $result['redeem_code'] : [];
         }
         $this->validateReceipt($grant, $receipt);
@@ -577,8 +768,10 @@ final class MemberService
         if (!$this->configured()) return array_merge($configuration, ['grants' => [], 'totals' => ['claimed' => 0, 'pending' => 0, 'review' => 0, 'amountUsd' => 0]]);
         $totals = ['claimed' => 0, 'pending' => 0, 'review' => 0, 'amountUsd' => 0];
         foreach ($this->database()->query('SELECT status,COUNT(*) AS count FROM welcome_grants GROUP BY status')->fetchAll(PDO::FETCH_ASSOC) as $row) $totals[$row['status']] = (int)$row['count'];
-        $totals['amountUsd'] = $totals['claimed'] * self::GIFT_USD;
-        $grants = $this->database()->query('SELECT user_id AS userId,status,created_at AS createdAt,claimed_at AS claimedAt,last_error AS lastError,upstream_id AS upstreamId FROM welcome_grants ORDER BY created_at DESC LIMIT 200')->fetchAll(PDO::FETCH_ASSOC);
+        $totals['amountUsd'] = $this->dollars((int)$this->database()->query("SELECT COALESCE(SUM(amount_cents),0) FROM welcome_grants WHERE status='claimed'")->fetchColumn());
+        $grants = $this->database()->query('SELECT user_id AS userId,status,amount_cents AS amountCents,created_at AS createdAt,claimed_at AS claimedAt,last_error AS lastError,upstream_id AS upstreamId FROM welcome_grants ORDER BY created_at DESC LIMIT 200')->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($grants as &$grant) $grant['amountUsd'] = $this->dollars((int)$grant['amountCents']);
+        unset($grant);
         return array_merge($configuration, ['totals' => $totals, 'grants' => $grants]);
     }
 
@@ -640,7 +833,7 @@ final class MemberService
         if ($action === 'config') return $this->publicConfig();
         if (!$this->configured()) throw new MemberError('MEMBERS_DISABLED', '会员服务尚未启用', 503);
         // Reject authoritative fields outright instead of accidentally accepting a future UI field.
-        foreach (['userId', 'user_id', 'amount', 'amountUsd', 'value', 'code', 'adminKey', 'origin'] as $forbidden) {
+        foreach (['userId', 'user_id', 'amount', 'amountUsd', 'amountCents', 'giftUsd', 'giftEnabled', 'giftMessage', 'giftPolicyRevision', 'campaign', 'value', 'code', 'adminKey', 'origin'] as $forbidden) {
             if (array_key_exists($forbidden, $body)) throw new MemberError('INVALID_FIELDS', '请求包含不允许的会员字段');
         }
         if (in_array($action, ['login', 'login2fa', 'bind'], true)) {
@@ -696,9 +889,13 @@ final class MemberService
             if ($this->execute('SELECT 1 FROM welcome_grants WHERE installation_hash=?', [$installation])->fetchColumn()) {
                 throw new MemberError('INSTALLATION_ALREADY_CLAIMED', '此安装已领取过首次使用赠金', 409);
             }
+            // Policy and once-per-account/install reservation share this write lock. A policy
+            // update cannot change an already-reserved amount or cancel recovery of that grant.
+            $policy = $this->adminGiftPolicy();
+            if (!$policy['enabled']) throw new MemberError('GIFT_DISABLED', '首次使用赠金暂未开放，会员登录和客户端配置仍可正常使用', 409);
             // Stable across every retry and process crash; committed before any external side effect.
             $code = $this->welcomeCode($userId);
-            $this->execute('INSERT INTO welcome_grants(user_id,installation_hash,code,status,amount_cents,created_at) VALUES(?,?,?,\'pending\',1000,?)', [$userId, $installation, $code, time()]);
+            $this->execute('INSERT INTO welcome_grants(user_id,installation_hash,code,status,amount_cents,created_at) VALUES(?,?,?,\'pending\',?,?)', [$userId, $installation, $code, $policy['amountCents'], time()]);
             return $this->execute('SELECT * FROM welcome_grants WHERE user_id=?', [$userId])->fetch(PDO::FETCH_ASSOC);
         });
         if ($grant['status'] !== 'claimed') {
@@ -709,7 +906,7 @@ final class MemberService
                 throw $error;
             }
         }
-        // A receipt is authoritative; balance is refreshed separately and never inferred by adding 10.
+        // A receipt is authoritative; balance is refreshed separately, never inferred from a gift.
         try { $profile = $this->profile($this->unseal($session['upstream_token'])); } catch (MemberError $ignored) { }
         $this->execute('UPDATE member_sessions SET profile=? WHERE token_hash=?', [json_encode($profile, JSON_THROW_ON_ERROR), $session['token_hash']]);
         return ['ok' => true, 'member' => $profile, 'gift' => $this->gift($userId, $installation)];

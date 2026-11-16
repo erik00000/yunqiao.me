@@ -37,7 +37,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     color: '#6d8cff',
     icon: '🌉',
     docs: 'https://api.yunqiao.me',
-    note: "云桥AI 官方中转 · 新用户注册送 $10 · 登录后读取账号实际可用模型。",
+    note: "云桥AI 官方中转 · 登录后查看会员活动与账号实际可用模型。",
     models: [
       {
         "id": "gpt-6.1-sol"
@@ -1162,7 +1162,7 @@ export const PRESET_REGIONS: Record<string, string> = {
 /**
  * 推荐顺序：客户端视角的默认序 —— ChatGPT 系(OpenAI/Codex) 最前，
  * 其次 Claude，再次 DeepSeek，然后才是其它国内/海外/本地。
- * 云桥AI 官方中转始终排第一（新用户注册赠送 $10）。
+ * 云桥AI 官方中转在中转服务组内优先展示。
  */
 const PRESET_RANK: Record<string, number> = {
   yunqiao: 0,

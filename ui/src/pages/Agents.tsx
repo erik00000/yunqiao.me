@@ -48,7 +48,7 @@ export default function Agents({ state, reload, go }: PageProps) {
   return <>
     <div className="page-head"><div><div className="eyebrow">YOUR AI, CONNECTED</div><h1>连接你的 AI 客户端<span className="heading-dot">.</span></h1><p>中转站一键配置：选择客户端、填入 API 地址与密钥，应用后重启即可开始。</p></div><div className="actions"><Btn disabled={busy} onClick={detect}><Ico name="refresh" size={14} />{busy ? '正在检测…' : '检测本地客户端'}</Btn></div></div>
     {detectError && <div className="notice warning" role="alert">{detectError}<Btn size="sm" onClick={() => go('providers')}>查看本机扫描详情</Btn></div>}
-    {!state.providers.length && !!window.aurora && <div className="notice"><Ico name="bolt" /><span className="grow">第一次使用云桥？绑定平台会员，领取 $10 新客额度。</span><Btn size="sm" onClick={() => go('membership')}>领取新客额度 →</Btn></div>}
+    {!state.providers.length && !!window.aurora && <div className="notice"><Ico name="bolt" /><span className="grow">第一次使用云桥？绑定平台会员，查看新客活动与可领取额度。</span><Btn size="sm" onClick={() => go('membership')}>查看会员活动 →</Btn></div>}
     {Object.values(state.detected).some(item => item.detecting) && <p className="hint" role="status">正在后台检测已安装的客户端，你可以先选择客户端并预览配置。</p>}
     <ClientConnectionOverview state={state} go={go} onConfigure={setSelected} />
     {connected === 0 && <section className="connect-hero">

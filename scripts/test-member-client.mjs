@@ -26,7 +26,9 @@ function freshApi() { delete require.cache[require.resolve(bundle)]; return requ
 function fixture(label) {
   const directory = path.join(isolated, label); fs.mkdirSync(directory, { recursive: true });
   const encryptionKey = randomBytes(32);
-  const control = { secure: true, activeUser: 1, expired: '', expiredHtml: false, offlineConfig: false, ambiguousClaim: false, disabled: false, offlineLogout: false, alterKey: null, requests: [] };
+  const control = { secure: true, activeUser: 1, expired: '', expiredHtml: false, offlineConfig: false, ambiguousClaim: false, disabled: false, offlineLogout: false, alterKey: null, requests: [],
+    campaign: { giftEnabled: true, giftUsd: 5, currency: 'USD', giftMessage: 'Fixture campaign', giftPolicyRevision: 'policy-five' }, giftRecord: null };
+  const currentGift = () => control.giftRecord || { status: control.campaign.giftEnabled ? 'eligible' : 'disabled', amountUsd: control.campaign.giftUsd };
   const safeStorage = {
     isEncryptionAvailable: () => control.secure, getSelectedStorageBackend: () => 'gnome_libsecret',
     encryptString(value) { const iv = randomBytes(12); const cipher = createCipheriv('aes-256-gcm', encryptionKey, iv); return Buffer.concat([iv, cipher.update(value, 'utf8'), cipher.final(), cipher.getAuthTag()]); },
@@ -49,16 +51,21 @@ function fixture(label) {
     control.requests.push({ action, body, headers: { ...options.headers }, method: options.method });
     const respond = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } });
     if (control.expired === action) return control.expiredHtml ? new Response('<html>Unauthorized</html>', { status: 401 }) : respond({ ok: false, code: 'SESSION_EXPIRED', error: '登录已过期' }, 401);
-    if (action === 'config') { if (control.offlineConfig) throw new Error('configuration unavailable'); return respond({ ok: true, enabled: !control.disabled, giftUsd: 10 }); }
+    if (action === 'config') { if (control.offlineConfig) throw new Error('configuration unavailable'); return respond({ ok: true, enabled: !control.disabled, ...control.campaign }); }
     assert.match(options.headers['X-Aurora-Installation'], /^[a-f\d-]{36}$/); assert.match(options.headers['X-Aurora-Installation-Proof'], /^[a-f\d]{64}$/);
     if (['login', 'login2fa', 'bind'].includes(action)) {
       if (body.password === 'two-factor') return respond({ ok: true, requires2fa: true, tempToken: 'challenge-token', emailMasked: 'u***@test.invalid' });
-      return respond({ ok: true, sessionToken: String(control.activeUser).repeat(64), accessToken: 'upstream-access-must-stay-private', refreshToken: 'upstream-refresh-must-stay-private', access_token: 'upstream-access-alias-private', refresh_token: 'upstream-refresh-alias-private', canRefresh: action !== 'bind', expiresAt: new Date(Date.now() + 3600000).toISOString(), member: { id: control.activeUser, email: 'u@test.invalid', balance: 0 }, gift: { status: 'eligible', amountUsd: 10 } });
+      return respond({ ok: true, sessionToken: String(control.activeUser).repeat(64), accessToken: 'upstream-access-must-stay-private', refreshToken: 'upstream-refresh-must-stay-private', access_token: 'upstream-access-alias-private', refresh_token: 'upstream-refresh-alias-private', canRefresh: action !== 'bind', expiresAt: new Date(Date.now() + 3600000).toISOString(), member: { id: control.activeUser, email: 'u@test.invalid', balance: 0 }, gift: currentGift() });
     }
     assert.equal(options.headers.authorization, 'Bearer ' + String(control.activeUser).repeat(64));
-    if (action === 'status') return respond({ ok: true, member: { id: control.activeUser, balance: 10 }, gift: { status: 'claimed', amountUsd: 10 } });
+    if (action === 'status') return respond({ ok: true, member: { id: control.activeUser, balance: control.giftRecord?.status === 'claimed' ? control.giftRecord.amountUsd : 0 }, gift: currentGift() });
     if (action === 'groups') return respond({ ok: true, groups });
-    if (action === 'claim') { if (control.ambiguousClaim) throw new Error('response lost after request'); return respond({ ok: true, member: { id: control.activeUser, balance: 10 }, gift: { status: 'claimed', amountUsd: 10, code: 'consumed-receipt' } }); }
+    if (action === 'claim') {
+      if (control.ambiguousClaim) throw new Error('response lost after request');
+      if (!control.campaign.giftEnabled && !['pending', 'claimed'].includes(control.giftRecord?.status)) return respond({ ok: false, code: 'GIFT_UNAVAILABLE', message: '新客活动暂未开放' }, 409);
+      control.giftRecord = { ...currentGift(), status: 'claimed', eligible: false, code: 'consumed-receipt' };
+      return respond({ ok: true, member: { id: control.activeUser, balance: control.giftRecord.amountUsd }, gift: control.giftRecord });
+    }
     if (action === 'logout') { if (control.offlineLogout) throw new Error('simulated network failure'); return respond({ ok: true }); }
     if (action === 'create-client-key') {
       const group = groups.find(g => g.id === body.groupId); assert(group);
@@ -115,8 +122,79 @@ try {
   });
   await test('claim authority fields are discarded before fixed server request', async () => {
     const f = fixture('claim'); await login(f);
-    const result = await f.api.memberAction(f.store, 'member.claim', { userId: 999, value: 999, code: 'forged', origin: 'https://attacker.invalid' });
-    assert.deepEqual(f.control.requests.at(-1).body, {}); assert.equal(result.gift.amountUsd, 10);
+    const identity = f.control.requests.at(-1).headers;
+    const result = await f.api.memberAction(f.store, 'member.claim', {
+      userId: 999, memberId: 999, value: 999, amountUsd: 999, giftUsd: 999, currency: 'EUR', giftEnabled: true, giftPolicyRevision: 'forged-policy',
+      installationId: 'forged-installation', installationProof: 'forged-proof', sessionToken: 'forged-session', code: 'forged', origin: 'https://attacker.invalid',
+      headers: { authorization: 'Bearer forged-session', 'X-Aurora-Installation': 'forged-installation', 'X-Aurora-Installation-Proof': 'forged-proof' },
+    });
+    const request = f.control.requests.at(-1);
+    assert.equal(request.action, 'claim'); assert.equal(request.method, 'POST'); assert.deepEqual(request.body, {});
+    assert.equal(request.headers.authorization, 'Bearer ' + '1'.repeat(64));
+    for (const key of ['X-Aurora-Installation', 'X-Aurora-Installation-Proof']) assert.equal(request.headers[key], identity[key]);
+    assert.equal(result.member.id, 1); assert.equal(result.gift.amountUsd, 5); assert(!JSON.stringify(result).includes('forged'));
+  });
+  await test('public campaign changes pass through without a fixed amount and authenticated refresh uses the latest policy', async () => {
+    const f = fixture('dynamic-campaign');
+    const publicStatus = await f.api.memberAction(f.store, 'member.status', {});
+    assert.equal(publicStatus.loggedIn, false); assert.deepEqual(publicStatus.config, { ok: true, enabled: true, ...f.control.campaign });
+    assert.equal(publicStatus.config.giftUsd, 5); assert(!fs.existsSync(path.join(f.directory, 'member-installation.enc')));
+    const signedIn = await login(f); assert.equal(signedIn.gift.amountUsd, 5);
+    const saved = fs.readFileSync(path.join(f.directory, 'member-session.enc'));
+    f.control.campaign = { giftEnabled: true, giftUsd: 25.5, currency: 'USD', giftMessage: 'Changed campaign amount', giftPolicyRevision: 'policy-twenty-five-fifty' };
+    const updated = await f.api.memberAction(f.store, 'member.status', {});
+    assert.equal(updated.loggedIn, true); assert.deepEqual(updated.config, { ok: true, enabled: true, ...f.control.campaign });
+    assert.equal(updated.gift.amountUsd, 25.5); assert.deepEqual(fs.readFileSync(path.join(f.directory, 'member-session.enc')), saved);
+    const claimed = await f.api.memberAction(f.store, 'member.claim', {});
+    assert.equal(claimed.gift.amountUsd, 25.5); assert.equal(claimed.member.balance, 25.5);
+    assert.equal(f.control.requests.filter(request => request.action === 'claim').length, 1);
+  });
+  await test('closing gifts preserves membership login, groups and supplier setup while the server rejects a new grant', async () => {
+    const f = fixture('campaign-closed'); f.control.campaign.giftEnabled = false; f.control.campaign.giftUsd = 20;
+    const publicStatus = await f.api.memberAction(f.store, 'member.status', {});
+    assert.equal(publicStatus.config.enabled, true); assert.equal(publicStatus.config.giftEnabled, false);
+    assert((await login(f)).ok);
+    const status = await f.api.memberAction(f.store, 'member.status', {});
+    assert(status.loggedIn); assert.equal(status.config.giftEnabled, false); assert.equal(status.gift.status, 'disabled');
+    assert.deepEqual((await f.api.memberAction(f.store, 'member.groups', {})).groups, f.groups);
+    const added = await f.api.memberAction(f.store, 'member.addProvider', { groupId: 7 });
+    assert(added.ok); assert.equal(f.store.getProvider(added.providerId).format, 'openai-responses');
+    const before = fs.readFileSync(path.join(f.directory, 'member-session.enc'));
+    await assert.rejects(() => f.api.memberAction(f.store, 'member.claim', { giftEnabled: true, amountUsd: 500 }), /新客活动暂未开放/);
+    assert.deepEqual(f.control.requests.at(-1).body, {}); assert.equal(f.control.giftRecord, null);
+    assert.deepEqual(fs.readFileSync(path.join(f.directory, 'member-session.enc')), before);
+    assert((await f.api.memberAction(f.store, 'member.status', {})).loggedIn);
+  });
+  await test('pending and confirmed grants retain the original amount after a new policy closes new claims', async () => {
+    const f = fixture('old-grant'); await login(f);
+    f.control.giftRecord = { status: 'pending', eligible: false, amountUsd: 10, message: 'Original grant pending' };
+    f.control.campaign = { giftEnabled: false, giftUsd: 20, currency: 'USD', giftMessage: 'New grants closed', giftPolicyRevision: 'closed-new-policy' };
+    const pending = await f.api.memberAction(f.store, 'member.status', {});
+    assert(pending.loggedIn); assert.equal(pending.config.giftEnabled, false); assert.equal(pending.config.giftUsd, 20);
+    assert.equal(pending.gift.status, 'pending'); assert.equal(pending.gift.amountUsd, 10);
+    const confirmed = await f.api.memberAction(f.store, 'member.claim', { amountUsd: 20, giftPolicyRevision: 'closed-new-policy' });
+    assert.equal(confirmed.gift.status, 'claimed'); assert.equal(confirmed.gift.amountUsd, 10); assert.equal(confirmed.member.balance, 10);
+    assert.deepEqual(f.control.requests.at(-1).body, {});
+    f.control.campaign.giftUsd = 25.5;
+    const refreshed = await f.api.memberAction(f.store, 'member.status', {});
+    assert.equal(refreshed.config.giftUsd, 25.5); assert.equal(refreshed.gift.amountUsd, 10); assert.equal(refreshed.gift.status, 'claimed');
+    assert.equal(f.control.requests.filter(request => request.action === 'claim').length, 1);
+  });
+  await test('review amounts and unknown amounts remain server-owned without a current-policy fallback', async () => {
+    const f = fixture('unknown-grant'); await login(f); f.control.campaign.giftUsd = 25.5;
+    f.control.giftRecord = { status: 'review', eligible: false, amountUsd: 7.5 };
+    const review = await f.api.memberAction(f.store, 'member.status', {});
+    assert.equal(review.config.giftUsd, 25.5); assert.equal(review.gift.amountUsd, 7.5); assert.equal(review.gift.status, 'review');
+    delete f.control.giftRecord.amountUsd;
+    const unknown = await f.api.memberAction(f.store, 'member.status', {}); assert.equal(unknown.gift.amountUsd, undefined);
+    assert.equal(unknown.config.giftUsd, 25.5);
+    f.control.giftRecord = null; delete f.control.campaign.giftUsd;
+    const unavailableAmount = await f.api.memberAction(f.store, 'member.status', {});
+    assert.equal(unavailableAmount.config.giftUsd, undefined); assert.equal(unavailableAmount.gift.amountUsd, undefined);
+    f.control.offlineConfig = true;
+    await assert.rejects(() => f.api.memberAction(f.store, 'member.status', {}), /configuration unavailable/);
+    assert.equal(f.control.requests.filter(request => request.action === 'claim').length, 0);
+    assert(fs.existsSync(path.join(f.directory, 'member-session.enc')));
   });
   await test('each supported group becomes the correct protocol and no key returns to renderer', async () => {
     const f = fixture('protocols'); await login(f);
