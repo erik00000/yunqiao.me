@@ -2,25 +2,25 @@
 
 云桥 AI 是独立的桌面工具。请先安装你要使用的 Claude、ChatGPT、Codex 或其他客户端，再用云桥连接自己的模型服务。
 
-本说明更新于 **2026 年 11 月 16 日**，对应已发布的 **0.6.0**。Windows 与 macOS 安装包可从 [Releases 下载页](https://github.com/jxb412/yunqiao.me/releases/tag/v0.6.0)直接下载。
+本说明更新于 **2026 年 11 月 16 日**，对应已发布的 **0.6.1**。Windows 与 macOS 安装包可从 [Releases 下载页](https://github.com/jxb412/yunqiao.me/releases/tag/v0.6.1)直接下载。
 
-[打开 0.6.0 下载页](https://github.com/jxb412/yunqiao.me/releases/tag/v0.6.0) · [使用指南](USER-GUIDE.md) · [返回介绍](README.md)
+[打开 0.6.1 下载页](https://github.com/jxb412/yunqiao.me/releases/tag/v0.6.1) · [使用指南](USER-GUIDE.md) · [返回介绍](README.md)
 
 ## 获取安装文件
 
-打开 [0.6.0 发布页](https://github.com/jxb412/yunqiao.me/releases/tag/v0.6.0)，展开 **Assets**，选择与你的系统一致的文件；也可直接点击下表下载。这里提供可使用的安装文件，通常无需登录 GitHub。不要将 GitHub 自动生成的 **Source code** 压缩包当作客户端安装包。
+打开 [0.6.1 发布页](https://github.com/jxb412/yunqiao.me/releases/tag/v0.6.1)，展开 **Assets**，选择与你的系统一致的文件；也可直接点击下表下载。这里提供可使用的安装文件，通常无需登录 GitHub。不要将 GitHub 自动生成的 **Source code** 压缩包当作客户端安装包。
 
-| 系统与用途 | 0.6.0 安装文件 |
+| 系统与用途 | 0.6.1 安装文件 |
 | --- | --- |
-| Windows x64 安装版 | [YunQiaoAI-0.6.0-win-x64-setup.exe](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.0/YunQiaoAI-0.6.0-win-x64-setup.exe) |
-| Windows x64 免安装版 | [YunQiaoAI-0.6.0-win-x64-portable.exe](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.0/YunQiaoAI-0.6.0-win-x64-portable.exe) |
-| Windows x64 完整解压版 | [YunQiaoAI-0.6.0-win-x64.zip](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.0/YunQiaoAI-0.6.0-win-x64.zip) |
-| macOS Apple M 系列 | [YunQiaoAI-0.6.0-mac-arm64.dmg](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.0/YunQiaoAI-0.6.0-mac-arm64.dmg) |
-| macOS Intel | [YunQiaoAI-0.6.0-mac-x64.dmg](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.0/YunQiaoAI-0.6.0-mac-x64.dmg) |
+| Windows x64 安装版 | [YunQiaoAI-0.6.1-win-x64-setup.exe](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.1/YunQiaoAI-0.6.1-win-x64-setup.exe) |
+| Windows x64 免安装版 | [YunQiaoAI-0.6.1-win-x64-portable.exe](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.1/YunQiaoAI-0.6.1-win-x64-portable.exe) |
+| Windows x64 完整解压版 | [YunQiaoAI-0.6.1-win-x64.zip](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.1/YunQiaoAI-0.6.1-win-x64.zip) |
+| macOS Apple M 系列 | [YunQiaoAI-0.6.1-mac-arm64.dmg](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.1/YunQiaoAI-0.6.1-mac-arm64.dmg) |
+| macOS Intel | [YunQiaoAI-0.6.1-mac-x64.dmg](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.1/YunQiaoAI-0.6.1-mac-x64.dmg) |
 
-更新内容见 [0.6.0 版本说明](docs/RELEASE-0.6.0.md)。
+更新内容见 [0.6.1 版本说明](docs/RELEASE-0.6.1.md)。
 
-macOS 同时提供 [Apple Silicon ZIP](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.0/YunQiaoAI-0.6.0-mac-arm64.zip) 和 [Intel ZIP](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.0/YunQiaoAI-0.6.0-mac-x64.zip)，可完整解压后将 `.app` 放入“应用程序”；一般优先使用 DMG。[SHA256SUMS.txt](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.0/SHA256SUMS.txt) 可用于核对下载文件是否完整。
+macOS 同时提供 [Apple Silicon ZIP](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.1/YunQiaoAI-0.6.1-mac-arm64.zip) 和 [Intel ZIP](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.1/YunQiaoAI-0.6.1-mac-x64.zip)，可完整解压后将 `YunQiaoAI.app` 放入“应用程序”；一般优先使用 DMG。[SHA256SUMS.txt](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.1/SHA256SUMS.txt) 可用于核对下载文件是否完整。
 
 需要体验开发构建时，打开 [GitHub Actions 的 build 页面](https://github.com/jxb412/yunqiao.me/actions/workflows/build.yml)，选择对应平台已成功完成的构建，在 **Artifacts** 中下载；通常需要登录 GitHub，下载后先解压外层压缩包。开发构建可能包含尚未正式发布的改动。
 
@@ -65,17 +65,17 @@ macOS 同时提供 [Apple Silicon ZIP](https://github.com/jxb412/yunqiao.me/rele
 
 ### 安装和首次打开
 
-1. 打开对应的 DMG，将 **云桥AI 工具箱.app** 拖入 **应用程序 / Applications**。
-2. 推出 DMG，从“应用程序”打开 **云桥AI 工具箱**。
+1. 打开对应的 DMG，将 **YunQiaoAI.app** 拖入 **应用程序 / Applications**。
+2. 推出 DMG，从“应用程序”打开 **YunQiaoAI.app**，进入云桥AI 工具箱。
 3. 若系统提示无法验证开发者，可先尝试在“应用程序”中按住 Control 点击应用，选择 **打开**；也可在 **系统设置 → 隐私与安全性** 中查看此次打开被阻止的提示。
 
 当前构建包未做 Apple 签名与公证。**确认应用来自项目发布者后**，若仍提示“已损坏”或无法打开，在系统“终端”中运行以下命令，再重新打开应用：
 
 ```bash
-xattr -cr "/Applications/云桥AI 工具箱.app"
+xattr -cr "/Applications/YunQiaoAI.app"
 ```
 
-命令中的名称包含“AI”后的一个空格，需与应用名称一致；如果安装在其他位置，请替换成实际完整路径。这条命令只用于清除该应用的扩展属性，不需要关闭整个系统的安全保护。
+本版应用包文件名为 `YunQiaoAI.app`；如果安装在其他位置或已改名，请将命令路径替换成实际完整路径。这条命令只用于清除该应用的扩展属性，不需要关闭整个系统的安全保护。
 
 如果仍无法打开，请重新下载对应芯片的完整 DMG，重新拖入“应用程序”，并记录系统提示以便反馈。
 
@@ -91,7 +91,7 @@ xattr -cr "/Applications/云桥AI 工具箱.app"
 2. 在向导中添加供应商，填写服务商提供的 API 地址和 API Key，再选择模型。
 3. 选择 **本地网关** 或符合条件的 **直连供应商**。
 4. 测试后点击 **预览配置**。自动配置的客户端点击 **备份并应用配置**；手动接入的客户端按专属指南选择实际客户端版本，复制参数或配置，在原客户端中完成设置。
-5. 重新启动客户端，开始对话。使用网关时请保持云桥运行。
+5. 保存工作后点击 **重新启动客户端** 并确认，云桥会强制结束该桌面客户端（包括托盘和后台运行），确认退出后再打开。命令行工具使用 **新终端打开**，原终端和会话保留。使用网关时请保持云桥运行。
 
 手动接入使用本地网关参数，云桥不自动修改或备份该客户端的配置。示例中的令牌是占位文字；电脑端的 **复制真实令牌** 或 **复制可用配置（含令牌）** 才会复制可用凭据。已有配置请先自行备份、再合并。插件市场的连接和启用步骤见[使用指南](USER-GUIDE.md)。
 
