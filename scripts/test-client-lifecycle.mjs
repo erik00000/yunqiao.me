@@ -25,7 +25,7 @@ try {
       resolveTarget: async (id) => { state.resolved++; return { ...target, agentId: id, kind: id.endsWith('-cli') || id === 'claude-code' ? 'cli' : 'desktop' }; },
       validateTarget: () => { state.validateCount++; return true; },
       listProcesses: async () => ({ processes: [...state.processes], uncertain: state.uncertain }),
-      closeProcess: async (_target, process) => { state.closes.push({ ...process }); state.processes = []; return 'requested'; },
+      closeProcess: async (_target, process) => { state.closes.push({ ...process }); state.processes = state.processes.filter(entry => entry.pid !== process.pid); return 'requested'; },
       startDesktop: async target => { state.starts.push({ ...target }); state.processes = [processEntry()]; },
       openTerminal: async (target, cwd) => { state.terminals.push({ target, cwd }); },
       now: () => now,
@@ -57,7 +57,7 @@ try {
     const f = fixture(); const info = await f.describeClientLifecycle({ agentId: 'claude-desktop' }); assert.equal(info.supported, true); assert.equal(f.state.starts.length, 0);
     const result = await f.restartClient({ agentId: 'claude-desktop' }); assert.equal(result.operation, 'started'); assert.equal(result.ok, true); assert.equal(f.state.starts.length, 1); assert.equal(f.state.closes.length, 0); assert.equal(f.state.resolved, 2);
   });
-  await check('Desktop restart requests normal window closure and waits for all helpers to exit', async () => {
+  await check('Desktop restart terminates every matched process and waits for all of them to exit', async () => {
     const f = fixture(); f.state.processes = [processEntry(), processEntry({ pid: 987652, hasWindow: false })];
     let polls = 0;
     f.runtime.closeProcess = async (_target, process) => { f.state.closes.push(process); return 'requested'; };
@@ -65,13 +65,13 @@ try {
       polls++; if (polls === 3) f.state.processes = [];
       return { processes: [...f.state.processes], uncertain: false };
     };
-    const result = await f.restartClient({ agentId: 'claude-desktop' }); assert.equal(result.operation, 'restarted'); assert.equal(f.state.closes.length, 1); assert(f.state.delayCount > 0); assert.equal(f.state.starts.length, 1);
+    const result = await f.restartClient({ agentId: 'claude-desktop' }); assert.equal(result.operation, 'restarted'); assert.equal(f.state.closes.length, 2); assert(f.state.delayCount > 0); assert.equal(f.state.starts.length, 1);
   });
-  await check('Tray-only clients remain running and are never duplicated or force-stopped', async () => {
+  await check('Tray-only clients are terminated and reopened exactly once', async () => {
     const f = fixture(); f.state.processes = [processEntry({ hasWindow: false })];
-    const result = await f.restartClient({ agentId: 'claude-desktop' }); assert.equal(result.ok, false); assert.match(result.message, /托盘或后台/); assert.equal(f.state.closes.length, 0); assert.equal(f.state.starts.length, 0); assert.equal(f.state.processes.length, 1);
+    const result = await f.restartClient({ agentId: 'claude-desktop' }); assert.equal(result.ok, true); assert.equal(result.operation, 'restarted'); assert.equal(f.state.closes.length, 1); assert.equal(f.state.starts.length, 1); assert.equal(f.state.processes.length, 1);
   });
-  await check('macOS apps without Windows handles still receive a normal application quit request', async () => {
+  await check('macOS apps without Windows handles are terminated before relaunch', async () => {
     const f = fixture({ platform: 'darwin' }); f.state.processes = [processEntry({ hasWindow: false })];
     assert.equal((await f.describeClientLifecycle({ agentId: 'claude-desktop' })).supported, true);
     const result = await f.restartClient({ agentId: 'claude-desktop' }); assert.equal(result.ok, true); assert.equal(result.operation, 'restarted'); assert.equal(f.state.closes.length, 1); assert.equal(f.state.starts.length, 1);
@@ -87,14 +87,35 @@ try {
       const f = fixture(); f.state.processes = [process]; const result = await f.restartClient({ agentId: 'claude-desktop' }); assert.equal(result.ok, false); assert.match(result.message, /云桥自身或启动云桥/); assert.equal(f.state.closes.length, 0); assert.equal(f.state.starts.length, 0);
     }
   });
-  await check('A reused process identity or rejected graceful close prevents relaunch', async () => {
+  await check('A reused process identity or rejected termination prevents relaunch', async () => {
     for (const outcome of ['changed', 'blocked']) {
       const f = fixture({ closeProcess: async () => outcome }); f.state.processes = [processEntry()]; const result = await f.restartClient({ agentId: 'claude-desktop' }); assert.equal(result.ok, false); assert.equal(f.state.starts.length, 0);
     }
   });
   await check('A client that refuses to exit is left running after the bounded wait', async () => {
     const f = fixture({ closeProcess: async () => 'requested' }); f.state.processes = [processEntry()];
-    const result = await f.restartClient({ agentId: 'claude-desktop' }); assert.equal(result.ok, false); assert.match(result.message, /尚未完全退出/); assert.equal(f.state.starts.length, 0); assert.equal(f.state.processes.length, 1); assert(f.state.delayCount <= 34);
+    const result = await f.restartClient({ agentId: 'claude-desktop' }); assert.equal(result.ok, false); assert.match(result.message, /尚未完全结束/); assert.equal(f.state.starts.length, 0); assert.equal(f.state.processes.length, 1); assert(f.state.delayCount <= 34);
+  });
+  await check('New background instances discovered during shutdown are terminated before launch', async () => {
+    const f = fixture(); f.state.processes = [processEntry()];
+    f.runtime.closeProcess = async (_target, process) => {
+      f.state.closes.push(process);
+      f.state.processes = f.state.closes.length === 1 ? [processEntry({ pid: 987652, hasWindow: false })] : [];
+      return 'requested';
+    };
+    const result = await f.restartClient({ agentId: 'claude-desktop' });
+    assert.equal(result.ok, true); assert.deepEqual(f.state.closes.map(entry => entry.pid), [987651, 987652]); assert.equal(f.state.starts.length, 1);
+  });
+  await check('Uncertain or protected processes appearing during shutdown stop further termination and launch', async () => {
+    for (const protectedProcess of [false, true]) {
+      const f = fixture(); f.state.processes = [processEntry()];
+      f.runtime.closeProcess = async (_target, process) => {
+        f.state.closes.push(process); f.state.processes = [processEntry({ pid: 987652, protected: protectedProcess })];
+        f.state.uncertain = !protectedProcess; return 'requested';
+      };
+      const result = await f.restartClient({ agentId: 'claude-desktop' });
+      assert.equal(result.ok, false); assert.equal(f.state.closes.length, 1); assert.equal(f.state.starts.length, 0);
+    }
   });
   await check('An executable replaced during exit is not launched', async () => {
     const f = fixture(); f.state.processes = [processEntry()]; let validations = 0; f.runtime.validateTarget = () => ++validations === 1;

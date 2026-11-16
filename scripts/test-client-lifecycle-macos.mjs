@@ -71,24 +71,34 @@ try {
     const payload = JSON.parse(f.state.calls[0].args.at(-1)); assert.equal(payload.ownerUid, 501); assert.equal(payload.ownerPid, 987700); assert.equal(payload.target.bundlePath, target.bundlePath);
     assert(!f.state.calls[0].args[3].includes(f.home), 'paths are data, not JavaScript source');
   });
-  await check('Native enumeration and quit compare Foundation-normalized aliases on both sides', async () => {
+  await check('Native force termination uses the exact no-window app and normalized aliases', async () => {
     const f = fixture(); const target = await f.driver.resolveTarget('claude-desktop', definition, { installed: true, configured: false, command: f.bundle });
     await f.driver.listProcesses(target); const source = f.state.calls[0].args[3];
     const original = { executable: '/private/var/fixture/Claude.app/Contents/MacOS/Claude', bundlePath: '/private/var/fixture/Claude.app', bundleId: 'io.yunqiao.fixture.claude' };
     const aliases = new Map([[original.executable, '/var/fixture/Claude.app/Contents/MacOS/Claude'], [original.bundlePath, '/var/fixture/Claude.app']]);
     const url = value => ({ URLByResolvingSymlinksInPath: { path: aliases.get(value) ?? value } });
-    let requestedQuits = 0;
-    const app = { processIdentifier: 1234, executableURL: url(original.executable), bundleURL: url(original.bundlePath), bundleIdentifier: original.bundleId, launchDate: { timeIntervalSince1970: 1234567.5 }, isTerminated: false, get terminate() { requestedQuits++; return true; } };
-    const execute = (mode, overrides = {}) => JSON.parse(vm.runInNewContext(source + '\nprocessInfo = function () { return { uid: 501, parent: 1, started: "native-start" }; }; protectedIds = function () { return {}; }; run(argv);', {
+    let forcedQuits = 0, allowed = true, uid = 501, protectedPid = 0, present = true;
+    const app = { processIdentifier: 1234, executableURL: url(original.executable), bundleURL: url(original.bundlePath), bundleIdentifier: original.bundleId, launchDate: { timeIntervalSince1970: 1234567.5 }, isTerminated: false,
+      get terminate() { throw new Error('Restart must bypass ordinary quit and unsaved-work callbacks'); },
+      get forceTerminate() { forcedQuits++; return allowed; } };
+    const execute = (mode, overrides = {}) => JSON.parse(vm.runInNewContext(source + '\nprocessInfo = function () { return { uid: fixtureUid, parent: 1, started: "native-start" }; }; protectedIds = function () { var ids = {}; if (fixtureProtectedPid) ids[fixtureProtectedPid] = true; return ids; }; run(argv);', {
       ObjC: { import() {}, unwrap: value => value },
-      $: { NSURL: { fileURLWithPath: url }, NSWorkspace: { sharedWorkspace: { runningApplications: { count: 1, objectAtIndex: () => app } } }, NSRunningApplication: { runningApplicationWithProcessIdentifier: () => app } },
+      $: { NSURL: { fileURLWithPath: url }, NSWorkspace: { sharedWorkspace: { runningApplications: { count: 1, objectAtIndex: () => app } } }, NSRunningApplication: { runningApplicationWithProcessIdentifier: () => present ? app : null } },
+      fixtureUid: uid, fixtureProtectedPid: protectedPid,
       argv: [JSON.stringify({ mode, target: original, ownerUid: 501, ownerPid: 987700, ...overrides })],
     }));
     const listed = execute('list'); assert.equal(listed.uncertain, false); assert.equal(listed.processes.length, 1); assert.equal(listed.processes[0].executable, original.executable); assert.equal(listed.processes[0].bundlePath, original.bundlePath);
-    assert.equal(execute('close', { process: listed.processes[0] }).result, 'requested'); assert.equal(requestedQuits, 1);
-    assert.equal(execute('close', { process: { ...listed.processes[0], started: 'different-start' } }).result, 'changed'); assert.equal(requestedQuits, 1);
+    assert.equal(listed.processes[0].hasWindow, false);
+    assert.equal(execute('close', { process: listed.processes[0] }).result, 'requested'); assert.equal(forcedQuits, 1);
+    assert.equal(execute('close', { process: { ...listed.processes[0], started: 'different-start' } }).result, 'changed'); assert.equal(forcedQuits, 1);
+    uid = 502; assert.equal(execute('close', { process: listed.processes[0] }).result, 'changed'); assert.equal(forcedQuits, 1); uid = 501;
+    protectedPid = 1234; assert.equal(execute('close', { process: listed.processes[0] }).result, 'changed'); assert.equal(forcedQuits, 1); protectedPid = 0;
+    app.bundleIdentifier = 'io.yunqiao.fixture.other'; assert.equal(execute('close', { process: listed.processes[0] }).result, 'changed'); assert.equal(forcedQuits, 1); app.bundleIdentifier = original.bundleId;
+    allowed = false; assert.equal(execute('close', { process: listed.processes[0] }).result, 'blocked'); assert.equal(forcedQuits, 2); allowed = true;
+    app.isTerminated = true; assert.equal(execute('close', { process: listed.processes[0] }).result, 'gone'); assert.equal(forcedQuits, 2); app.isTerminated = false;
+    present = false; assert.equal(execute('close', { process: listed.processes[0] }).result, 'gone'); assert.equal(forcedQuits, 2); present = true;
     app.bundleURL = url('/var/different/Claude.app');
-    assert.equal(execute('list').uncertain, true); assert.equal(execute('close', { process: listed.processes[0] }).result, 'changed'); assert.equal(requestedQuits, 1);
+    assert.equal(execute('list').uncertain, true); assert.equal(execute('close', { process: listed.processes[0] }).result, 'changed'); assert.equal(forcedQuits, 2);
     aliases.set(original.executable, ''); assert.deepEqual(execute('list'), { processes: [], uncertain: true });
   });
   await check('Wrong-owner or incomplete native records are never treated as a trusted process', async () => {
@@ -97,7 +107,7 @@ try {
       f.state.processes = [{ ...f.row(target), ...patch }]; const result = await f.driver.listProcesses(target); assert.equal(result.uncertain, true); assert.equal(result.processes.length, 0);
     }
   });
-  await check('Graceful quit carries the complete expected identity and protects own processes', async () => {
+  await check('Force termination carries the complete expected identity and protects own processes', async () => {
     const f = fixture(); const target = await f.driver.resolveTarget('claude-desktop', definition, { installed: true, configured: false, command: f.bundle }); const row = f.row(target);
     assert.equal(await f.driver.closeProcess(target, row), 'requested'); const payload = JSON.parse(f.state.calls[0].args.at(-1)); assert.equal(payload.process.started, row.started); assert.equal(payload.process.ownerSid, row.ownerSid); assert.equal(payload.target.bundleId, target.bundleId);
     for (const patch of [{ protected: true }, { pid: 987700 }, { ownerSid: 'uid:502' }, { executable: '/bin/sh' }]) assert.equal(await f.driver.closeProcess(target, { ...row, ...patch }), 'changed');

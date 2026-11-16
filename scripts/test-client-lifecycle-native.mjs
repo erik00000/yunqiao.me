@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 import { build } from 'esbuild';
 
 // This opt-in Windows integration test launches only a private, windowless fixture.
-// It never sends stop/kill signals. Each fixture exits via its own stop file or timer.
+// Termination targets only verified fixture paths. Cleanup uses each fixture's stop file or timer.
 if (process.platform !== 'win32') {
   console.log('SKIP native client lifecycle: Windows only');
   process.exit(0);
@@ -69,7 +69,7 @@ internal static class WindowlessFixture {
     string pid = Process.GetCurrentProcess().Id.ToString();
     File.AppendAllText(Path.Combine(root, "launches.txt"), pid + Environment.NewLine);
     File.WriteAllText(Path.Combine(root, "ready.txt"), pid);
-    DateTime deadline = DateTime.UtcNow.AddSeconds(90);
+    DateTime deadline = DateTime.UtcNow.AddSeconds(180);
     while (DateTime.UtcNow < deadline && !File.Exists(Path.Combine(root, "stop.txt"))) {
       File.WriteAllText(Path.Combine(root, "heartbeat.txt"), DateTime.UtcNow.Ticks.ToString());
       Thread.Sleep(100);
@@ -91,7 +91,11 @@ async function startSentinel(f) {
 async function stopFixtures() {
   for (const f of fixtures) fs.writeFileSync(f.stop, 'exit');
   for (const f of fixtures) {
-    if (fs.existsSync(f.ready)) await waitFor(() => fs.existsSync(f.exited), 'Private fixture did not acknowledge its stop file', 10000);
+    if (fs.existsSync(f.ready)) await waitFor(() => {
+      const pid = Number(read(f.ready));
+      if (Number(read(f.exited)) === pid) return true;
+      try { process.kill(pid, 0); return false; } catch (error) { if (error.code === 'ESRCH') return true; throw error; }
+    }, 'Private fixture did not exit or acknowledge its stop file', 10000);
   }
   await delay(300);
 }
@@ -187,15 +191,21 @@ try {
   assert.equal(selectedProcess.executable.toLowerCase(), selected.exe.toLowerCase());
   assert.equal(await runtime.closeProcess(target, { ...selectedProcess, started: selectedProcess.started + '1' }), 'changed');
   assert.equal(await runtime.closeProcess(target, { ...selectedProcess, sessionId: selectedProcess.sessionId + 10000 }), 'changed');
-  assert.equal(await runtime.closeProcess(target, selectedProcess), 'blocked');
+  assert.equal(await runtime.closeProcess(target, { ...selectedProcess, protected: true }), 'changed');
+  assert.equal(await runtime.closeProcess(target, { ...selectedProcess, executable: sentinel.exe }), 'changed');
   assert(alive(selected)); assert(alive(sentinel));
-  console.log('PASS native CIM identity and close checks reject changed identity and windowless targets'); passed++;
+  console.log('PASS native termination rejects changed identity, protected processes and other executable paths'); passed++;
 
   const second = await lifecycle.restartClient({ agentId: 'claude-desktop' });
-  assert.equal(second.ok, false); assert.equal(second.operation, 'failed'); assert.match(second.message, /托盘|后台/);
-  assert.equal(launches(selected), 1); assert.equal(launches(sentinel), 1);
+  assert.equal(second.ok, true, second.message); assert.equal(second.operation, 'restarted');
+  await waitFor(() => launches(selected) === 2 && Number(read(selected.ready)) !== selectedProcess.pid, 'Forced restart did not launch a new private process');
+  const restarted = await runtime.listProcesses(target);
+  assert.equal(restarted.uncertain, false); assert.equal(restarted.processes.length, 1);
+  assert.notEqual(restarted.processes[0].pid, selectedProcess.pid);
+  assert.equal(launches(sentinel), 1);
   assert(alive(selected)); assert(alive(sentinel));
-  console.log('PASS a remaining background fixture blocks restart and preserves both processes'); passed++;
+  assert.equal(fs.existsSync(selected.exited), false, 'The original process must be forcibly ended, without its cooperative exit marker');
+  console.log('PASS a windowless background client is forcibly ended and reopened while the same-name sentinel survives'); passed++;
 
   // Read only the native driver's identity projection; no close request targets Node.
   const selfSnapshot = await runtime.listProcesses({ ...target, executable: process.execPath });

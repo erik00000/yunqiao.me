@@ -8,7 +8,8 @@ import { createRequire } from 'node:module';
 import { build } from 'esbuild';
 
 // LaunchServices/AppKit acceptance uses only private Cocoa applications. No real clients,
-// Terminal AppleEvents, kill signals, user credentials or user application files are accessed.
+// Terminal AppleEvents, user credentials or user application files are accessed.
+// Force termination is exercised only against these private fixture applications.
 if (process.platform !== 'darwin') { console.log('SKIP native macOS lifecycle: macOS only'); process.exit(0); }
 const runFile = promisify(execFile);
 const temporary = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'yunqiao-macos-native-')));
@@ -21,6 +22,17 @@ async function until(condition, message, timeout = 15000) { const deadline = Dat
 const text = file => { try { return fs.readFileSync(file, 'utf8'); } catch { return ''; } };
 const launches = fixture => text(path.join(fixture.state, 'launches.log')).trim().split('\n').filter(Boolean).length;
 const alive = fixture => { const pid = Number(text(path.join(fixture.state, 'pid'))); try { return !!pid && Date.now() - fs.statSync(path.join(fixture.state, 'heartbeat')).mtimeMs < 3000; } catch { return false; } };
+async function processExists(pid) {
+  try {
+    const result = await runFile('/bin/ps', ['-p', String(pid), '-o', 'pid='], { timeout: 5000 });
+    return result.stdout.trim() === String(pid);
+  } catch (error) {
+    // ps reports exit 1 with no row when a force-terminated fixture is already gone.
+    // Other failures stay explicit; this probe never sends a termination signal.
+    if (error.code === 1 && !String(error.stdout || '').trim() && !String(error.stderr || '').trim()) return false;
+    throw error;
+  }
+}
 const check = async (label, fn) => { await fn(); checks++; console.log(`PASS ${label}`); };
 const fixtureSource = `#import <Cocoa/Cocoa.h>
 #include <unistd.h>
@@ -122,18 +134,29 @@ try {
     assert.equal(await runtime.closeProcess(resolved, { ...row, ownerSid: 'uid:999999' }), 'changed');
     assert.equal(fs.existsSync(path.join(target.state, 'quit-request')), false); assert(alive(target));
   });
-  await check('AppKit normal quit restarts only the exact target while the same-name sentinel survives', async () => {
+  await check('AppKit force termination restarts only the no-window target while the same-name sentinel survives', async () => {
     const previousPid = Number(text(path.join(target.state, 'pid'))); const result = await lifecycle.restartClient(payload); assert.equal(result.ok, true, result.message); assert.equal(result.operation, 'restarted');
     await until(() => alive(target) && launches(target) === 2 && Number(text(path.join(target.state, 'pid'))) !== previousPid, 'Target did not restart with a new process');
-    assert.equal(Number(text(path.join(target.state, 'exited'))), previousPid); assert.equal(Number(text(path.join(sentinel.state, 'pid'))), sentinelPid); assert.equal(launches(sentinel), 1); assert(alive(sentinel));
+    assert.equal(fs.existsSync(path.join(target.state, 'quit-request')), false); assert.equal(fs.existsSync(path.join(target.state, 'exited')), false);
+    assert.equal(Number(text(path.join(sentinel.state, 'pid'))), sentinelPid); assert.equal(launches(sentinel), 1); assert(alive(sentinel));
   });
-  await check('An application that refuses normal quit is left running without a second instance', async () => {
+  await check('An application refusing ordinary quit is force-terminated before a new instance starts', async () => {
     fs.writeFileSync(path.join(target.state, 'refuse'), 'hold'); const previousPid = Number(text(path.join(target.state, 'pid'))), before = launches(target);
-    const result = await lifecycle.restartClient(payload); assert.equal(result.ok, false); assert.equal(result.operation, 'failed'); assert(alive(target)); assert.equal(Number(text(path.join(target.state, 'pid'))), previousPid); assert.equal(launches(target), before); assert(alive(sentinel));
+    // Confirm that this fixture actually rejects ordinary AppKit termination first.
+    const ordinaryQuit = `ObjC.import('AppKit'); function run(argv) { var app = $.NSRunningApplication.runningApplicationWithProcessIdentifier(Number(argv[0])); return app.terminate ? 'requested' : 'blocked'; }`;
+    await runFile('/usr/bin/osascript', ['-l', 'JavaScript', '-e', ordinaryQuit, String(previousPid)], { timeout: 15000 });
+    await until(() => Number(text(path.join(target.state, 'quit-request'))) === previousPid, 'Fixture did not receive ordinary quit');
+    assert(alive(target)); assert.equal(launches(target), before);
+    const result = await lifecycle.restartClient(payload); assert.equal(result.ok, true, result.message); assert.equal(result.operation, 'restarted');
+    await until(() => alive(target) && launches(target) === before + 1 && Number(text(path.join(target.state, 'pid'))) !== previousPid, 'Refusing target was not replaced by a new process');
+    const resolved = await runtime.resolveTarget(payload.agentId, detected), running = await runtime.listProcesses(resolved);
+    assert.equal(running.uncertain, false); assert.equal(running.processes.length, 1); assert.notEqual(running.processes[0].pid, previousPid);
+    assert.equal(Number(text(path.join(target.state, 'quit-request'))), previousPid); assert.equal(fs.existsSync(path.join(target.state, 'exited')), false);
+    assert.equal(Number(text(path.join(sentinel.state, 'pid'))), sentinelPid); assert.equal(launches(sentinel), 1); assert(alive(sentinel));
     fs.unlinkSync(path.join(target.state, 'refuse'));
   });
   await check('Changing bundle metadata invalidates the target before any launch', async () => {
-    const resolved = await runtime.resolveTarget(payload.agentId, detected); fs.appendFileSync(path.join(target.bundle, 'Contents', 'Info.plist'), '\n'); assert.equal(runtime.validateTarget(resolved), false); assert.equal(launches(target), 2);
+    const resolved = await runtime.resolveTarget(payload.agentId, detected); fs.appendFileSync(path.join(target.bundle, 'Contents', 'Info.plist'), '\n'); assert.equal(runtime.validateTarget(resolved), false); assert.equal(launches(target), 3);
   });
   console.log(`Native macOS lifecycle: ${checks} checks passed (${os.arch()}, real Cocoa/LaunchServices/AppKit; Terminal automation not exercised)`);
 } finally {
@@ -141,7 +164,7 @@ try {
   for (const fixture of fixtures) fs.writeFileSync(path.join(fixture.state, 'stop'), 'exit');
   for (const fixture of fixtures) {
     const pid = Number(text(path.join(fixture.state, 'pid')));
-    if (pid) await until(() => Number(text(path.join(fixture.state, 'exited'))) === pid, 'Private fixture did not acknowledge its stop file', 20000);
+    if (pid) await until(async () => Number(text(path.join(fixture.state, 'exited'))) === pid || !(await processExists(pid)), 'Private fixture did not exit after its stop file', 20000);
   }
   await wait(300);
   if (priorHome === undefined) delete process.env.AURORA_CLIENT_HOME; else process.env.AURORA_CLIENT_HOME = priorHome;

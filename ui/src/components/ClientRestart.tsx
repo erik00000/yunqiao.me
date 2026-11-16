@@ -69,7 +69,7 @@ export default function ClientRestart({ agent, onActiveChange, primary = false }
       <Btn disabled={executing} onClick={close}>取消</Btn>
       <Btn variant="primary" disabled={executing} onClick={() => { void execute(); }}>{executing ? cli ? '正在打开…' : '正在重新启动…' : cli ? '新终端打开' : '确认重新启动'}</Btn>
     </>}>
-      <p className="client-restart-explanation">{cli ? '将在新终端打开此工具，原终端和会话会保留。需要加载新配置时，请先结束旧会话，再在新终端继续。' : '将退出客户端后重新打开；未运行时直接启动。当前会话可能中断，请先保存当前工作。'}</p>
+      <p className="client-restart-explanation">{cli ? '将在新终端打开此工具，原终端和会话会保留。需要加载新配置时，请先结束旧会话，再在新终端继续。' : '将强制结束此客户端的进程（包括托盘和后台进程），确认退出后重新打开；未运行时直接启动。当前会话会中断，未保存的内容可能丢失，请先保存工作。'}</p>
       {error && <div className="notice warning" role="alert">{error}</div>}
     </Modal>, document.body)}
   </div>;

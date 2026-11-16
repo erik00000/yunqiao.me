@@ -158,16 +158,32 @@ const closeProcessScript = `
 $expected = $inputData.process
 $process = Get-Process -Id ([int]$expected.pid) -ErrorAction SilentlyContinue
 if (!$process) { @{ result = 'gone' } | ConvertTo-Json -Compress; exit }
+try {
+# Retain this process handle through identity checks and termination; never kill by image name or a newly looked-up PID.
 $null = $process.Handle
+if ($process.HasExited) { @{ result = 'gone' } | ConvertTo-Json -Compress; exit }
 $row = Get-CimInstance Win32_Process -Filter ('ProcessId=' + [int]$expected.pid) -Property ProcessId,SessionId -ErrorAction Stop
+if (!$row) { @{ result = 'gone' } | ConvertTo-Json -Compress; exit }
 $owner = Invoke-CimMethod -InputObject $row -MethodName GetOwnerSid -ErrorAction Stop
 $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $currentSession = [Diagnostics.Process]::GetCurrentProcess().SessionId
-if ($owner.ReturnValue -ne 0 -or $owner.Sid -ne $currentSid -or $owner.Sid -ne $expected.ownerSid -or $process.SessionId -ne $currentSession -or $process.SessionId -ne $expected.sessionId -or $process.StartTime.ToUniversalTime().Ticks.ToString() -ne $expected.started -or $process.Path -ine $expected.executable) {
+$protectedIds = @{}; $ancestorId = [Diagnostics.Process]::GetCurrentProcess().Id
+for ($depth = 0; $depth -lt 64 -and $ancestorId -gt 0 -and !$protectedIds.ContainsKey($ancestorId); $depth++) {
+  $protectedIds[$ancestorId] = $true
+  $ancestor = Get-CimInstance Win32_Process -Filter ('ProcessId=' + $ancestorId) -Property ProcessId,ParentProcessId -ErrorAction Stop
+  if (!$ancestor) { break }; $ancestorId = [int]$ancestor.ParentProcessId
+}
+if ($protectedIds.ContainsKey([int]$expected.pid) -or $owner.ReturnValue -ne 0 -or $owner.Sid -ne $currentSid -or $owner.Sid -ne $expected.ownerSid -or $process.SessionId -ne $currentSession -or $process.SessionId -ne $expected.sessionId -or $process.StartTime.ToUniversalTime().Ticks.ToString() -ne $expected.started -or $process.Path -ine $expected.executable) {
   @{ result = 'changed' } | ConvertTo-Json -Compress; exit
 }
-if ($process.MainWindowHandle -ne 0 -and $process.CloseMainWindow()) { @{ result = 'requested' } | ConvertTo-Json -Compress }
-else { @{ result = 'blocked' } | ConvertTo-Json -Compress }
+$process.Kill()
+@{ result = 'requested' } | ConvertTo-Json -Compress
+} catch {
+  $hasExited = $false
+  try { $hasExited = $process.HasExited } catch { }
+  if ($hasExited) { @{ result = 'gone' } | ConvertTo-Json -Compress }
+  else { @{ result = 'blocked' } | ConvertTo-Json -Compress }
+}
 `;
 
 const macLifecycle = createMacClientLifecycle();
@@ -218,7 +234,14 @@ export const nativeClientLifecycleRuntime: ClientLifecycleRuntime = {
     });
     return { processes, uncertain };
   },
-  async closeProcess(target, clientProcess) { if (process.platform === 'darwin') return macLifecycle.closeProcess(target, clientProcess); const result = await script(closeProcessScript, { process: clientProcess }); if (!['requested', 'gone', 'blocked', 'changed'].includes(result.result)) throw new LifecycleError('客户端退出请求未被系统确认'); return result.result; },
+  async closeProcess(target, clientProcess) {
+    if (process.platform === 'darwin') return macLifecycle.closeProcess(target, clientProcess);
+    if (!this.validateTarget(target) || clientProcess.protected || clientProcess.pid === process.pid || clientProcess.pid === process.ppid) return 'changed';
+    try { if (normalized(canonical(clientProcess.executable)) !== normalized(target.executable)) return 'changed'; } catch { return 'changed'; }
+    const result = await script(closeProcessScript, { process: clientProcess });
+    if (!['requested', 'gone', 'blocked', 'changed'].includes(result.result)) throw new LifecycleError('客户端强制结束请求未被系统确认');
+    return result.result;
+  },
   async startDesktop(target) {
     if (process.platform === 'darwin') return macLifecycle.startDesktop(target);
     if (target.aumid) await detached(path.win32.join(process.env.SystemRoot || 'C:\\Windows', 'explorer.exe'), ['shell:AppsFolder\\' + target.aumid]);
@@ -243,7 +266,7 @@ export function createClientLifecycle(runtime: ClientLifecycleRuntime) {
     const detected = runtime.detect(agentId);
     try {
       const target = await runtime.resolveTarget(agentId, detected);
-      return { ...base, installed: !!target, supported: !!target, message: !target ? `未检测到 ${definition.name}，请先完成安装并重新检测` : definition.kind === 'cli' ? '在新的终端窗口打开客户端；原终端会话保留，请自行结束旧会话后加载新配置' : '请求客户端正常退出后重新打开；尚未运行时直接启动，未保存内容请先在客户端处理' };
+      return { ...base, installed: !!target, supported: !!target, message: !target ? `未检测到 ${definition.name}，请先完成安装并重新检测` : definition.kind === 'cli' ? '在新的终端窗口打开客户端；原终端会话保留，请自行结束旧会话后加载新配置' : '强制结束客户端进程后重新打开，包含托盘和后台运行的客户端；未运行时直接启动。当前会话会中断，未保存内容可能丢失，请先保存工作' };
     } catch (error) { return { ...base, installed: detected.installed, supported: false, message: error instanceof LifecycleError || error instanceof MacLifecycleError ? error.message : '无法确认客户端安装位置，请重新检测或手动打开' }; }
   }
   async function restartClient(payload: unknown): Promise<ClientLifecycleResult> {
@@ -264,20 +287,24 @@ export function createClientLifecycle(runtime: ClientLifecycleRuntime) {
         if (initial.uncertain) return result(false, 'failed', '无法完整确认客户端进程身份，请手动退出客户端后重试');
         if (initial.processes.some(process => process.protected || process.pid === globalThis.process.pid || process.pid === globalThis.process.ppid)) return result(false, 'failed', '目标包含云桥自身或启动云桥的进程，已停止操作，请在客户端中手动处理');
         if (initial.processes.length) {
-          const windows = runtime.platform === 'darwin' ? initial.processes : initial.processes.filter(process => process.hasWindow);
-          if (!windows.length) return result(false, 'failed', '客户端仍在托盘或后台运行，请先从客户端菜单完全退出，再重新启动');
-          for (const process of windows) {
-            const outcome = await runtime.closeProcess(target, process);
-            if (outcome === 'changed') return result(false, 'failed', '客户端进程已变化，为避免影响其他程序已停止操作，请重试');
-            if (outcome === 'blocked') return result(false, 'failed', '客户端未接受正常退出，请处理未保存内容或弹窗后重试');
-          }
-          const deadline = runtime.now() + 10000;
+          const deadline = runtime.now() + 10000, requested = new Set<string>();
+          let remaining = initial;
           while (true) {
-            const remaining = await runtime.listProcesses(target);
             if (remaining.uncertain) return result(false, 'failed', '无法确认客户端是否完全退出，请手动检查后重试');
             if (!remaining.processes.length) break;
-            if (runtime.now() >= deadline) return result(false, 'failed', '客户端尚未完全退出，可能仍有未保存内容或后台任务；已停止重启，请手动退出后重试');
+            if (remaining.processes.some(process => process.protected || process.pid === globalThis.process.pid || process.pid === globalThis.process.ppid)) return result(false, 'failed', '目标包含云桥自身或启动云桥的进程，已停止操作，请在客户端中手动处理');
+            if (runtime.now() >= deadline) return result(false, 'failed', '客户端进程尚未完全结束，已停止重新打开，请检查系统权限或后台自动启动程序后重试');
+            for (const process of remaining.processes) {
+              const identity = `${process.pid}:${process.started}`;
+              if (requested.has(identity)) continue;
+              if (!runtime.validateTarget(target)) return result(false, 'failed', '客户端程序在退出期间已变化，请重新检测后再打开');
+              const outcome = await runtime.closeProcess(target, process);
+              if (outcome === 'changed') return result(false, 'failed', '客户端进程已变化，为避免影响其他程序已停止操作，请重试');
+              if (outcome === 'blocked') return result(false, 'failed', '系统未允许结束客户端进程，请检查客户端是否以管理员身份运行，或手动结束后重试');
+              requested.add(identity);
+            }
             await runtime.delay(300);
+            remaining = await runtime.listProcesses(target);
           }
         }
         if (!runtime.validateTarget(target)) return result(false, 'failed', '客户端程序在退出期间已变化，请重新检测后再打开');
@@ -289,7 +316,7 @@ export function createClientLifecycle(runtime: ClientLifecycleRuntime) {
         while (true) {
           const started = await runtime.listProcesses(target);
           if (started.uncertain) return result(false, 'failed', '已发出启动请求，但无法确认客户端进程，请检查客户端窗口');
-          if (started.processes.length) return result(true, initial.processes.length ? 'restarted' : 'started', initial.processes.length ? '客户端已正常退出并重新启动' : '客户端已启动');
+          if (started.processes.length) return result(true, initial.processes.length ? 'restarted' : 'started', initial.processes.length ? '客户端进程已结束并重新启动' : '客户端已启动');
           if (runtime.now() >= deadline) return result(false, 'failed', `已发出启动请求，但未检测到客户端运行，请从${runtime.platform === 'darwin' ? 'Finder' : '开始菜单'}手动打开并检查安装`);
           await runtime.delay(300);
         }

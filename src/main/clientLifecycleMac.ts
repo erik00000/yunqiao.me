@@ -108,7 +108,9 @@ function run(argv) {
     if (!application || application.isTerminated) return JSON.stringify({ result: 'gone' });
     var actual = applicationIdentity(application), information = processInfo(actual.pid);
     if (!sameApplication(actual, target) || !actual.launched || !information || information.uid !== data.ownerUid || expected.ownerSid !== 'uid:' + information.uid || expected.started !== actual.launched + '|' + information.started || protectedProcesses[actual.pid]) return JSON.stringify({ result: 'changed' });
-    return JSON.stringify({ result: application.terminate ? 'requested' : 'blocked' });
+    // Force only this revalidated application instance. A tray-only application
+    // or an application refusing normal quit must still release its old config.
+    return JSON.stringify({ result: application.forceTerminate ? 'requested' : 'blocked' });
   }
   var applications = $.NSWorkspace.sharedWorkspace.runningApplications, processes = [], uncertain = false;
   for (var index = 0; index < Number(applications.count); index++) {
@@ -150,7 +152,7 @@ export function createMacClientLifecycle(host: MacLifecycleHost = nativeMacLifec
       return JSON.parse(raw.trim());
     } catch (error) {
       if (mode === 'terminal') throw new MacLifecycleError((error as { automationDenied?: boolean })?.automationDenied ? 'macOS 未允许控制 Terminal，请在“系统设置 → 隐私与安全性 → 自动化”中允许此应用控制终端，或自行打开新终端' : '无法在 Terminal 中打开新窗口，请检查自动化权限或自行打开新终端');
-      throw new MacLifecycleError('无法安全核对或退出 macOS 客户端，请在客户端中手动退出后重试');
+      throw new MacLifecycleError('无法核对或强制结束 macOS 客户端，请检查系统权限后重试');
     }
   }
   async function resolveTarget(agentId: string, definition: MacClientDefinition, detected: AgentDetection): Promise<ClientTarget | null> {
@@ -206,7 +208,7 @@ export function createMacClientLifecycle(host: MacLifecycleHost = nativeMacLifec
   async function closeProcess(target: ClientTarget, process: ClientProcess): Promise<'requested' | 'gone' | 'blocked' | 'changed'> {
     if (!validateTarget(target) || process.ownerSid !== 'uid:' + host.uid() || process.executable !== target.executable || process.protected || process.pid === host.pid()) return 'changed';
     const result = await jxa('close', target, process);
-    if (!['requested', 'gone', 'blocked', 'changed'].includes(result?.result)) throw new MacLifecycleError('macOS 未确认客户端退出请求');
+    if (!['requested', 'gone', 'blocked', 'changed'].includes(result?.result)) throw new MacLifecycleError('macOS 未确认客户端强制结束请求');
     return result.result;
   }
   async function startDesktop(target: ClientTarget): Promise<void> {
