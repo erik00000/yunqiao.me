@@ -128,6 +128,7 @@ def main():
     parser.add_argument('--exe', type=Path, default=ROOT / 'release/win-unpacked/YunQiaoAI.exe')
     parser.add_argument('--launcher', type=Path, help='Launch a portable wrapper and verify its extracted runtime against --exe')
     parser.add_argument('--version', default=json.loads((ROOT / 'package.json').read_text(encoding='utf-8'))['version'])
+    parser.add_argument('--expect-client-busy', action='store_true', help='Require the real running-client guard; verify zero writes instead of successful native configuration and restoration')
     args = parser.parse_args()
     executable = args.exe.resolve()
     assert executable.is_file(), f'Build the release first: {executable}'
@@ -332,34 +333,82 @@ def main():
             wizard.get_by_role('button', name='预览配置 →', exact=True).click()
             expect(wizard.get_by_role('button', name='备份并应用配置', exact=True)).to_be_visible()
             assert (clients / '.codex/config.toml').read_bytes() == original[clients / '.codex/config.toml']
-            wizard.get_by_role('button', name='备份并应用配置', exact=True).click()
-            expect(wizard.get_by_role('heading', name='配置已应用', exact=True)).to_be_visible()
-            configured = (clients / '.codex/config.toml').read_text(encoding='utf-8')
-            assert 'model_provider = "yunqiao"' in configured and supplier['id'] + '/gpt-6.1-sol' in configured
-            limits = tomllib.loads(configured)
-            assert limits['model_context_window'] == 272000 and limits['model_auto_compact_token_limit'] == 244800
-            assert (clients / '.codex/auth.json').read_bytes() == original[clients / '.codex/auth.json']
-            shared = page.evaluate("async () => (await window.aurora.invoke('state.get')).agents")
-            assert all(shared[client]['connected'] is True for client in ['codex-cli', 'chatgpt-desktop'])
-            wizard.get_by_role('button', name='完成', exact=True).click()
-            page.evaluate("id => window.aurora.invoke('provider.save', {id,models:[{id:'gpt-6.1-sol',contextWindow:200000}]})", supplier['id'])
-            selection = {'agentId': 'chatgpt-desktop', 'providerId': supplier['id'], 'model': 'gpt-6.1-sol', 'authMode': 'api', 'mode': 'gateway'}
-            updated = page.evaluate("p => window.aurora.invoke('agent.preview', p)", selection)
-            assert updated['ok'], updated
-            selection['revision'] = updated['revision']
-            applied = page.evaluate("p => window.aurora.invoke('agent.connect', p)", selection)
-            assert applied['ok'], applied
-            limits = tomllib.loads((clients / '.codex/config.toml').read_text(encoding='utf-8'))
-            assert limits['model_context_window'] == 200000 and limits['model_auto_compact_token_limit'] == 180000
-            assert (clients / '.codex/auth.json').read_bytes() == original[clients / '.codex/auth.json']
-            checks.append('Native model configuration writes 272000/244800, recalculates 200000/180000 on reapply and preserves the original restore point')
-            restored = page.evaluate("() => window.aurora.invoke('agent.disconnect', {agentId:'chatgpt-desktop'})")
-            assert restored['ok'], restored
-            assert all(file.read_bytes() == before for file, before in original.items()), 'Shared configuration restore changed original bytes'
-            assert not errors, errors
-            checks.append('Native wizard previews, backs up, applies and restores shared Codex configuration without a desktop executable; auth bytes stay intact and CLI state stays synchronized')
+            if args.expect_client_busy:
+                # This mode does not bypass or mock process detection. A real
+                # active client must refuse both the UI action and native IPC.
+                agent_file = data / 'agents.json'
+                before_agents = agent_file.read_bytes() if agent_file.exists() else None
+                before_clients = {str(file.relative_to(clients)): file.read_bytes() for file in clients.rglob('*') if file.is_file()}
+                before_states = page.evaluate("async () => (await window.aurora.invoke('state.get')).agents")
+                catalog_file = data / 'codex-model-catalog.json'
+                before_catalog = catalog_file.read_bytes() if catalog_file.exists() else None
+                transaction_root = data / 'client-history-switches'
+                before_transactions = {str(file.relative_to(transaction_root)): file.read_bytes() for file in transaction_root.rglob('*') if file.is_file()}
+
+                def assert_busy_unchanged():
+                    assert all(file.read_bytes() == before for file, before in original.items()), 'A busy-client refusal changed config or auth bytes'
+                    assert {str(file.relative_to(clients)): file.read_bytes() for file in clients.rglob('*') if file.is_file()} == before_clients, 'A busy-client refusal wrote a client file or backup'
+                    assert (agent_file.read_bytes() if agent_file.exists() else None) == before_agents, 'A busy-client refusal changed persisted connection state'
+                    assert (catalog_file.read_bytes() if catalog_file.exists() else None) == before_catalog, 'A busy-client refusal changed the model catalog'
+                    assert {str(file.relative_to(transaction_root)): file.read_bytes() for file in transaction_root.rglob('*') if file.is_file()} == before_transactions, 'A busy-client refusal created a transaction or backup'
+                    assert page.evaluate("async () => (await window.aurora.invoke('state.get')).agents") == before_states
+                    expect(wizard.get_by_role('heading', name='配置已应用', exact=True)).to_have_count(0)
+                    expect(wizard.get_by_role('status', name='历史会话处理结果', exact=True)).to_have_count(0)
+
+                wizard.get_by_role('button', name='备份并应用配置', exact=True).click()
+                retry = wizard.get_by_role('button', name='已退出，重新应用', exact=True)
+                expect(retry).to_be_enabled()
+                expect(wizard.get_by_role('alert')).to_contain_text('请先完全退出')
+                assert_busy_unchanged()
+                checks.append('Native packaged wizard detects a real running client, explains the required exit and keeps config, auth and connection-state bytes unchanged without reporting success')
+                retry.click()
+                expect(retry).to_be_enabled()
+                expect(wizard.get_by_role('alert')).to_contain_text('请先完全退出')
+                selection = {'agentId': 'chatgpt-desktop', 'providerId': supplier['id'], 'model': 'gpt-6.1-sol', 'authMode': 'api', 'mode': 'gateway'}
+                busy_preview = page.evaluate("p => window.aurora.invoke('agent.preview', p)", selection)
+                assert busy_preview['ok'] and busy_preview['revision'], busy_preview
+                selection['revision'] = busy_preview['revision']
+                for _ in range(2):
+                    refused = page.evaluate("p => window.aurora.invoke('agent.connect', p)", selection)
+                    assert refused.get('ok') is False and refused.get('code') == 'CLIENT_HISTORY_BUSY', refused
+                    assert not refused.get('backup') and not refused.get('history'), 'A refused connection must not claim a history backup'
+                    assert_busy_unchanged()
+                wizard.get_by_role('button', name='取消', exact=True).click()
+                expect(wizard).not_to_be_visible()
+                assert not errors, errors
+                checks.append('UI retry and repeated native IPC remain CLIENT_HISTORY_BUSY, create no configuration/history backup or transaction and allow cancellation; successful apply and restore are not covered in this mode')
+            else:
+                wizard.get_by_role('button', name='备份并应用配置', exact=True).click()
+                expect(wizard.get_by_role('heading', name='配置已应用', exact=True)).to_be_visible()
+                configured = (clients / '.codex/config.toml').read_text(encoding='utf-8')
+                assert 'model_provider = "yunqiao"' in configured and supplier['id'] + '/gpt-6.1-sol' in configured
+                limits = tomllib.loads(configured)
+                assert limits['model_context_window'] == 272000 and limits['model_auto_compact_token_limit'] == 244800
+                assert (clients / '.codex/auth.json').read_bytes() == original[clients / '.codex/auth.json']
+                shared = page.evaluate("async () => (await window.aurora.invoke('state.get')).agents")
+                assert all(shared[client]['connected'] is True for client in ['codex-cli', 'chatgpt-desktop'])
+                wizard.get_by_role('button', name='完成', exact=True).click()
+                page.evaluate("id => window.aurora.invoke('provider.save', {id,models:[{id:'gpt-6.1-sol',contextWindow:200000}]})", supplier['id'])
+                selection = {'agentId': 'chatgpt-desktop', 'providerId': supplier['id'], 'model': 'gpt-6.1-sol', 'authMode': 'api', 'mode': 'gateway'}
+                updated = page.evaluate("p => window.aurora.invoke('agent.preview', p)", selection)
+                assert updated['ok'], updated
+                selection['revision'] = updated['revision']
+                applied = page.evaluate("p => window.aurora.invoke('agent.connect', p)", selection)
+                assert applied['ok'], applied
+                limits = tomllib.loads((clients / '.codex/config.toml').read_text(encoding='utf-8'))
+                assert limits['model_context_window'] == 200000 and limits['model_auto_compact_token_limit'] == 180000
+                assert (clients / '.codex/auth.json').read_bytes() == original[clients / '.codex/auth.json']
+                checks.append('Native model configuration writes 272000/244800, recalculates 200000/180000 on reapply and preserves the original restore point')
+                restored = page.evaluate("() => window.aurora.invoke('agent.disconnect', {agentId:'chatgpt-desktop'})")
+                assert restored['ok'], restored
+                assert all(file.read_bytes() == before for file, before in original.items()), 'Shared configuration restore changed original bytes'
+                assert not errors, errors
+                checks.append('Native wizard previews, backs up, applies and restores shared Codex configuration without a desktop executable; auth bytes stay intact and CLI state stays synchronized')
             report = {
                 'version': args.version, 'platform': sys.platform, 'passed': True, 'count': len(checks), 'checks': checks,
+                'configurationAcceptance': 'client-busy-guard' if args.expect_client_busy else 'native-apply-restore',
+                'limitations': ['A real running client prevented native configuration writes. Successful native apply, context-limit recalculation and restore were not exercised in this acceptance run.'] if args.expect_client_busy else [],
+                **({'clientBusyCode': 'CLIENT_HISTORY_BUSY'} if args.expect_client_busy else {}),
                 'executable': str(executable.relative_to(ROOT)) if executable.is_relative_to(ROOT) else str(executable),
                 'exeSha256': sha256(executable), 'asarSha256': sha256(asar),
                 **({'portable': str(launcher.relative_to(ROOT)), 'portableSha256': sha256(launcher)} if args.launcher and launcher.is_relative_to(ROOT) else {}),

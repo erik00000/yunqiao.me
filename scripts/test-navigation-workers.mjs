@@ -58,7 +58,8 @@ try {
   globalThis.fetch = async () => ({ ok: false });
   const api = require(bundle);
   const store = new api.AuroraStore(path.join(root, 'actions-store'));
-  const deps = { store, dataDir: store.dir, platform: process.platform, gatewayStatus: () => ({ running: false }), gatewayUrl: () => 'http://127.0.0.1:3425' };
+  const deps = { store, dataDir: store.dir, platform: process.platform, gatewayStatus: () => ({ running: false }), gatewayUrl: () => 'http://127.0.0.1:3425',
+    historyContext: { home: codex, sqliteHome: codex, blockingProcesses: async () => [] } };
 
   class FakeWorker extends EventEmitter { terminate() { return Promise.resolve(0); } }
   await check('Concurrent scans coalesce; worker concurrency is bounded and completed reads are refreshed', async () => {
@@ -149,15 +150,23 @@ try {
   });
   await check('Desktop preview and apply use a trusted fresh snapshot without redoing installation probes on main', async () => {
     const provider = store.saveProvider({ name: 'Fixture', format: 'openai-responses', baseUrl: 'https://fixture.invalid/v1', models: [{ id: 'fixture' }], apiKeys: [{ id: 'fixture', key: 'fixture-key', enabled: true, weight: 1 }] });
+    // Keep the intentionally simplified scan fixtures intact. Native history
+    // switching is tested separately against valid UUIDs and SQLite indexes.
+    const actionHome = path.join(root, 'action-client'), actionCodex = path.join(actionHome, '.codex');
+    const actionExecutable = desktopFixture(actionHome), originalConfig = fs.readFileSync(path.join(codex, 'config.toml'), 'utf8');
+    write(path.join(actionCodex, 'config.toml'), originalConfig);
+    const actionDeps = { ...deps, historyContext: { home: actionCodex, sqliteHome: actionCodex, blockingProcesses: async () => [] } };
+    process.env.AURORA_CLIENT_HOME = actionHome; api.detectReset();
     const stat = fs.statSync; let mainExecutableReads = 0;
-    fs.statSync = function(file, ...args) { if (path.resolve(String(file)) === path.resolve(executable)) { mainExecutableReads++; throw new Error('Executable probe must run in worker'); } return stat.call(this, file, ...args); };
+    fs.statSync = function(file, ...args) { if (path.resolve(String(file)) === path.resolve(actionExecutable)) { mainExecutableReads++; throw new Error('Executable probe must run in worker'); } return stat.call(this, file, ...args); };
     try {
       const payload = { agentId: 'chatgpt-desktop', providerId: provider.id, model: 'fixture', mode: 'direct', desktopDetection: { installed: true, supportsCodexConfig: true } };
-      const preview = await api.runAction(deps, 'agent.preview', payload); assert.equal(preview.ok, true);
+      const preview = await api.runAction(actionDeps, 'agent.preview', payload); assert.equal(preview.ok, true, preview.message);
       assert(preview.warnings.some(value => value.includes('尚未完成实际请求验证')), 'Untrusted renderer snapshot must not suppress the actual capability notice');
-      const connected = await api.runAction(deps, 'agent.connect', { ...payload, revision: preview.revision }); assert.equal(connected.ok, true);
-      assert.equal(mainExecutableReads, 0); assert(fs.readFileSync(path.join(codex, 'config.toml'), 'utf8').includes('fixture.invalid'));
-    } finally { fs.statSync = stat; }
+      const connected = await api.runAction(actionDeps, 'agent.connect', { ...payload, revision: preview.revision }); assert.equal(connected.ok, true, connected.message);
+      assert.equal(mainExecutableReads, 0); assert(fs.readFileSync(path.join(actionCodex, 'config.toml'), 'utf8').includes('fixture.invalid'));
+      assert.equal(fs.readFileSync(path.join(codex, 'config.toml'), 'utf8'), originalConfig);
+    } finally { fs.statSync = stat; process.env.AURORA_CLIENT_HOME = home; api.detectReset(); }
   });
   await check('A packaged Electron ASAR loads the read-only worker and keeps history readable', async () => {
     const output = path.join(root, 'electron-result.json'), profile = path.join(root, 'electron-profile');

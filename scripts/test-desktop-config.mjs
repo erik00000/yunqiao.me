@@ -48,7 +48,8 @@ const test = async (label, fn) => { await fn(); passed++; console.log('PASS ' + 
   const store = new api.AuroraStore(path.join(root, 'store'));
   store.saveSettings({ gatewayToken: 'fixture-local-gateway-secret', gatewayPort: 3425 });
   const provider = store.saveProvider({ name: 'Fixture', format: 'openai-responses', baseUrl: 'https://fixture.invalid/v1', enabled: true, models: [{ id: 'fixture-model', contextWindow: 123456 }], apiKeys: [{ id: 'fixture-key', key: 'fixture-provider-secret', enabled: true, weight: 1 }] });
-  const deps = { store, dataDir: store.dir, version: '0.6.0', gatewayStatus: () => ({ running: true }), gatewayUrl: () => 'http://127.0.0.1:3425' };
+  const deps = { store, dataDir: store.dir, version: '0.6.0', gatewayStatus: () => ({ running: true }), gatewayUrl: () => 'http://127.0.0.1:3425',
+    historyContext: { home: expectedHome, sqliteHome: expectedHome, blockingProcesses: async () => [] } };
   const selected = { agentId: 'chatgpt-desktop', providerId: provider.id, model: 'fixture-model', mode: 'gateway', authMode: 'api' };
   const call = (action, payload = selected) => api.runAction(deps, action, payload);
   let preview;

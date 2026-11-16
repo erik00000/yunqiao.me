@@ -55,7 +55,8 @@ try {
   store.saveSettings({ gatewayHost: '127.0.0.1', gatewayPort: 3425, gatewayToken: 'fixture-gateway-token', maskSecrets: false });
   const supplier = store.saveProvider({ name: 'Fixture API', format: 'openai-responses', baseUrl: 'https://supplier.invalid/v1', enabled: true,
     apiKeys: [{ id: 'key-fixture', label: 'fixture', key: 'fixture-api-secret', enabled: true, weight: 1 }], models: [{ id: 'relay-model', contextWindow: 65536 }] });
-  const deps = { store, dataDir: store.dir, gatewayStatus: () => ({ running: true }), gatewayUrl: () => 'http://127.0.0.1:3425' };
+  const deps = { store, dataDir: store.dir, gatewayStatus: () => ({ running: true }), gatewayUrl: () => 'http://127.0.0.1:3425',
+    historyContext: { home: codexDir, sqliteHome: codexDir, blockingProcesses: async () => [] } };
   const authBefore = read(authFile);
   const catalogFile = path.join(store.dir, 'codex-model-catalog.json');
 
@@ -219,7 +220,7 @@ try {
     const context = { provider: supplier, model: 'relay-model', mode, gatewayUrl: deps.gatewayUrl(), token: store.getSettings().gatewayToken, authMode: 'api' };
     const preview = adapter.preview(context);
     assert(preview.ok, preview.message); assert.equal(read(configFile), legacyConfig);
-    assert(preview.warnings.some(message => message.includes('旧版供应商配置表与历史会话保留') && message.includes('yunqiao') && message.includes('不会自动迁移历史')));
+    assert(preview.warnings.some(message => message.includes('自动备份本机历史') && message.includes('活动、归档会话及索引')));
     for (const secret of ['fixture-legacy-auth-secret', 'fixture-legacy-aws-secret']) assert(!JSON.stringify(preview).includes(secret));
     const applied = adapter.connect({ ...context, expectedRevision: preview.revision });
     check(`${mode} API moves the active aurora selection to yunqiao while preserving legacy tables and exact restore`, () => {
@@ -239,10 +240,10 @@ try {
   }
   write(configFile, originalConfig);
 
-  check('legacy migration guidance appears only for API mode with root or active-profile aurora state', () => {
+  check('automatic history protection is explained for both API and coexistence configuration', () => {
     const adapter = api.getAdapter('codex-cli');
     const apiContext = { provider: supplier, model: 'relay-model', mode: 'gateway', gatewayUrl: deps.gatewayUrl(), token: store.getSettings().gatewayToken, authMode: 'api' };
-    const notice = preview => preview.warnings.some(message => message.includes('旧版供应商配置表与历史会话保留'));
+    const notice = preview => preview.warnings.some(message => message.includes('自动备份本机历史'));
     for (const before of [
       originalConfig.replace('model_provider = "old-provider"', 'model_provider = "aurora"'),
       originalConfig.replace('"model_provider" = "profile-old"', '"model_provider" = "aurora"'),
@@ -252,10 +253,10 @@ try {
       write(configFile, before);
       const apiPreview = adapter.preview(apiContext); assert(apiPreview.ok, apiPreview.message); assert(notice(apiPreview));
       const coexistPreview = adapter.preview({ ...apiContext, authMode: 'coexist', modelCatalogPath: catalogFile });
-      assert(coexistPreview.ok, coexistPreview.message); assert(!notice(coexistPreview)); assert.equal(read(configFile), before);
+      assert(coexistPreview.ok, coexistPreview.message); assert(notice(coexistPreview)); assert.equal(read(configFile), before);
     }
     for (const before of [originalConfig, originalConfig + '\n[profiles.inactive]\nmodel_provider = "aurora"\n[profiles.inactive.model_providers.aurora]\nname = "Inactive legacy provider"\n']) {
-      write(configFile, before); const preview = adapter.preview(apiContext); assert(preview.ok, preview.message); assert(!notice(preview)); assert.equal(read(configFile), before);
+      write(configFile, before); const preview = adapter.preview(apiContext); assert(preview.ok, preview.message); assert(notice(preview)); assert.equal(read(configFile), before);
     }
   });
   write(configFile, originalConfig);

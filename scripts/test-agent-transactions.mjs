@@ -17,7 +17,11 @@ const assertSnapshot = expected => { for (const { file, content } of expected) a
 const configOriginal = '# original preferences\nmodel_provider = "openai"\nmodel = "official-fixture"\napproval_policy = "on-request"\n[mcp_servers.keep]\ncommand = "fixture"\n';
 const secretFault = 'fixture-storage-error-must-not-escape';
 let passed = 0;
-const check = async (label, fn) => { await fn(); passed++; console.log(`PASS ${label}`); };
+const failures = [];
+const check = async (label, fn) => {
+  try { await fn(); passed++; console.log(`PASS ${label}`); }
+  catch (error) { failures.push({ label, error }); console.error(`FAIL ${label}\n${error.stack}`); }
+};
 const aliases = ['codex-cli', 'chatgpt-desktop', 'codex-desktop'];
 
 try {
@@ -42,7 +46,9 @@ try {
     const authBytes = JSON.stringify({ auth_mode: 'chatgpt', tokens: { access_token: token, refresh_token: 'fixture-refresh-private', account_id: 'fixture-account' } });
     write(auth, authBytes);
     write(path.join(client, '.codex', 'models_cache.json'), JSON.stringify({ models: [{ slug: 'official-fixture', display_name: 'Official fixture', visibility: 'list', context_window: 64000, base_instructions: 'fixture' }] }));
-    const deps = { store, dataDir: store.dir, gatewayStatus: () => ({ running: true }), gatewayUrl: () => 'http://127.0.0.1:3425' };
+    const home = path.join(client, '.codex');
+    const deps = { store, dataDir: store.dir, gatewayStatus: () => ({ running: true }), gatewayUrl: () => 'http://127.0.0.1:3425',
+      historyContext: { home, sqliteHome: home, blockingProcesses: async () => [] } };
     const call = (action, patch = {}) => api.runAction(deps, action, { agentId: 'codex-cli', providerId: provider.id, model: 'model-one', authMode: 'coexist', ...patch });
     return { root, client, store, provider, config, auth, authBytes, catalog, call };
   }
@@ -51,15 +57,17 @@ try {
   const assertNoSecrets = result => { const value = JSON.stringify(result); for (const secret of [secretFault, 'fixture-provider-key', 'fixture-gateway-token', 'fixture-refresh-private', 'fixture-external-private']) assert(!value.includes(secret)); };
   const assertAuth = fixture => assert.equal(read(fixture.auth), fixture.authBytes);
   async function failState(fixture, operation, during = () => {}) {
-    const saveAgents = fixture.store.saveAgents;
+    const saveAgents = fixture.store.saveAgents, saveAgentsIfUnchanged = fixture.store.saveAgentsIfUnchanged;
     let calls = 0;
-    fixture.store.saveAgents = states => { calls++; during(states); throw new Error(secretFault); };
+    const rejectCommit = states => { calls++; during(states); throw new Error(secretFault); };
+    fixture.store.saveAgents = rejectCommit;
+    fixture.store.saveAgentsIfUnchanged = rejectCommit;
     try {
       const result = await operation();
       assert.equal(calls, 1, 'Failure must reach the state commit, not an earlier validation guard');
       assert.equal(result.ok, false); assertNoSecrets(result); assertAuth(fixture);
       return result;
-    } finally { fixture.store.saveAgents = saveAgents; }
+    } finally { fixture.store.saveAgents = saveAgents; fixture.store.saveAgentsIfUnchanged = saveAgentsIfUnchanged; }
   }
   function assertOriginalBackup(result, original) {
     assert(result.backup && fs.existsSync(result.backup));
@@ -87,6 +95,27 @@ try {
       fixture.store.agents.flush();
       assert.equal(read(target), original, 'Failed write remained dirty and later committed partial state');
     }
+  }
+  async function failAtomicAgentRename(fixture, operation) {
+    const target = path.join(fixture.store.dir, 'agents.json'), saved = path.join(fixture.store.dir, 'agents.before-rename-test.json');
+    assert(path.resolve(target).startsWith(path.resolve(scratch) + path.sep));
+    const original = read(target), cached = JSON.stringify(fixture.store.listAgents()), rename = fs.renameSync;
+    let calls = 0;
+    fs.renameSync = function(source, destination, ...args) {
+      if (path.resolve(String(destination)) !== path.resolve(target) || !String(source).startsWith(target + '.') || !String(source).endsWith('.tmp')) return rename.call(this, source, destination, ...args);
+      calls++; rename.call(fs, target, saved); fs.mkdirSync(target);
+      try { return rename.call(this, source, destination, ...args); }
+      finally { fs.rmdirSync(target); rename.call(fs, saved, target); }
+    };
+    try {
+      const result = await operation();
+      assert.equal(calls, 1, 'The native atomic agent-state commit must actually be attempted');
+      assert.equal(result.ok, false); assert.equal(result.rolledBack, true); assertNoSecrets(result); assertAuth(fixture);
+      assert.equal(read(target), original); assert.equal(JSON.stringify(fixture.store.listAgents()), cached);
+      assert(!fs.readdirSync(fixture.store.dir).some(name => /^agents\.json\..*\.tmp$/.test(name)), 'Failed atomic write left a temporary state file');
+      fixture.store.agents.flush(); assert.equal(read(target), original, 'A failed commit remained dirty');
+      return result;
+    } finally { fs.renameSync = rename; }
   }
 
   await check('first coexistence state failure removes new config/catalog and retains its undo manifest', async () => {
@@ -123,24 +152,30 @@ try {
     const restore = await f.call('agent.disconnect'); assert(restore.ok, restore.message); assert.equal(read(f.config), configOriginal);
   });
 
-  await check('connect rollback keeps an intervening external edit and reports only recovery paths', async () => {
+  await check('connect conflict preserves the entire transaction and external edit for explicit recovery', async () => {
     const f = fixture('external-connect'), before = stateSnapshot(f);
     const external = '# external config\nsecret = "fixture-external-private"\n';
     const result = await failState(f, () => f.call('agent.connect'), () => write(f.config, external));
-    assert.equal(read(f.config), external); assert(result.message.includes(f.config)); assert.equal(fs.existsSync(f.catalog), false); assertStates(f, before); assertOriginalBackup(result, configOriginal);
+    assert.equal(read(f.config), external); assert.equal(result.recoveryRequired, true); assert.equal(result.rolledBack, false);
+    assert(result.recoveryPath && fs.existsSync(result.recoveryPath)); assert.equal(json(result.recoveryPath).status, 'needs-recovery');
+    assert.equal(fs.existsSync(f.catalog), true); assertStates(f, before); assertOriginalBackup(result, configOriginal);
   });
 
   await check('disconnect rollback keeps edits made after native restoration and retains the original backup', async () => {
     const f = fixture('external-disconnect'); const first = await f.call('agent.connect'); assert(first.ok, first.message);
     const before = stateSnapshot(f), external = '# third-party changed restored file\nsecret = "fixture-external-private"\n';
     const result = await failState(f, () => f.call('agent.disconnect'), () => write(f.config, external));
-    assert.equal(read(f.config), external); assert(result.message.includes(f.config)); assertStates(f, before); assertOriginalBackup(result, configOriginal);
+    assert.equal(read(f.config), external); assert.equal(result.recoveryRequired, true); assert.equal(result.rolledBack, false);
+    assert(result.recoveryPath && fs.existsSync(result.recoveryPath)); assert.equal(json(result.recoveryPath).status, 'needs-recovery');
+    assertStates(f, before); assertOriginalBackup(result, configOriginal);
   });
 
-  await check('catalog rollback preserves an intervening external catalog edit while reverting client config', async () => {
+  await check('catalog conflict preserves the external edit and complete transaction without partially restoring client config', async () => {
     const f = fixture('external-catalog'), before = stateSnapshot(f), external = '{"fixture":"fixture-external-private"}\n';
     const result = await failState(f, () => f.call('agent.connect'), () => write(f.catalog, external));
-    assert.equal(read(f.catalog), external); assert.equal(read(f.config), configOriginal); assert(result.message.includes(f.catalog)); assertStates(f, before);
+    assert.equal(read(f.catalog), external); assert.notEqual(read(f.config), configOriginal);
+    assert.equal(result.recoveryRequired, true); assert.equal(result.rolledBack, false);
+    assert(result.recoveryPath && fs.existsSync(result.recoveryPath)); assert.equal(json(result.recoveryPath).status, 'needs-recovery'); assertStates(f, before);
   });
 
   function claudeFixture(label) {
@@ -190,16 +225,21 @@ try {
   await check('real agents.json rename failure keeps every existing shared state and rolls back a switch', async () => {
     const f = fixture('disk-connect'); const first = await f.call('agent.connect'); assert(first.ok, first.message);
     const files = snapshot([f.config, f.catalog]), before = stateSnapshot(f);
-    await blockAgentFile(f, () => f.call('agent.connect', { model: 'model-two' }));
+    await failAtomicAgentRename(f, () => f.call('agent.connect', { model: 'model-two' }));
     assertSnapshot(files); assertStates(f, before);
     const reopened = new api.AuroraStore(f.store.dir); assert(aliases.every(id => reopened.listAgents()[id].connected && reopened.listAgents()[id].model === 'model-one'));
   });
   await check('real agents.json rename failure during disconnect restores native files without partial alias changes', async () => {
     const f = fixture('disk-disconnect'); const first = await f.call('agent.connect'); assert(first.ok, first.message);
     const files = snapshot([f.config, f.catalog]), before = stateSnapshot(f);
-    await blockAgentFile(f, () => f.call('agent.disconnect'));
+    await failAtomicAgentRename(f, () => f.call('agent.disconnect'));
     assertSnapshot(files); assertStates(f, before);
     assert(aliases.every(id => new api.AuroraStore(f.store.dir).listAgents()[id].connected));
+  });
+  for (const action of ['agent.connect', 'agent.disconnect']) await check(`Unavailable agent-state storage rejects ${action} before any configuration change`, async () => {
+    const f = fixture('unreadable-' + action); const first = await f.call('agent.connect'); assert(first.ok, first.message);
+    const files = snapshot([f.config, f.catalog]), before = stateSnapshot(f);
+    await blockAgentFile(f, () => f.call(action, { model: 'model-two' })); assertSnapshot(files); assertStates(f, before);
   });
   await check('coexistence connection parameters cannot export gateway or OAuth credentials', async () => {
     const f = fixture('parameters'), files = snapshot([f.config, f.catalog]), before = stateSnapshot(f);
@@ -209,6 +249,7 @@ try {
     }
     assertSnapshot(files); assertStates(f, before); assertAuth(f);
   });
+  assert.equal(failures.length, 0, failures.map(item => item.label).join('\n'));
   console.log(`\nAgent transactions: ${passed} checks passed.`);
 } finally {
   if (originalClientHome === undefined) delete process.env.AURORA_CLIENT_HOME; else process.env.AURORA_CLIENT_HOME = originalClientHome;

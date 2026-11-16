@@ -116,7 +116,7 @@ function validate(ctx: ConnectContext, adapter: AgentAdapter): void {
   }
   connectionParameters(ctx, adapter.protocol);
 }
-function planRevision(files: PlannedFile[]): string { return digest(JSON.stringify(files.map(f => [f.path, f.existed, digest(f.before), digest(f.after), f.ownedJson, f.permissionScope]))); }
+export function planRevision(files: PlannedFile[]): string { return digest(JSON.stringify(files.map(f => [f.path, f.existed, digest(f.before), digest(f.after), f.ownedJson, f.permissionScope]))); }
 
 type AdapterSpec = Pick<AgentAdapter, 'id' | 'name' | 'vendor' | 'description' | 'protocol' | 'support' | 'category' | 'supportNote' | 'docsUrl'> & {
   paths?: () => string[]; command?: string; desktop?: string | readonly string[]; hint?: string; plan?: (ctx: ConnectContext) => PlannedFile[]; warnings?: string[];
@@ -200,7 +200,7 @@ const claudeCode = makeAdapter({
     return files;
   },
 });
-function codexPlan(ctx: ConnectContext): PlannedFile[] {
+export function codexPlan(ctx: ConnectContext): PlannedFile[] {
   const file = codexConfig(), ep = connectionParameters(ctx, 'openai-responses');
   const before = readText(file);
   let current: any;
@@ -274,14 +274,9 @@ function codexPlan(ctx: ConnectContext): PlannedFile[] {
   return [{ ...planned(file, text), ...(ctx.permissionMode === 'full-access' ? { permissionScope: { kind: 'codex-execution-v1' as const, ...(typeof current.profile === 'string' ? { profile: current.profile } : {}) } } : {}) }];
 }
 const CODEX_CONTEXT_WARNING = '应用上下文窗口时，自动压缩阈值同步设为其 90%（向下取整，至少 1 Token），修改后需重启客户端。共存模式按模型目录分别设置，并清除旧的全局窗口和阈值覆盖，让切换模型时使用各自的设置。';
-const CODEX_PROVIDER_WARNING = 'API 模式使用 yunqiao 供应商标识，旧版供应商配置表与历史会话保留。旧会话可在历史会话页预览并迁移到 yunqiao 区域；应用客户端配置不会自动迁移历史。';
-function codexProviderWarnings(ctx: ConnectContext, files: PlannedFile[]): string[] {
-  if (ctx.authMode === 'coexist') return [];
-  // The plan already validated this snapshot; avoid rereading a file that may
-  // change between planning and previewing, or inspecting any session data.
-  const current: any = parseToml(files[0].before.replace(/^\uFEFF/, ''));
-  const profile = typeof current.profile === 'string' ? current.profiles?.[current.profile] : undefined;
-  return [current, profile].some(value => value?.model_provider === 'aurora' || value?.model_providers?.aurora !== undefined) ? [CODEX_PROVIDER_WARNING] : [];
+const CODEX_PROVIDER_WARNING = '应用连接时会自动备份本机历史，并同步活动、归档会话及索引的供应商归属。请先保存工作并退出使用同一会话库的客户端；全部处理成功后再重新打开。';
+function codexProviderWarnings(): string[] {
+  return [CODEX_PROVIDER_WARNING];
 }
 const codexCli = makeAdapter({
   id: 'codex-cli', name: 'Codex CLI', vendor: 'OpenAI', category: 'cli', support: 'automatic', protocol: 'openai-responses', description: 'OpenAI 终端编程助手，使用 Responses 协议。',
@@ -291,7 +286,7 @@ const codexCli = makeAdapter({
 const codexDesktop = makeAdapter({
   id: 'chatgpt-desktop', name: 'ChatGPT 桌面版', vendor: 'OpenAI', category: 'desktop', support: 'automatic', protocol: 'openai-responses', description: '配置与 Codex CLI 共享的编程模型，另行识别桌面程序以支持重启和增强。',
   supportNote: '备份并写入 .codex/config.toml（遵循 CODEX_HOME）；网关模式通过本地地址与令牌路由到所选供应商，直连模式使用供应商地址与密钥。保留官方登录文件。', docsUrl: 'https://developers.openai.com/codex/config-reference', desktop: 'ChatGPT', paths: () => [codexConfig()], hint: '完全退出支持编程配置的 ChatGPT / Codex 桌面版（包括托盘）后重新打开', plan: codexPlan,
-  warnings: ['此变更也会影响 Codex CLI；切换供应商后部分历史会话可能被客户端按 provider 筛选，可到历史会话页查看。', CODEX_CONTEXT_WARNING], previewWarnings: codexProviderWarnings,
+  warnings: ['此变更也会影响使用同一配置的 Codex CLI。', CODEX_CONTEXT_WARNING], previewWarnings: codexProviderWarnings,
 });
 const desktopPreview = codexDesktop.preview.bind(codexDesktop), desktopConnect = codexDesktop.connect.bind(codexDesktop);
 codexDesktop.detect = () => { const detected = desktopDetection(); return { installed: detected.installed, configured: fs.existsSync(codexConfig()), command: detected.executable, version: detected.version, configPath: codexConfig(), productName: detected.productName, supportsCodexConfig: detected.supportsCodexConfig, evidence: detected.evidence, detectionError: detected.detectionError, desktopDetails: detected }; };

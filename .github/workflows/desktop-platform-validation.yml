@@ -85,6 +85,7 @@ jobs:
           python scripts/test-session-sources-ui.py
           python scripts/test-plugin-ui.py
           python scripts/test-history-ui.py
+          python scripts/test-client-history-switch-ui.py
           python scripts/test-provider-balance-ui.py
           python scripts/test-membership-ui.py
           python scripts/test-routing-groups-ui.py

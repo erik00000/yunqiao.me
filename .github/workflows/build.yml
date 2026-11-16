@@ -120,6 +120,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python scripts/test-history-ui.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/test-client-history-switch-ui.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python scripts/test-ui.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - run: node scripts/smoke.mjs

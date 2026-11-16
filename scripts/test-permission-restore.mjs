@@ -29,7 +29,9 @@ try {
     store.saveSettings({ gatewayToken: 'fixture-gateway-private' });
     const provider = store.saveProvider({ name: 'Fixture', format: agentId === 'claude-code' ? 'anthropic' : 'openai-responses', baseUrl: 'https://fixture.invalid/proxy/v1', enabled: true,
       models: [{ id: 'one' }, { id: 'two' }], apiKeys: [{ id: 'key', key: 'fixture-key-private', enabled: true, weight: 1 }] });
-    const deps = { store, dataDir: store.dir, platform: 'win32', gatewayStatus: () => ({ running: true }), gatewayUrl: () => 'http://127.0.0.1:3425' };
+    const historyHome = path.join(client, '.codex');
+    const deps = { store, dataDir: store.dir, platform: 'win32', gatewayStatus: () => ({ running: true }), gatewayUrl: () => 'http://127.0.0.1:3425',
+      historyContext: { home: historyHome, sqliteHome: historyHome, blockingProcesses: async () => [] } };
     const call = (action, patch = {}) => api.runAction(deps, action, { agentId, ...patch });
     const connect = (patch = {}) => call('agent.connect', { providerId: provider.id, model: 'one', permissionMode: 'full-access', ...connectPatch, ...patch });
     const result = await connect(); assert.equal(result.ok, true, result.message);

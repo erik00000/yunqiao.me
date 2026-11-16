@@ -262,6 +262,19 @@ export function restorePlan(agentId: string, backup: string | undefined, allowed
   }
 }
 
+/** Full restoration uses the same validated bytes as restorePlan, including supported legacy backups. */
+export function restorePlanSnapshot(agentId: string, backup: string, allowed: string[]): { revision: string; files: Array<PlannedFile & { afterExisted: boolean }> } {
+  const manifestText = readText(backup), manifest = loadManifest(backup, agentId, allowed);
+  const files = manifest.files.map(entry => {
+    const before = readText(entry.path);
+    if (!fs.existsSync(entry.path) || !installedMatches(entry, before)) throw new Error('客户端配置在接入后已变化，未恢复');
+    if (entry.backup && !fs.existsSync(entry.backup)) throw new Error('原始配置备份已丢失');
+    const after = restoredContent(entry, before);
+    return { path: entry.path, before, after: after ?? '', existed: true, afterExisted: after !== null };
+  });
+  return { revision: digest(JSON.stringify([manifestText, files])), files };
+}
+
 /** Read-only verification. No config content, credentials or paths escape this result. */
 export function inspectAppliedPlan(agentId: string, backup: string, allowed: string[]): { backupReadable: boolean; unchanged: boolean } {
   if (!allowed.length) throw new Error('无法确定配置目录');

@@ -24,7 +24,9 @@ try {
     const store = new api.AuroraStore(path.join(scratch, name, 'store'));
     store.saveSettings({ gatewayToken: secrets[1], gatewayPort: 3425 });
     const provider = store.saveProvider({ name: secrets[2], enabled: true, format: 'anthropic', baseUrl: 'https://fixture.invalid', models: [{ id: 'fixture-model' }], apiKeys: [{ id: 'key', key: secrets[0], enabled: true, weight: 1 }] });
-    const deps = { store, dataDir: store.dir, version: '0.6.0', gatewayStatus: () => ({ running: true }), gatewayUrl: () => 'http://127.0.0.1:3425' };
+    const historyHome = path.join(scratch, name, 'client', '.codex');
+    const deps = { store, dataDir: store.dir, version: '0.6.0', gatewayStatus: () => ({ running: true }), gatewayUrl: () => 'http://127.0.0.1:3425',
+      historyContext: { home: historyHome, sqliteHome: historyHome, blockingProcesses: async () => [] } };
     const adapter = api.getAdapter(agentId), file = adapter.configPaths()[0];
     if (file) write(file, file.endsWith('.toml') ? '# original\n' : '{}\n');
     const call = (action, data = { agentId }) => api.runAction(deps, action, data);

@@ -113,7 +113,9 @@ try {
   write(path.join(legacyDir, 'settings.json'), JSON.stringify({ theme: 'light', gatewayPort: 3499, autoCheckUpdate: false, closeToTray: false }));
   check('Partial legacy settings persist a missing token before returning it', () => { const legacy = new api.AuroraStore(legacyDir); const first = legacy.getSettings().gatewayToken; assert(first); assert.equal(legacy.getSettings().gatewayToken, first); assert.equal(new api.AuroraStore(legacyDir).getSettings().gatewayToken, first); assert.equal(JSON.parse(read(path.join(legacyDir, 'settings.json'))).gatewayToken, first); });
   const savedProvider = store.saveProvider({...provider,id:undefined});
-  const deps = { store, dataDir: store.dir, gatewayStatus: () => ({ running: true }), gatewayUrl: () => context.gatewayUrl };
+  const historyHome = path.join(isolated, '.codex');
+  const deps = { store, dataDir: store.dir, gatewayStatus: () => ({ running: true }), gatewayUrl: () => context.gatewayUrl,
+    historyContext: { home: historyHome, sqliteHome: historyHome, blockingProcesses: async () => [] } };
   for (const setting of ['headers', 'providerProxy', 'globalProxy']) {
     const blockedProvider = store.saveProvider({ ...provider, id: undefined, format: 'openai-responses', ...(setting === 'headers' ? { headers: { 'X-Required': 'fixture' } } : setting === 'providerProxy' ? { proxy: 'http://127.0.0.1:1234' } : {}) });
     if (setting === 'globalProxy') store.saveSettings({ proxy: 'http://127.0.0.1:1234' });
@@ -146,15 +148,22 @@ try {
   const validBackup = store.exportAll();
   check('Invalid backup imports leave existing data unchanged', () => { assert.throws(() => store.importAll({ ...validBackup, providers: [{ id: 'bad', models: 'invalid' }] })); assert.deepEqual(store.listProviders(), validBackup.providers); });
   check('Imported client choices require reapplication and cannot import arbitrary backup paths', () => { store.importAll({ ...validBackup, agents: { 'codex-cli': { id: 'codex-cli', connected: true, providerId: savedProvider.id, model: 'model-one', backupPath: 'C:/private/other-file' } } }); assert.equal(store.listAgents()['codex-cli'].connected, false); assert.equal(store.listAgents()['codex-cli'].backupPath, undefined); });
-  const configBeforeImport = read(codexFile);
-  const connectedBeforeImport = await api.runAction(deps, 'agent.connect', { agentId: 'codex-cli', providerId: savedProvider.id, model: 'model-one' });
-  assert(connectedBeforeImport.ok, connectedBeforeImport.message);
-  const importWithLocalBackup = store.exportAll();
-  store.importAll(importWithLocalBackup);
-  const reapply = await api.runAction(deps, 'agent.connect', { agentId: 'codex-cli', providerId: savedProvider.id, model: 'model-two' });
-  assert(reapply.ok, reapply.message);
-  const restoredAfterImport = await api.runAction(deps, 'agent.disconnect', { agentId: 'codex-desktop' });
-  check('Import and reapply retain this computer’s original undo backup', () => { assert(restoredAfterImport.ok, restoredAfterImport.message); assert.equal(read(codexFile), configBeforeImport); });
+  // Scan-only fixtures intentionally have no native SQLite index. Exercise the
+  // configuration/import workflow in a separate private client installation.
+  const configBeforeImport = read(codexFile), importClient = path.join(isolated, 'import-client'), importHome = path.join(importClient, '.codex');
+  const importConfig = path.join(importHome, 'config.toml'); write(importConfig, configBeforeImport);
+  const importDeps = { ...deps, historyContext: { home: importHome, sqliteHome: importHome, blockingProcesses: async () => [] } };
+  process.env.AURORA_CLIENT_HOME = importClient;
+  try {
+    const connectedBeforeImport = await api.runAction(importDeps, 'agent.connect', { agentId: 'codex-cli', providerId: savedProvider.id, model: 'model-one' });
+    assert(connectedBeforeImport.ok, connectedBeforeImport.message);
+    const importWithLocalBackup = store.exportAll();
+    store.importAll(importWithLocalBackup);
+    const reapply = await api.runAction(importDeps, 'agent.connect', { agentId: 'codex-cli', providerId: savedProvider.id, model: 'model-two' });
+    assert(reapply.ok, reapply.message);
+    const restoredAfterImport = await api.runAction(importDeps, 'agent.disconnect', { agentId: 'codex-desktop' });
+    check('Import and reapply retain this computer’s original undo backup', () => { assert(restoredAfterImport.ok, restoredAfterImport.message); assert.equal(read(importConfig), configBeforeImport); assert.equal(read(codexFile), configBeforeImport); });
+  } finally { process.env.AURORA_CLIENT_HOME = isolated; }
   const beforePort = store.getSettings().gatewayPort;
   let restarts = 0;
   await assert.rejects(api.runAction({ ...deps, restartGateway: async () => { if (++restarts === 1) throw new Error('address in use'); } }, 'settings.save', { gatewayPort: beforePort + 1 }), /address in use/);

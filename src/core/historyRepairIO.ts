@@ -6,7 +6,8 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { atomicWrite } from './agents/configFiles.js';
 import { runningCodingClients } from './clientProcesses.js';
-import { getAdapter } from './agents/adapters.js';
+import { getDetectionContext } from './agents/adapters.js';
+import { detectDesktopAsync } from './agents/detectionAsync.js';
 
 export const runFile = promisify(execFile);
 export interface HistoryContext { home: string; sqliteHome: string; blockingProcesses?: () => Promise<string[]> }
@@ -51,9 +52,9 @@ export async function assertClientsStopped(ctx: HistoryContext): Promise<void> {
   if (processes.length) throw new Error(`请先完全退出 ChatGPT 桌面版 / Codex 及 CLI，再执行修复或恢复。检测到：${processes.join('、')}`);
 }
 export async function runningClients(): Promise<string[]> {
-  const configured = getAdapter('chatgpt-desktop')?.detect();
+  const configured = await detectDesktopAsync(getDetectionContext().exePath);
   if (configured?.detectionError) throw new Error('客户端程序状态暂时无法确认，请等待更新完成或重新选择程序路径后再修复历史');
-  return runningCodingClients(configured?.command ? [configured.command] : []);
+  return runningCodingClients(configured.executable ? [configured.executable] : []);
 }
 
 /** Shared across provider repair and native index repair; stale owners are recovered only after PID verification. */

@@ -6,11 +6,11 @@ import { activeRequests } from './gateway/liveUsage.js';
 import path from 'node:path';
 import fs from 'node:fs';
 import { applyContextDefaults, isChatgptTextModel, isValidContextWindow } from './modelContext.js';
-import { readText, atomicWrite, digest, expectedPlanFiles } from './agents/configFiles.js';
+import { readText, atomicWrite, digest, expectedPlanFiles, planned, restorePlanSnapshot } from './agents/configFiles.js';
 import { runPermissionAction } from './agents/permissions.js';
 import { getCoexistCatalog } from './gateway/coexist.js';
 import { runExtensionAction } from './extensions/index.js';
-import { AGENT_ADAPTERS, detectReset, getAdapter, connectionParameters, exportEnvScript, configureDesktopPath, type ConnectContext } from './agents/adapters.js';
+import { AGENT_ADAPTERS, detectReset, getAdapter, connectionParameters, exportEnvScript, configureDesktopPath, codexPlan, planRevision, type ConnectContext } from './agents/adapters.js';
 import { detectAllAsync, detectDesktopAsync } from './agents/detectionAsync.js';
 import { resumeCommand } from './sessions.js';
 import { scanSessionsAsync, readSessionAsync, exportSessionAsync, listCodexAssetsAsync } from './readOnlyJobs.js';
@@ -33,6 +33,8 @@ import { GITHUB_RELEASE_PAGE } from './releaseSources.js';
 import { providerBalance } from './providerBalance.js';
 import { diagnoseClient } from './clientDiagnostics.js';
 import { testClientConnection, cancelClientConnectionTest } from './clientConnectionTest.js';
+import { prepareClientHistory, recoverClientHistory, applyClientHistory, historyPreviewRevision, clientConnectionRevision, CODEX_STATE_IDS, type PreparedClientHistory } from './agentHistory.js';
+import type { HistoryContext } from './historyRepairIO.js';
 
 /**
  * 与 Electron 无关的动作层：桌面端的 IPC 和网关的 /api/rpc 共用同一份实现，
@@ -49,6 +51,8 @@ export interface ActionDeps {
   version?: string;
   dataDir: string;
   localClientWarnings?: string[];
+  /** Trusted main-process/test context; never populated from an RPC payload. */
+  historyContext?: HistoryContext;
 }
 
 interface ClientFileSnapshot { path: string; existed: boolean; content: string }
@@ -503,14 +507,19 @@ export async function runAction(deps: ActionDeps, action: string, payload: any):
     case 'agent.preview':
     case 'agent.parameters':
     case 'agent.connect': {
+      try {
       const adapter = getAdapter(String(payload.agentId || ''));
       if (!adapter) return { ok: false, message: '未知客户端' };
       if (adapter.support === 'unsupported') return { ok: false, message: adapter.supportNote, files: [], warnings: [] };
+      const sharedCodex = adapter.id === 'codex-cli' || adapter.id === 'chatgpt-desktop';
+      if (sharedCodex && action !== 'agent.parameters') {
+        const recovered = await recoverClientHistory(deps);
+        if (!recovered.ok) return { ...recovered, files: [], warnings: [] };
+      }
       const desktopDetection = adapter.id === 'chatgpt-desktop'
         ? await detectDesktopAsync(store.readExtra<any>('extensions.json', {})?.connection?.exePath, action === 'agent.connect')
           .catch(() => ({ installed: false, supportsCodexConfig: false, evidence: [] }))
         : undefined;
-      const sharedCodex = adapter.id === 'codex-cli' || adapter.id === 'chatgpt-desktop';
       const authMode = payload.authMode || 'api';
       if (!['api', 'coexist'].includes(authMode) || (authMode === 'coexist' && !sharedCodex)) return { ok: false, message: '此客户端不支持所选账号模式' };
       if (action === 'agent.parameters' && authMode === 'coexist') return { ok: false, message: '共存模式请通过配置向导应用；官方登录由原客户端使用，不导出登录凭据。' };
@@ -535,11 +544,20 @@ export async function runAction(deps: ActionDeps, action: string, payload: any):
         modelCatalogPath: path.join(store.dir, 'codex-model-catalog.json'),
         desktopDetection,
       };
-      const preview = adapter.preview(context);
+      const reviewedConnectionRevision = sharedCodex ? clientConnectionRevision(deps) : '';
+      const preview: ReturnType<typeof adapter.preview> & { history?: PreparedClientHistory['history'] } = adapter.preview(context);
       const clientRevision = preview.revision;
       // A coexistence apply also publishes the model catalog. Bind that content
       // to the review even when a changed model limit leaves config.toml identical.
       if (coexist && clientRevision) preview.revision = digest(JSON.stringify({ clientRevision, nativeCatalog: coexist.nativeCatalog }));
+      let history: PreparedClientHistory | undefined;
+      if (sharedCodex && preview.ok && action !== 'agent.parameters') {
+        const prepared = await prepareClientHistory(deps, codexPlan(context)[0].after);
+        if (!prepared.ok) return { ...preview, ok: false, message: prepared.message };
+        history = prepared; preview.history = history.history;
+        if (clientConnectionRevision(deps) !== reviewedConnectionRevision) return { ...preview, ok: false, message: '供应商或连接状态在检查期间已变化，请重新预览' };
+        preview.revision = historyPreviewRevision(preview.revision, history, reviewedConnectionRevision);
+      }
       if (action === 'agent.preview' || !preview.ok) return preview;
       if (action === 'agent.parameters') return { ok: true, ...connectionParameters(context, adapter.protocol), script: exportEnvScript(context, adapter.protocol), note: adapter.supportNote };
       if (context.mode === 'gateway' && !deps.gatewayStatus().running) return { ok: false, message: '本地网关未运行，请先启动网关后再应用配置' };
@@ -547,6 +565,26 @@ export async function runAction(deps: ActionDeps, action: string, payload: any):
       // The adapter independently checks only its client-file plan.
       context.expectedRevision = clientRevision;
       const catalogFile = context.modelCatalogPath!;
+      if (history) {
+        if (history.history.blocked) return { ok: false, message: '部分历史会话尚无法安全处理，原配置保持不变。请检查预览中的原因后重新预览。' };
+        const files = codexPlan(context);
+        if (planRevision(files) !== clientRevision) return { ok: false, message: '配置在检查历史期间已变化，请重新预览' };
+        if (coexist) files.push(planned(catalogFile, JSON.stringify(coexist.nativeCatalog, null, 2)));
+        return await applyClientHistory(deps, {
+          prepared: history, files,
+          revalidate: () => {
+            if (clientConnectionRevision(deps) !== reviewedConnectionRevision || planRevision(codexPlan(context)) !== clientRevision || (coexist && digest(JSON.stringify(getCoexistCatalog(store).nativeCatalog)) !== digest(JSON.stringify(coexist.nativeCatalog))))
+              throw new Error('配置或模型目录在检查后已变化');
+          },
+          commit: () => {
+            if (coexist) atomicWrite(catalogFile, files[1].after, { existed: files[1].existed, content: files[1].before });
+            return adapter.connect(context);
+          },
+          states: result => CODEX_STATE_IDS.map(id => ({ id, connected: true, pendingReapply: false, providerId: provider.id, model: context.model,
+            modelMap: context.modelMap, mode: context.mode, authMode, permissionMode: context.permissionMode, skipOnboarding: context.skipOnboarding,
+            configPath: result.path, backupPath: result.backup })),
+        });
+      }
       let clientBefore: ClientFileSnapshot[], catalogBefore: ClientFileSnapshot[];
       try {
         const allowedPaths = new Set(adapter.configPaths().map(file => path.resolve(file)));
@@ -574,12 +612,37 @@ export async function runAction(deps: ActionDeps, action: string, payload: any):
         } catch { return clientStateFailure([...clientBefore, ...catalogBefore], expected, result.backup); }
       }
       return result;
+      } catch { return { ok: false, message: '无法核验客户端配置或连接记录，未完成应用。请检查配置文件、磁盘空间和数据目录权限后重试。' }; }
     }
     case 'agent.disconnect': {
       const adapter = getAdapter(String(payload.agentId || ''));
       if (!adapter) return { ok: false, message: '未知客户端' };
+      const sharedCodex = adapter.id === 'codex-cli' || adapter.id === 'chatgpt-desktop';
+      if (sharedCodex) {
+        const recovered = await recoverClientHistory(deps);
+        if (!recovered.ok) return recovered;
+      }
       const current = store.listAgents()[adapter.id];
       if (!current?.backupPath) return adapter.disconnect();
+      if (sharedCodex) {
+        try {
+          const reviewedConnectionRevision = clientConnectionRevision(deps);
+          const original = restorePlanSnapshot('codex-cli', current.backupPath, adapter.configPaths());
+          const files = original.files;
+          const history = await prepareClientHistory(deps, files[0].after);
+          if (!history.ok) return history;
+          if (history.history.blocked) return { ok: false, message: '部分历史会话无法安全恢复归属，已保留当前连接。请先检查历史会话。' };
+          return await applyClientHistory(deps, {
+              prepared: history, files,
+              revalidate: () => {
+                if (clientConnectionRevision(deps) !== reviewedConnectionRevision || restorePlanSnapshot('codex-cli', current.backupPath!, adapter.configPaths()).revision !== original.revision)
+                  throw new Error('原始配置备份或当前配置已变化');
+              },
+              commit: () => ({ ...adapter.disconnect(current.backupPath), backup: current.backupPath }),
+              states: () => CODEX_STATE_IDS.map(id => ({ id, connected: false, pendingReapply: false, backupPath: undefined })),
+            });
+        } catch { return { ok: false, message: '无法安全核验原配置和历史备份，当前连接保持不变。请检查备份目录与客户端配置。' }; }
+      }
       let before: ClientFileSnapshot[], expected: Map<string, ClientFileExpected>;
       try {
         before = snapshotClientFiles(adapter.restorePaths?.(current.backupPath) ?? adapter.configPaths());
