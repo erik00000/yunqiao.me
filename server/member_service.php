@@ -210,10 +210,17 @@ final class MemberService
                     CREATE TABLE IF NOT EXISTS member_rate_limits (key TEXT PRIMARY KEY, window_start INTEGER NOT NULL, attempts INTEGER NOT NULL);');
                     $statement = $db->prepare("INSERT INTO member_meta(key,value) VALUES('upstream_origin',?)");
                     $statement->execute([$this->config['origin']]);
+                    // A fresh ledger must never commit the modern amount constraint without
+                    // its policy: a process exit here must leave a usable complete first state.
+                    $policy = $this->defaultGiftPolicy();
+                    unset($policy['amountUsd']);
+                    $statement = $db->prepare('INSERT INTO member_meta(key,value) VALUES(?,?)');
+                    $statement->execute([self::GIFT_POLICY_KEY, json_encode($policy, JSON_THROW_ON_ERROR)]);
+                    $db->exec("INSERT INTO member_meta(key,value) VALUES('gift_policy_version','1')");
                     $db->exec('COMMIT');
                 } catch (Throwable $error) { $db->exec('ROLLBACK'); throw $error; }
             }
-            $this->initializeGiftPolicy($db, $dir, $existing);
+            $this->initializeGiftPolicy($db, $dir);
             // Migrate authentication metadata only after verifying the complete monetary ledger.
             // Old sessions have no recoverable refresh token and retain their original expiry.
             $columns = array_column($db->query('PRAGMA table_info(member_sessions)')->fetchAll(PDO::FETCH_ASSOC), 'name');
@@ -243,7 +250,7 @@ final class MemberService
     }
 
     /** Called only with members-init.lock held and after the complete ledger was verified. */
-    private function initializeGiftPolicy(PDO $db, string $dir, bool $existing): void
+    private function initializeGiftPolicy(PDO $db, string $dir): void
     {
         $version = $db->query("SELECT value FROM member_meta WHERE key='gift_policy_version'")->fetchColumn();
         $schema = (string)$db->query("SELECT sql FROM sqlite_master WHERE type='table' AND name='welcome_grants'")->fetchColumn();
@@ -256,7 +263,7 @@ final class MemberService
         }
         if ($hasPolicy) throw new MemberError('STORAGE_UNAVAILABLE', '赠金设置版本记录缺失，请联系管理员恢复备份', 503);
         $replacement = preg_replace('/CHECK\s*\(\s*amount_cents\s*=\s*1000\s*\)/i', self::GIFT_AMOUNT_CHECK, $schema, -1, $count);
-        if ($count === 0 && ($existing || !str_contains($schema, self::GIFT_AMOUNT_CHECK))) {
+        if ($count === 0) {
             throw new MemberError('STORAGE_UNAVAILABLE', '赠金账本金额约束异常，请联系管理员恢复备份', 503);
         }
         if ($count > 1) throw new MemberError('STORAGE_UNAVAILABLE', '赠金账本金额约束异常，请联系管理员恢复备份', 503);

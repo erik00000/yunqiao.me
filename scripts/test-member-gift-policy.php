@@ -1,6 +1,19 @@
 <?php
 /** Offline monetary-policy integration tests. Temporary SQLite only; no accounts, network or real credit. */
 declare(strict_types=1);
+if (($argv[1] ?? '') === '--initialization-crash-worker') {
+    // Inject an exit immediately after the real first schema COMMIT in a child.
+    // This exercises process-restart recovery without adding production test hooks.
+    $source = (string)file_get_contents(__DIR__ . '/../server/member_service.php');
+    $commit = "\$db->exec('COMMIT');";
+    $position = strpos($source, $commit);
+    if ($position === false) exit(74);
+    $source = substr_replace($source, $commit . ' exit(73);', $position, strlen($commit));
+    eval(substr($source, 5));
+    $config = json_decode((string)file_get_contents($argv[2]), true, 32, JSON_THROW_ON_ERROR);
+    (new MemberService($config))->adminGiftPolicy();
+    exit(75);
+}
 require __DIR__ . '/../server/member_service.php';
 
 function verifyGift(bool $condition, string $message): void { if (!$condition) throw new RuntimeException($message); }
@@ -163,6 +176,24 @@ $test('default policy preserves ten-dollar campaign and public configuration wit
         giftError(fn() => $unconfigured->adminSaveGiftPolicy(['enabled'=>true,'amountUsd'=>'1','revision'=>1]), 'MEMBERS_DISABLED');
         verifyGift(!file_exists($config['dataDir']), 'Unconfigured administration never creates or binds a ledger');
     }
+});
+$test('process exit immediately after first schema commit preserves complete policy and allows normal restart', static function ($dir): void {
+    $config = $dir . '/crash-config.json'; file_put_contents($config, json_encode(giftConfig($dir), JSON_THROW_ON_ERROR));
+    $command = [PHP_BINARY];
+    if (PHP_OS_FAMILY === 'Windows') array_push($command, '-d', 'extension_dir=' . ini_get('extension_dir'), '-d', 'extension=pdo_sqlite', '-d', 'extension=openssl');
+    array_push($command, __FILE__, '--initialization-crash-worker', $config);
+    $process = proc_open($command, [0 => ['pipe','r'],1 => ['pipe','w'],2 => ['pipe','w']], $pipes);
+    verifyGift(is_resource($process), 'Crash worker started'); fclose($pipes[0]);
+    $stdout=stream_get_contents($pipes[1]); $stderr=stream_get_contents($pipes[2]); fclose($pipes[1]); fclose($pipes[2]);
+    verifyGift(proc_close($process)===73, 'Exited at first committed initialization: '.$stderr.$stdout);
+    $db=giftLedger($dir);
+    verifyGift($db->query("SELECT value FROM member_meta WHERE key='gift_policy_version'")->fetchColumn()==='1','Policy version already durable at first commit');
+    $policy=json_decode($db->query("SELECT value FROM member_meta WHERE key='welcome_gift_policy'")->fetchColumn(),true,16,JSON_THROW_ON_ERROR);
+    verifyGift($policy['enabled'] && $policy['amountCents']===1000 && $policy['revision']===1,'Default policy committed with monetary tables');
+    verifyGift($db->query("SELECT value FROM member_meta WHERE key='session_refresh_version'")->fetchColumn()===false,'Exit occurred before later session migration');
+    $service=giftService($dir); verifyGift($service->adminGiftPolicy()['amountUsd']===10,'Restart opens complete initial ledger');
+    verifyGift($service->handle('status',[],giftLogin($service))['gift']['status']==='eligible','Membership resumes normally');
+    verifyGift(!is_dir($dir.'/ledger/backups'),'Fresh modern ledger does not enter legacy monetary migration');
 });
 $test('strict decimal validation accepts cent boundaries and rejects coercion and invalid fields without a write', static function ($dir): void {
     $service = giftService($dir);

@@ -78,7 +78,9 @@ def main():
     args = parser.parse_args()
     if not args.php:
         parser.error("PHP 8.1+ is required on PATH, or set PHP_BINARY / --php")
-    command = [args.php]
+    # Hosting CLI builds can inherit a web ini that disables putenv(). This private
+    # HTTP fixture changes its own environment; never modify the host's PHP.ini.
+    command = [args.php, "-d", "disable_functions="]
     if args.php_extension_dir:
         command += ["-d", "extension_dir=" + str(args.php_extension_dir.resolve())]
         for extension in ("pdo_sqlite", "openssl"):
@@ -211,7 +213,7 @@ return static function (string $method, string $path, array $headers, ?array $bo
                 passed("real password login exposes a CSRF-protected default policy form")
 
                 status, body, _ = request("/fixture-unconfigured.php")
-                assert status == 200 and "会员服务尚未启用" in body and "gift-policy-form" not in body
+                assert status == 200 and "会员服务尚未启用" in body and "gift-policy-form" not in body, (status, body[:500])
                 assert not (private / "unconfigured-ledger").exists()
                 assert request("/fixture-unconfigured.php", fields=form)[0] == 503
                 assert not (private / "unconfigured-ledger").exists()
