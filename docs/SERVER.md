@@ -1,6 +1,6 @@
 # 远端目录与版本服务
 
-现有站点：`https://ai.haowucm.cn`，服务器网站目录 `/www/wwwroot/ai.haowucm.cn`。2026-11-16 已将官网备用更新发布为 **0.6.2**，Windows x64、macOS Apple Silicon arm64 和 Intel x64 均提供对应安装包与 SHA256。
+现有站点：`https://ai.haowucm.cn`，服务器网站目录 `/www/wwwroot/ai.haowucm.cn`。2026-11-16 已将官网备用更新发布为 **0.6.3**，Windows x64、macOS Apple Silicon arm64 和 Intel x64 均提供对应安装包与 SHA256。
 
 ## 客户端读取
 
@@ -15,15 +15,15 @@
 
 官网仍使用现有更新接口，客户端传入 `platform`、`arch`、`current`。Windows 包名遵循 `YunQiaoAI-版本-win-架构-setup.exe`（或 `portable.exe`）；macOS 为 `YunQiaoAI-版本-mac-架构.dmg`，Linux 为 `YunQiaoAI-版本-linux-架构.AppImage`。备用文件应放在官网 HTTPS `/releases/` 下，并与后台版本一致。
 
-当前 GitHub [v0.6.2](https://github.com/jxb412/yunqiao.me/releases/tag/v0.6.2) 为公开正式版，官网备用元数据与之同步。本版简化当前连接卡片，详细说明默认折叠，异常直接显示；同时保留桌面客户端强制重启和新安装默认深夜主题。旧版安装包继续保留。Windows 安装包、免安装版及 ZIP 与两种 Mac 架构的 DMG、ZIP 均按发布清单校验后同步。
+当前 GitHub [v0.6.3](https://github.com/jxb412/yunqiao.me/releases/tag/v0.6.3) 为公开正式版，官网备用元数据与之同步。本版修复 Windows 命令行客户端新终端启动，并支持 Claude 与 Claude-3p 桌面历史目录识别及会话来源展示；同时保留紧凑连接卡片、强制重启和默认深夜主题。旧版安装包继续保留。Windows 安装包、免安装版及 ZIP 与两种 Mac 架构的 DMG、ZIP 均按发布清单校验后同步。
 
 | 平台 | 官网更新安装包 |
 | --- | --- |
-| Windows x64 | [安装版 EXE](https://ai.haowucm.cn/releases/YunQiaoAI-0.6.2-win-x64-setup.exe) |
-| macOS Apple Silicon arm64 | [ARM DMG](https://ai.haowucm.cn/releases/YunQiaoAI-0.6.2-mac-arm64.dmg) |
-| macOS Intel x64 | [Intel DMG](https://ai.haowucm.cn/releases/YunQiaoAI-0.6.2-mac-x64.dmg) |
+| Windows x64 | [安装版 EXE](https://ai.haowucm.cn/releases/YunQiaoAI-0.6.3-win-x64-setup.exe) |
+| macOS Apple Silicon arm64 | [ARM DMG](https://ai.haowucm.cn/releases/YunQiaoAI-0.6.3-mac-arm64.dmg) |
+| macOS Intel x64 | [Intel DMG](https://ai.haowucm.cn/releases/YunQiaoAI-0.6.3-mac-x64.dmg) |
 
-已在线验证三平台：当前版本 0.6.1 返回 `hasUpdate:true`，当前版本 0.6.2 返回最新版本 0.6.2、`hasUpdate:false`。没有安装包的平台/架构返回空地址，不套用其他平台文件。后台版本页分别维护两种 Mac 架构；仅修改更新说明不会删除 Intel Mac 或未显示平台的链接。
+已在线验证三平台：当前版本 0.6.2 返回 `hasUpdate:true`，当前版本 0.6.3 返回最新版本 0.6.3、`hasUpdate:false`。没有安装包的平台/架构返回空地址，不套用其他平台文件。后台版本页分别维护两种 Mac 架构；仅修改更新说明不会删除 Intel Mac 或未显示平台的链接。
 
 厂商模板与用户配置分离：导入目录创建供应商模板，用户自行填写密钥。列表中保留原始模型 ID；价格/上下文信息以服务商实际说明为准。
 
@@ -72,16 +72,16 @@ python scripts/deploy_php.py
 python scripts/deploy_php.py --apply
 
 # 指向已验证的完整交付目录，先核实全部文件与发布清单
-python scripts/deploy_release.py --release-dir release/yunqiao.me-0.6.2
+python scripts/deploy_release.py --release-dir release/yunqiao.me-0.6.3
 
 # 上传安装包；默认拒绝覆盖不同内容的同名文件
-python scripts/deploy_release.py --release-dir release/yunqiao.me-0.6.2 --apply
+python scripts/deploy_release.py --release-dir release/yunqiao.me-0.6.3 --apply
 
 # 校验三平台安装包并预览官网元数据
-python scripts/publish_update.py --release-dir release/yunqiao.me-0.6.2
+python scripts/publish_update.py --release-dir release/yunqiao.me-0.6.3
 
 # 官网文件校验通过后发布；更新说明可另用 --notes-file 指定 UTF-8 文件
-python scripts/publish_update.py --release-dir release/yunqiao.me-0.6.2 --apply
+python scripts/publish_update.py --release-dir release/yunqiao.me-0.6.3 --apply
 ```
 
 PHP 脚本先暂存到网站目录之外并逐个运行 `php -l`，检查通过后保留旧文件至 `/www/aurora-backups/<时间>/`，再逐文件原子替换。不重新初始化供应商目录、账号密码或版本信息；也不递归修改网站所有权。若服务器 PHP CLI 路径不同，先调整脚本使用的 CLI 路径。
