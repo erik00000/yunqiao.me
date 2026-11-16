@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { randomBytes } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
 import { getAdapter, type AgentDetection } from '../core/agents/adapters.js';
 import { createMacClientLifecycle, MacLifecycleError } from './clientLifecycleMac.js';
@@ -76,6 +77,63 @@ function detached(executable: string, args: string[], cwd?: string): Promise<voi
     child.once('error', () => reject(new LifecycleError('客户端启动失败，请检查安装是否完整或手动打开')));
     child.once('spawn', () => { child.unref(); resolve(); });
   });
+}
+
+// A libuv detached process has no interactive console. In particular, Windows
+// PowerShell can exit successfully before executing its command when stdio is
+// ignored. Let Windows create the console, then require the new shell itself to
+// acknowledge usable terminal handles; the helper's spawn event proves neither.
+const openTerminalScript = `
+$terminal = Start-Process -FilePath $inputData.shell -ArgumentList @('-NoLogo', '-NoProfile', '-NoExit', '-EncodedCommand', [string]$inputData.command) -WorkingDirectory $inputData.workingDirectory -WindowStyle Normal -PassThru
+@{ pid = $terminal.Id } | ConvertTo-Json -Compress
+`;
+const terminalReadyScript = `
+$ErrorActionPreference = 'Stop'
+try {
+  if ([Console]::IsInputRedirected -or [Console]::IsOutputRedirected) { throw 'Terminal handles are redirected' }
+  Set-Location -LiteralPath $inputData.workingDirectory
+  if (!(Test-Path -LiteralPath $inputData.executable -PathType Leaf)) { throw 'Client executable is unavailable' }
+  $reply = @{ nonce = $inputData.nonce; pid = $PID; ready = $true } | ConvertTo-Json -Compress
+  [IO.File]::WriteAllText($inputData.reply, $reply, (New-Object Text.UTF8Encoding($false)))
+} catch {
+  try { [IO.File]::WriteAllText($inputData.reply, (@{ nonce = $inputData.nonce; pid = $PID; ready = $false } | ConvertTo-Json -Compress), (New-Object Text.UTF8Encoding($false))) } catch { }
+  Write-Host 'The client was not started. Please open a new terminal and try again.' -ForegroundColor Red
+  return
+}
+& $inputData.executable
+`;
+
+async function openWindowsTerminal(target: ClientTarget, workingDirectory: string): Promise<void> {
+  if (!path.win32.isAbsolute(workingDirectory) || /[\x00-\x1f\x7f]/.test(workingDirectory)) throw new LifecycleError('终端工作目录无效，请重新检查客户端配置');
+  try { if (!fs.statSync(workingDirectory).isDirectory()) throw new Error(); }
+  catch { throw new LifecycleError('终端工作目录不存在，请重新检查客户端配置'); }
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'yunqiao-terminal-'));
+  const reply = path.join(directory, 'ready.json'), nonce = randomBytes(24).toString('hex');
+  try {
+    const source = input({ executable: target.executable, workingDirectory, reply, nonce }) + terminalReadyScript;
+    let started: { pid?: number };
+    try { started = await script(openTerminalScript, { shell: powershell(), command: encoded(source), workingDirectory }); }
+    catch { throw new LifecycleError('Windows 未能打开交互终端，请从开始菜单打开终端后重试'); }
+    if (!Number.isInteger(started?.pid) || started.pid! <= 0) throw new LifecycleError('Windows 未确认新终端进程，请检查终端窗口后重试');
+    const deadline = Date.now() + 10000;
+    while (Date.now() < deadline) {
+      let response: { nonce?: string; pid?: number; ready?: boolean } | undefined;
+      try {
+        const stat = fs.lstatSync(reply);
+        if (stat.isFile() && !stat.isSymbolicLink() && stat.size <= 4096) response = JSON.parse(fs.readFileSync(reply, 'utf8'));
+      } catch { /* A write may still be in progress. */ }
+      if (response?.nonce === nonce && response.pid === started.pid) {
+        if (response.ready === true) return;
+        if (response.ready === false) throw new LifecycleError('新终端未能建立交互环境，客户端尚未启动，请手动打开终端后重试');
+      }
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    throw new LifecycleError('未收到新终端的启动确认，请检查是否有终端窗口或系统拦截提示，再重新尝试');
+  } finally {
+    // Remove only this launch's acknowledgement; never recurse over temp paths.
+    try { fs.unlinkSync(reply); } catch { }
+    try { fs.rmdirSync(directory); } catch { }
+  }
 }
 
 const resolveDesktopScript = `
@@ -249,8 +307,8 @@ export const nativeClientLifecycleRuntime: ClientLifecycleRuntime = {
   },
   async openTerminal(target, workingDirectory) {
     if (process.platform === 'darwin') return macLifecycle.openTerminal(target, workingDirectory);
-    const source = input({ executable: target.executable, workingDirectory }) + "Set-Location -LiteralPath $inputData.workingDirectory\n& $inputData.executable\n";
-    await detached(powershell(), ['-NoLogo', '-NoProfile', '-NoExit', '-EncodedCommand', encoded(source)], workingDirectory);
+    if (target.kind !== 'cli' || !this.validateTarget(target)) throw new LifecycleError('命令行客户端程序已变化，请重新检测后再打开');
+    await openWindowsTerminal(target, workingDirectory);
   },
   now: () => Date.now(),
   delay: milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)),

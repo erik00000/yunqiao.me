@@ -32,6 +32,7 @@ export default function Sessions({}: PageProps) {
   const [reading, setReading] = useState(false);
   const [agentFilter, setAgentFilter] = useState('all');
   const [providerFilter, setProviderFilter] = useState('');
+  const [sourceFilter, setSourceFilter] = useState('');
   const [sessionKind, setSessionKind] = useState<'main' | 'subagent' | 'all'>('main');
   const [visible, setVisible] = useState(100);
   const [visibleMessages, setVisibleMessages] = useState(50);
@@ -70,18 +71,24 @@ export default function Sessions({}: PageProps) {
   const matching = useMemo(() => {
     const key = deferredQuery.trim().toLowerCase();
     return sessions.filter(
-      (s) => (agentFilter === 'all' || s.agent === agentFilter) && (!providerFilter || s.modelProvider === providerFilter) && (!key ||
+      (s) => (agentFilter === 'all' || s.agent === agentFilter) && (!providerFilter || s.modelProvider === providerFilter)
+        && (!sourceFilter || s.sourceLabel === sourceFilter) && (!key ||
         s.title.toLowerCase().includes(key) ||
         (s.cwd ?? '').toLowerCase().includes(key) ||
         s.agent.toLowerCase().includes(key) ||
         (s.modelProvider || '').toLowerCase().includes(key) ||
+        (s.sourceLabel || '').toLowerCase().includes(key) ||
         (s.subagentId || '').toLowerCase().includes(key) ||
         s.id.toLowerCase().includes(key)),
     );
-  }, [sessions, deferredQuery, agentFilter, providerFilter]);
+  }, [sessions, deferredQuery, agentFilter, providerFilter, sourceFilter]);
   const subagentCount = useMemo(() => matching.filter(s => s.isSubagent).length, [matching]);
   const list = useMemo(() => matching.filter(s => sessionKind === 'all' || !!s.isSubagent === (sessionKind === 'subagent')), [matching, sessionKind]);
-  useEffect(() => setVisible(100), [q, agentFilter, providerFilter, sessionKind]);
+  useEffect(() => setVisible(100), [q, agentFilter, providerFilter, sourceFilter, sessionKind]);
+  const sourceCounts = useMemo(() => sessions.reduce<Record<string, number>>((counts, session) => {
+    if (session.sourceLabel) counts[session.sourceLabel] = (counts[session.sourceLabel] || 0) + 1;
+    return counts;
+  }, {}), [sessions]);
   const providerCounts = useMemo(() => sessions.reduce<Record<string, number>>((counts, session) => {
     if (session.modelProvider) counts[session.modelProvider] = (counts[session.modelProvider] || 0) + 1;
     return counts;
@@ -104,7 +111,8 @@ export default function Sessions({}: PageProps) {
     }
   }
 
-  const parents = useMemo(() => active?.parentSessionId ? sessions.filter(s => s.agent === active.agent && s.id === active.parentSessionId && s.path !== active.path && (active.agent !== 'Claude Code' || !s.isSubagent)) : [], [active, sessions]);
+  const parents = useMemo(() => active?.parentSessionId ? sessions.filter(s => s.agent === active.agent && s.id === active.parentSessionId && s.path !== active.path
+    && s.sourceScope === active.sourceScope && (active.agent !== 'Claude Code' || !s.isSubagent)) : [], [active, sessions]);
   // Duplicate IDs can exist across projects or imported logs. Never pick an arbitrary parent.
   const parent = parents.length === 1 ? parents[0] : undefined;
   const parentLabel = active?.agent === 'Claude Code' ? '所属主会话' : '父会话';
@@ -114,6 +122,7 @@ export default function Sessions({}: PageProps) {
     setQ(parent.id);
     setAgentFilter(parent.agent);
     setProviderFilter('');
+    setSourceFilter('');
     setSessionKind(parent.isSubagent ? 'subagent' : 'main');
     open(parent);
   }
@@ -150,6 +159,11 @@ export default function Sessions({}: PageProps) {
           </button>
         ))}
         <div className="grow" />
+        {!!Object.keys(sourceCounts).length && <select aria-label="历史会话来源" className="select" style={{ width: 230 }} value={sourceFilter} onChange={e => setSourceFilter(e.target.value)}>
+          <option value="">全部会话来源</option>
+          {sourceFilter && !sourceCounts[sourceFilter] && <option value={sourceFilter}>{sourceFilter} · 0</option>}
+          {Object.entries(sourceCounts).sort(([a], [b]) => a.localeCompare(b)).map(([label, count]) => <option key={label} value={label}>{label} · {count}</option>)}
+        </select>}
         <select aria-label="历史供应商区域" className="select" style={{ width: 230 }} value={providerFilter} onChange={e => setProviderFilter(e.target.value)}>
           <option value="">全部供应商区域</option>
           {providerFilter && !providerCounts[providerFilter] && <option value={providerFilter}>{providerFilter} · 0</option>}
@@ -189,7 +203,12 @@ export default function Sessions({}: PageProps) {
                   <div className="ellipsis" style={{ fontSize: 10.5, color: 'var(--muted)' }}>
                     {s.agent} · {s.project ?? '—'} · {s.messageCount} 条 · {fmtTime(s.updatedAt)}
                   </div>
-                  {(s.modelProvider || s.archived || s.isSubagent) && <div className="row wrap" style={{ marginTop: 5 }}>{s.isSubagent && <span className="chip accent">子代理{s.subagentId ? ` · ${s.subagentId}` : ''}</span>}{s.modelProvider && <span className="chip mono">{s.modelProvider}</span>}{s.archived && <span className="chip">已归档</span>}</div>}
+                  {(s.modelProvider || s.sourceLabel || s.agent.startsWith('Claude') || s.archived || s.isSubagent) && <div className="row wrap" style={{ marginTop: 5 }}>
+                    {s.isSubagent && <span className="chip accent">子代理{s.subagentId ? ` · ${s.subagentId}` : ''}</span>}
+                    {s.sourceLabel && <span className="chip" title="会话文件的存储来源，不代表模型供应商">{s.sourceLabel}</span>}
+                    {s.modelProvider ? <span className="chip mono">{s.modelProvider}</span> : s.agent.startsWith('Claude') && <span className="chip" title="原始历史未记录供应商，不根据模型名称或当前配置推断">供应商未记录</span>}
+                    {s.archived && <span className="chip">已归档</span>}
+                  </div>}
                 </div>
               </div>
             ))}
@@ -210,15 +229,18 @@ export default function Sessions({}: PageProps) {
                 <div className="row wrap"><b>子代理会话</b>{active.subagentId && <code>{active.subagentId}</code>}<div className="grow" />{parent && <Btn size="sm" onClick={openParent}>查看{parentLabel}</Btn>}</div>
                 <p className="hint" style={{ marginTop: 6, overflowWrap: 'anywhere' }}>{active.parentSessionId ? `${parentLabel} ID：${active.parentSessionId}` : '原始记录未提供所属会话 ID。'}{active.parentSessionId && !parent ? parents.length > 1 ? ' · 找到多个同 ID 会话，请按目录检索确认。' : ' · 本次扫描未找到对应会话。' : ''}</p>
               </div>}
+              {active.contentNote && <div className={`notice${active.contentStatus === 'ambiguous' ? ' warning' : ''}`} style={{ marginBottom: 12 }}>{active.contentNote}</div>}
+              {active.agent.startsWith('Claude') && !active.modelProvider && <p className="hint" style={{ marginBottom: 10 }}>原始历史未记录供应商，无法根据模型名称或当前配置确定当时使用的服务。来源角标仅表示存储目录。</p>}
               <div className="row wrap" style={{ marginBottom: 10 }}>
                 <span className="chip">{fmtBytes(active.sizeBytes)}</span>
                 {active.model && <span className="chip">{active.model}</span>}
                 {active.modelProvider && <span className="chip mono">区域：{active.modelProvider}</span>}
+                {active.sourceLabel && <span className="chip">来源：{active.sourceLabel}</span>}
                 {active.cwd && <span className="chip mono ellipsis" style={{ maxWidth: 320 }}>{active.cwd}</span>}
                 <div style={{ flex: 1 }} />
                 <Btn
                   size="sm"
-                  disabled={!!active.isSubagent}
+                  disabled={!!active.isSubagent || active.canResume === false || active.sourceKind === 'desktop' || active.agent === 'Claude Desktop'}
                   onClick={async () => {
                     try { const r = await call('sessions.resume', { summary: active }); if (!r.command) return toast.push('此客户端暂不支持命令恢复', 'info'); await copyText(r.command); toast.push('恢复命令已复制', 'ok'); } catch (e: any) { toast.push(e.message, 'bad'); }
                   }}

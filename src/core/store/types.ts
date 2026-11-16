@@ -232,6 +232,12 @@ export interface SessionSummary {
   model?: string;
   provider?: string;
   modelProvider?: string;
+  sourceLabel?: string;
+  sourceScope?: string;
+  sourceKind?: 'cli' | 'desktop';
+  contentStatus?: 'available' | 'metadata-only' | 'ambiguous';
+  contentNote?: string;
+  canResume?: boolean;
   archived?: boolean;
   updatedAt: string;
   createdAt: string;

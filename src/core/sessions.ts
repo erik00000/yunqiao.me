@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { SessionSummary } from './store/types.js';
 import { nativeSessionRegions } from './historyRepairIO.js';
 import { sessionProjectName } from './clientPaths.js';
+import { readClaudeDesktopSession, scanClaudeDesktopSessions, type ClaudeDesktopSessionRecord } from './claudeDesktopSessions.js';
 
 /**
  * 历史会话聚合：把各客户端的本地会话日志读成统一结构。
@@ -32,6 +33,85 @@ function checkSessionPath(file: string): void {
     catch { return false; }
   });
   if (!allowed) throw new Error('只能读取已支持客户端目录下的会话文件');
+}
+
+function claudeSource(root: string, file: string): Pick<SessionSummary, 'sourceLabel' | 'sourceScope' | 'sourceKind' | 'canResume'> {
+  const config = path.dirname(root);
+  const standard = path.resolve(config) === path.resolve(home('.claude'));
+  return { sourceLabel: standard ? '.claude · 默认目录' : `${path.basename(config)} · 自定义目录`,
+    sourceScope: path.join(path.resolve(root), path.relative(root, file).split(path.sep)[0]), sourceKind: 'cli', canResume: standard };
+}
+
+function claudeTranscripts(ids: string[]): SessionSummary[] {
+  const root = sessionRoots().find(item => item.agent === 'Claude Code')!;
+  const expected = new Set(ids);
+  return walk(root.dir, name => name.endsWith('.jsonl') && expected.has(path.basename(name, '.jsonl'))).flatMap(file => {
+    const item = summarize(file, root.agent, root.dir);
+    return item ? [{ ...item, ...claudeSource(root.dir, file) }] : [];
+  });
+}
+
+function desktopLinks(records: ClaudeDesktopSessionRecord[], transcripts: SessionSummary[]) {
+  const claims = new Map<string, number>(), byId = new Map<string, SessionSummary[]>();
+  for (const item of records) for (const id of item.cliIds) claims.set(id, (claims.get(id) || 0) + 1);
+  for (const item of transcripts) if (!item.isSubagent) byId.set(item.id, [...(byId.get(item.id) || []), item]);
+  return { claims, byId };
+}
+
+function projectIdentity(value: string): string {
+  return /^[A-Za-z]:[\\/]|^\\\\/.test(value)
+    ? path.win32.normalize(value).replace(/[\\/]+$/, '').toLowerCase()
+    : path.posix.normalize(value).replace(/\/+$/, '');
+}
+
+function defaultClaudeTranscript(file: string): boolean {
+  const userHome = path.resolve(home()), root = path.join(userHome, '.claude', 'projects');
+  const relative = path.relative(root, file);
+  if (!relative || relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) return false;
+  try {
+    let expected = fs.realpathSync(userHome), actual = userHome;
+    const same = (a: string, b: string) => process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+    for (const part of path.relative(userHome, file).split(path.sep)) {
+      actual = path.join(actual, part); expected = path.join(expected, part);
+      const stat = fs.lstatSync(actual);
+      if (stat.isSymbolicLink() || !same(fs.realpathSync(actual), expected)) return false;
+    }
+    return fs.statSync(file).isFile();
+  } catch { return false; }
+}
+
+/** Match explicit transcript IDs and project directories. Never infer a supplier or merge profiles. */
+function desktopTranscript(record: ClaudeDesktopSessionRecord, links: ReturnType<typeof desktopLinks>): {
+  transcript?: SessionSummary; status: 'available' | 'metadata-only' | 'ambiguous'; note: string;
+} {
+  if (!record.cwd || !record.cliIds.length) return { status: 'metadata-only', note: '仅有会话记录，正文未定位；请在原 Claude 桌面客户端中打开。' };
+  // Desktop does not declare CLAUDE_CONFIG_DIR. A custom CLI root is not evidence of its ownership.
+  const defaultScope = path.resolve(home('.claude', 'projects'));
+  for (let index = 0; index < record.cliIds.length; index++) {
+    const id = record.cliIds[index];
+    const candidates = (links.byId.get(id) || []).filter(item => path.dirname(item.sourceScope || '') === defaultScope
+      && path.basename(item.path, '.jsonl') === id && item.cwd && projectIdentity(item.cwd) === projectIdentity(record.cwd)
+      && defaultClaudeTranscript(item.path));
+    if (!candidates.length) continue;
+    if (candidates.length > 1 || (links.claims.get(id) || 0) > 1) {
+      return { status: 'ambiguous', note: '正文关联不唯一，可能属于不同账号或目录；请在原 Claude 桌面客户端中核对，未自动合并。' };
+    }
+    return { transcript: candidates[0], status: 'available', note: id !== record.cliSessionId
+      ? '当前正文未定位，仅显示记录中关联的历史片段；完整对话请在原 Claude 桌面客户端中查看。'
+      : '已按会话 ID 和项目目录匹配本地正文。来源角标表示存储目录，不代表模型供应商；CLI 原记录仍保留。' };
+  }
+  return { status: 'metadata-only', note: '仅有会话记录，正文未定位；请在原 Claude 桌面客户端中打开。' };
+}
+
+function desktopSummary(record: ClaudeDesktopSessionRecord, links: ReturnType<typeof desktopLinks>): SessionSummary {
+  const linked = desktopTranscript(record, links), transcript = linked.transcript;
+  return { id: record.id, agent: 'Claude Desktop', title: record.title || record.id, cwd: record.cwd || undefined,
+    project: record.cwd ? sessionProjectName(record.cwd) : undefined, path: record.path,
+    messageCount: transcript?.messageCount || 0, tokens: 0, cost: 0, model: transcript?.model,
+    archived: record.isArchived, updatedAt: new Date(record.updatedAtMs).toISOString(),
+    createdAt: new Date(record.createdAtMs ?? record.modifiedAtMs).toISOString(), sizeBytes: record.size,
+    sourceLabel: record.sourceLabel, sourceScope: record.sourceScope, sourceKind: 'desktop',
+    contentStatus: linked.status, contentNote: linked.note, canResume: false, truncated: transcript?.truncated };
 }
 
 /** 只读文件头部若干字节，避免超大会话文件把内存打满 */
@@ -237,6 +317,7 @@ export function scanSessions(): SessionSummary[] {
     for (const f of walk(root.dir, n => n.endsWith('.jsonl') || (root.agent === 'Gemini CLI' && /^session.*\.json$/.test(n)))) {
       const s = summarize(f, root.agent, root.dir);
       if (s) {
+        if (root.agent === 'Claude Code') Object.assign(s, claudeSource(root.dir, f));
         if (root.agent === 'Codex') {
           const region = regions.get(s.id);
           if (regions.has(s.id)) s.modelProvider = region?.modelProvider;
@@ -246,6 +327,11 @@ export function scanSessions(): SessionSummary[] {
       }
     }
   }
+
+  const desktops = scanClaudeDesktopSessions();
+  const transcripts = out.filter(item => item.agent === 'Claude Code');
+  const links = desktopLinks(desktops, transcripts);
+  out.push(...desktops.map(record => desktopSummary(record, links)));
 
   return out.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
 }
@@ -259,6 +345,11 @@ export interface SessionMessage {
 }
 
 export function readSession(file: string, limit = 400): SessionMessage[] {
+  if (typeof file === 'string' && /^local_.+\.json$/.test(path.basename(file))) {
+    const record = readClaudeDesktopSession(file);
+    const linked = desktopTranscript(record, desktopLinks(scanClaudeDesktopSessions(), claudeTranscripts(record.cliIds)));
+    return linked.transcript ? readSession(linked.transcript.path, limit) : [];
+  }
   checkSessionPath(file);
   limit = Math.max(1, Math.min(2000, Number(limit) || 400));
   const out: SessionMessage[] = [];
@@ -292,7 +383,7 @@ export function readSession(file: string, limit = 400): SessionMessage[] {
 }
 
 export function resumeCommand(s: SessionSummary): string {
-  if (s?.isSubagent) return '';
+  if (s?.isSubagent || s?.canResume === false || s?.sourceKind === 'desktop') return '';
   if (!s || typeof s.id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,200}$/.test(s.id)) return '';
   if (s.agent === 'Claude Code') return `claude --resume ${s.id}`;
   if (s.agent === 'Codex') return `codex resume ${s.id}`;
@@ -307,10 +398,12 @@ export function exportSessionMarkdown(s: SessionSummary): string {
     '',
     `- 客户端：${s.agent}`,
     `- 模型：${s.model ?? '未知'}`,
+    ...(s.sourceLabel ? [`- 来源：${s.sourceLabel}`] : []),
+    ...(s.contentNote ? [`- 正文说明：${s.contentNote}`] : []),
     `- 目录：${s.cwd ?? '—'}`,
     `- 更新时间：${new Date(s.updatedAt).toLocaleString('zh-CN')}`,
     `- 已索引消息数：${s.messageCount}${s.truncated ? '（部分）' : ''}`,
-    ...(s.sizeBytes > (s.path.endsWith('.json') ? 8 : 4) * 1024 * 1024 || msgs.length >= 2000 ? ['- 导出范围：仅包含读取上限内的消息，完整会话请在原客户端打开。'] : []),
+    ...(s.truncated || s.sizeBytes > (s.path.endsWith('.json') ? 8 : 4) * 1024 * 1024 || msgs.length >= 2000 ? ['- 导出范围：仅包含读取上限内的消息，完整会话请在原客户端打开。'] : []),
     '',
     '---',
     '',

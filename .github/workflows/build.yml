@@ -99,7 +99,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python scripts/test-session-relations-ui.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/test-session-sources-ui.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node scripts/test-client-lifecycle-native.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/test-client-terminal-native.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python scripts/test-client-catalog-ui.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

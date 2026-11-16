@@ -134,6 +134,12 @@ try {
     const f = fixture({ listProcesses: async () => { throw new Error('must not enumerate CLI processes'); }, closeProcess: async () => { throw new Error('must not close CLI'); } });
     const result = await f.restartClient({ agentId: 'codex-cli' }); assert.equal(result.operation, 'opened-terminal'); assert.equal(result.ok, true); assert.match(result.message, /查看启动结果/); assert.match(result.message, /原终端会话仍保留/); assert.equal(f.state.terminals[0].cwd, 'C:\\Users\\Fixture User'); assert.equal(f.state.closes.length, 0); assert.equal(f.state.starts.length, 0);
   });
+  await check('A terminal that does not confirm launch cannot report CLI success or stop existing sessions', async () => {
+    const f = fixture({ openTerminal: async () => { throw new Error('fixture-private-terminal-failure'); }, listProcesses: async () => { throw new Error('must not enumerate CLI processes'); }, closeProcess: async () => { throw new Error('must not close CLI'); } });
+    const result = await f.restartClient({ agentId: 'claude-code' });
+    assert.equal(result.ok, false); assert.equal(result.operation, 'failed'); assert(!result.message.includes('已打开')); assert(!result.message.includes('fixture-private'));
+    assert.equal(f.state.closes.length, 0); assert.equal(f.state.starts.length, 0);
+  });
   await check('Duplicate and aliased restart requests share one operation', async () => {
     let release; const gate = new Promise(resolve => { release = resolve; }); const f = fixture(); f.runtime.startDesktop = async target => { f.state.starts.push(target); await gate; f.state.processes = [processEntry()]; };
     const first = f.restartClient({ agentId: 'codex-desktop' }), second = f.restartClient({ agentId: 'chatgpt-desktop' }); await Promise.resolve(); await Promise.resolve(); release();
