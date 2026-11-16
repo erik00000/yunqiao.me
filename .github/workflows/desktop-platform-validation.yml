@@ -107,7 +107,7 @@ jobs:
         if: always()
         with:
           name: desktop-validation-mac-${{ matrix.arch }}
-          path: docs/PACKAGED-VALIDATION-0.6.0.json
+          path: docs/PACKAGED-VALIDATION-*.json
           if-no-files-found: ignore
       - name: Build DMG and ZIP when requested by the build workflow
         if: inputs.package-installer == true

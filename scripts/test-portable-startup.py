@@ -296,7 +296,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--exe', type=Path, required=True, help='Reference win-unpacked/YunQiaoAI.exe')
     parser.add_argument('--launcher', type=Path, required=True, help='Actual NSIS portable EXE')
-    parser.add_argument('--version', default='0.6.0')
+    parser.add_argument('--version', default=json.loads((ROOT / 'package.json').read_text(encoding='utf-8'))['version'])
     parser.add_argument('--report-dir', type=Path, default=ROOT / 'tmp/portable-startup-artifacts')
     parser.add_argument('--timeout', type=float, default=150, help='Concurrent extraction/startup deadline in seconds')
     args = parser.parse_args()

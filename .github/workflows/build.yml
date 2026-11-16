@@ -122,7 +122,10 @@ jobs:
       - run: python scripts/test-packaged.py --exe release/win-unpacked/YunQiaoAI.exe
       - run: python scripts/test-coexist-ui.py --exe release/win-unpacked/YunQiaoAI.exe
       - name: Verify portable startup, single instance and temporary cleanup
-        run: python scripts/test-portable-startup.py --exe release/win-unpacked/YunQiaoAI.exe --launcher release/YunQiaoAI-0.6.0-win-x64-portable.exe --report-dir tmp/portable-startup-ci
+        shell: pwsh
+        run: |
+          $releaseVersion = (Get-Content -LiteralPath package.json -Raw | ConvertFrom-Json).version
+          python scripts/test-portable-startup.py --exe release/win-unpacked/YunQiaoAI.exe --launcher "release/YunQiaoAI-$releaseVersion-win-x64-portable.exe" --report-dir tmp/portable-startup-ci
       - name: Hash Windows installers and ZIP
         shell: pwsh
         run: |

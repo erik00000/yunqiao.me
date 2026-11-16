@@ -127,7 +127,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--exe', type=Path, default=ROOT / 'release/win-unpacked/YunQiaoAI.exe')
     parser.add_argument('--launcher', type=Path, help='Launch a portable wrapper and verify its extracted runtime against --exe')
-    parser.add_argument('--version', default='0.6.0')
+    parser.add_argument('--version', default=json.loads((ROOT / 'package.json').read_text(encoding='utf-8'))['version'])
     args = parser.parse_args()
     executable = args.exe.resolve()
     assert executable.is_file(), f'Build the release first: {executable}'
