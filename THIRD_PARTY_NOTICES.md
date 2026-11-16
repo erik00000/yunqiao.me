@@ -1,6 +1,6 @@
 # Third party notices
 
-yunqiao.me 0.6.0 is distributed under AGPL-3.0-only. The public source tree and build instructions are available at https://github.com/jxb412/yunqiao.me/tree/main. Version 0.6.0 is still under development and does not yet have a public release tag. See LICENSE. The earlier Aurora 0.5.0 source was published under MIT; that historical license remains applicable to those original files as published.
+yunqiao.me 0.6.0 is distributed under AGPL-3.0-only. The corresponding 0.6.0 source is available at https://github.com/jxb412/yunqiao.me/tree/v0.6.0, with build commands in package.json and .github/workflows/build.yml and downloads at https://github.com/jxb412/yunqiao.me/releases/tag/v0.6.0. See LICENSE. The earlier Aurora 0.5.0 source was published under MIT; that historical license remains applicable to those original files as published.
 
 ## CodexPlusPlus
 

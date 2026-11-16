@@ -4,7 +4,7 @@
 
 本版围绕“选择客户端 → 选择供应商 → 选择模型 → 测试并应用”完善中文工作空间，补全插件连接恢复、会员自动续期、路由分组和历史管理，并改善扫描与大列表期间的页面切换。
 
-Windows 与 macOS 构建产物将在 [GitHub Actions](https://github.com/jxb412/yunqiao.me/actions/workflows/build.yml) 成功完成后提供下载。正式 Release 与公开版本以[下载页](https://github.com/jxb412/yunqiao.me/releases)为准；本文不代表本次所有平台的构建或正式发布已经完成。
+**0.6.0 已发布**。Windows 安装版、免安装版和 ZIP，以及 macOS Apple Silicon / Intel 的 DMG 和 ZIP，均可从 [Releases 下载页](https://github.com/jxb412/yunqiao.me/releases/tag/v0.6.0)直接下载。
 
 ## 客户端连接与恢复
 
@@ -42,17 +42,17 @@ Windows 与 macOS 构建产物将在 [GitHub Actions](https://github.com/jxb412/
 
 ## 下载与升级
 
-构建成功后，在 Actions 的 **Artifacts** 中下载对应产物，先解压外层压缩包。下载 Actions 产物通常需要登录 GitHub。
+打开 [0.6.0 发布页](https://github.com/jxb412/yunqiao.me/releases/tag/v0.6.0)的 **Assets**，或直接点击下表下载安装文件。不要选择 GitHub 自动生成的 **Source code** 压缩包来安装客户端。
 
-| 平台 | 主要文件 | Actions 产物 |
-| --- | --- | --- |
-| Windows x64 安装版 | `YunQiaoAI-0.6.0-win-x64-setup.exe` | `yunqiao-windows` |
-| Windows x64 免安装版 | `YunQiaoAI-0.6.0-win-x64-portable.exe` | `yunqiao-windows` |
-| Windows x64 完整解压版 | `YunQiaoAI-0.6.0-win-x64.zip` | `yunqiao-windows` |
-| macOS Apple Silicon | `YunQiaoAI-0.6.0-mac-arm64.dmg` | `yunqiao-macos-arm64` |
-| macOS Intel | `YunQiaoAI-0.6.0-mac-x64.dmg` | `yunqiao-macos-x64` |
+| 平台 | 安装文件 |
+| --- | --- |
+| Windows x64 安装版 | [YunQiaoAI-0.6.0-win-x64-setup.exe](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.0/YunQiaoAI-0.6.0-win-x64-setup.exe) |
+| Windows x64 免安装版 | [YunQiaoAI-0.6.0-win-x64-portable.exe](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.0/YunQiaoAI-0.6.0-win-x64-portable.exe) |
+| Windows x64 完整解压版 | [YunQiaoAI-0.6.0-win-x64.zip](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.0/YunQiaoAI-0.6.0-win-x64.zip) |
+| macOS Apple Silicon | [YunQiaoAI-0.6.0-mac-arm64.dmg](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.0/YunQiaoAI-0.6.0-mac-arm64.dmg) |
+| macOS Intel | [YunQiaoAI-0.6.0-mac-x64.dmg](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.0/YunQiaoAI-0.6.0-mac-x64.dmg) |
 
-macOS 同时提供对应架构的应用 ZIP，各平台附带 SHA256 校验文件。一般用户可优先选择 Windows 安装版或 macOS DMG。
+macOS 同时提供 [Apple Silicon ZIP](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.0/YunQiaoAI-0.6.0-mac-arm64.zip) 和 [Intel ZIP](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.0/YunQiaoAI-0.6.0-mac-x64.zip)，发布页附带 [SHA256 校验清单](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.0/SHA256SUMS.txt)。一般用户可优先选择 Windows 安装版或 macOS DMG。
 
 升级前退出云桥。Windows ZIP 要完整解压后运行同目录的 `YunQiaoAI.exe`；macOS 将应用拖入“应用程序”并替换旧版。更新和切换包形式会保留已有本机供应商与设置，首次打开及换电脑步骤见[安装说明](../INSTALLATION.md)。
 

@@ -1,6 +1,6 @@
 # 云桥 AI · yunqiao.me 使用指南
 
-本指南更新于 **2026 年 11 月 16 日**，对应 **0.6.0**。Windows 与 macOS 构建产物将在 [GitHub Actions](https://github.com/jxb412/yunqiao.me/actions/workflows/build.yml) 成功完成后提供下载；正式 Release 与公开版本以[下载页](https://github.com/jxb412/yunqiao.me/releases)为准。安装包选择和首次打开方法见[安装说明](INSTALLATION.md)。
+本指南更新于 **2026 年 11 月 16 日**，对应已发布的 **0.6.0**。Windows 与 macOS 安装包可从 [Releases 下载页](https://github.com/jxb412/yunqiao.me/releases/tag/v0.6.0)直接下载。安装包选择和首次打开方法见[安装说明](INSTALLATION.md)。
 
 本地客户端识别、历史和资源扫描在后台进行，扫描期间可以切换到其他页面。离开页面后，之前的读取结果不会覆盖当前页面；返回需要重新读取的页面时，请等待该页扫描完成。模型与会话列表分批展示，加载更多或展开长消息不会改动原始数据。
 
