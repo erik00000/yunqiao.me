@@ -2,6 +2,7 @@
 import argparse
 import json
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 
@@ -40,8 +41,9 @@ def main():
     with tempfile.TemporaryDirectory(prefix='yunqiao-client-connections-ui-') as temporary:
         bundle = Path(temporary) / 'overview.js'
         source = """import React from 'react';import {createRoot} from 'react-dom/client';
-import ClientConnectionOverview from './ui/src/components/ClientConnectionOverview.tsx';import {ToastHost} from './ui/src/components/ui.tsx';
+import ClientConnectionOverview from './ui/src/components/ClientConnectionOverview.tsx';import {ToastHost} from './ui/src/components/ui.tsx';import {fmtTime} from './ui/src/lib/api.ts';
 const root=createRoot(document.getElementById('root'));
+window.formatConnectionTime=fmtTime;
 window.renderOverview=()=>root.render(<ToastHost><ClientConnectionOverview key={window.generation} state={structuredClone(window.state)} go={page=>window.navigation.push(page)} onConfigure={agent=>window.configurations.push(agent.id)}/></ToastHost>);
 window.renderOverview();"""
         options = {'stdin': {'contents': source, 'resolveDir': str(ROOT), 'loader': 'tsx'}, 'outfile': str(bundle), 'bundle': True, 'platform': 'browser', 'format': 'iife', 'define': {'process.env.NODE_ENV': '"production"'}}
@@ -73,6 +75,19 @@ window.renderOverview();"""
             def shared(page):
                 return row(page, 'Codex CLI / ChatGPT 桌面版')
 
+            def balance_summary(page):
+                return row(page).get_by_label('测试模型供应商 当前余额', exact=True)
+
+            def details(page, client='Claude Code'):
+                return row(page, client).locator('details.connection-details')
+
+            def open_details(page, client='Claude Code'):
+                panel = details(page, client)
+                if panel.get_attribute('open') is None:
+                    panel.locator('summary').click()
+                expect(panel).to_have_attribute('open', '')
+                return panel
+
             def calls(page, action):
                 return page.evaluate('(action)=>window.calls.filter(call=>call.action===action)', action)
 
@@ -83,15 +98,35 @@ window.renderOverview();"""
             ready(page)
             expect(page.get_by_role('region', name='当前客户端连接', exact=True)).to_be_visible()
             expect(page.locator('.client-connection-row')).to_have_count(2)
-            expect(row(page).locator('.connection-route')).to_have_text('Claude Code→测试模型供应商→fixture-model')
+            expect(row(page).locator('.connection-route > strong')).to_have_text('Claude Code')
+            expect(row(page).locator('.connection-route b')).to_have_text('测试模型供应商')
+            expect(row(page).locator('.connection-route code')).to_have_text('fixture-model')
             expect(row(page).get_by_text('Claude 请求成功 · 待客户端核验', exact=True)).to_be_visible()
             expect(row(page).locator('time').first).to_have_attribute('datetime', page.evaluate('window.usage[0].ts'))
-            expect(shared(page)).to_contain_text('共享编程配置已有成功请求，记录不区分桌面端、CLI 或共存入口')
-            expect(row(page).get_by_label('测试模型供应商 余额摘要', exact=True)).to_contain_text('存在零或负余额')
-            expect(row(page).locator('.provider-balance-preview strong')).to_have_text('0 CNY')
-            expect(row(page)).to_contain_text('余额更新时间')
+            expect(balance_summary(page).locator('strong')).to_have_text(re.compile(r'^0\s*CNY$'))
+            expect(balance_summary(page).locator('strong')).to_be_visible()
+            expect(details(page)).not_to_have_attribute('open', '')
+            expect(details(page, 'Codex CLI / ChatGPT 桌面版')).not_to_have_attribute('open', '')
+            expect(shared(page).get_by_text('共享编程配置已有成功请求，记录不区分桌面端、CLI 或共存入口；请在原客户端核对。', exact=True)).not_to_be_visible()
+            expect(row(page).get_by_text('余额更新时间：', exact=False)).not_to_be_visible()
+            expect(row(page).get_by_role('button', name='配置与测试', exact=True)).to_be_visible()
+            expect(row(page).get_by_role('button', name='查看请求', exact=True)).to_be_visible()
             assert len(calls(page, 'provider.balance')) == 1
-            checks.append('Overview shows the client→supplier→model route, recorded success time, explicit zero balance and one combined Codex row')
+            if arguments.screenshots:
+                arguments.screenshots.mkdir(parents=True, exist_ok=True)
+                page.screenshot(path=str(arguments.screenshots / 'client-connections-summary.png'), full_page=True)
+            open_details(page, 'Codex CLI / ChatGPT 桌面版')
+            expect(shared(page).get_by_text('共享编程配置已有成功请求，记录不区分桌面端、CLI 或共存入口；请在原客户端核对。', exact=True)).to_be_visible()
+            panel = open_details(page)
+            expect(panel.get_by_label('测试模型供应商 余额摘要', exact=True)).to_contain_text('存在零或负余额')
+            expect(panel.locator('.provider-balance-preview strong')).to_have_text('0 CNY')
+            expect(panel.get_by_text('余额更新时间：', exact=False)).to_be_visible()
+            panel.locator('summary').click()
+            expect(panel).not_to_have_attribute('open', '')
+            expect(panel.locator('.provider-balance-preview strong')).not_to_be_visible()
+            open_details(page)
+            assert len(calls(page, 'provider.balance')) == 1, 'Expanding details must reuse the balance already fetched'
+            checks.append('Compact overview retains route, status and quick actions; details start collapsed and reveal exact balance and shared-client limits without refetching')
 
             shared(page).get_by_role('button', name='配置与测试', exact=True).click()
             row(page).get_by_role('button', name='配置与测试', exact=True).click()
@@ -104,6 +139,63 @@ window.renderOverview();"""
             row(page).get_by_role('button', name='打开网关设置', exact=True).click()
             assert page.evaluate('window.navigation.at(-1)') == 'settings'
             checks.append('Configuration, usage, supplier and stopped-gateway buttons invoke their intended callbacks')
+
+            for value, shown in [(-2.5, '-2.5'), (-0.001, '-0.001')]:
+                page = new_page(f'window.balance.items[0].entries[0].remaining={value};')
+                ready(page)
+                expect(balance_summary(page).locator('strong')).to_have_text(re.compile(r'^' + re.escape(shown) + r'\s*CNY$'))
+                expect(balance_summary(page)).to_contain_text('存在零或负余额')
+                expect(details(page)).not_to_have_attribute('open', '')
+            page = new_page('window.balance.items[0].entries=[];')
+            ready(page)
+            expect(balance_summary(page).get_by_text('余额未知', exact=True)).to_be_visible()
+            page = new_page('window.balance.items[0].entries[0]={label:"套餐额度",scope:"subscription",currency:"USD",unlimited:true};')
+            ready(page)
+            expect(balance_summary(page).get_by_text('不限额', exact=True)).to_be_visible()
+            expect(balance_summary(page)).not_to_contain_text('存在零或负余额')
+            page = new_page("window.balance.items.push({keyId:'other',keyLabel:'备用账户',status:'ok',entries:[{label:'密钥额度',scope:'key',currency:'USD',remaining:20}],updatedAt:window.iso(-200000),checkedAt:window.iso(-200000)});")
+            ready(page)
+            expect(balance_summary(page).get_by_text('首项额度', exact=True)).to_be_visible()
+            expect(balance_summary(page).locator('strong')).to_have_text(re.compile(r'^0\s*CNY$'))
+            expect(balance_summary(page)).to_contain_text('另 1 项')
+            panel = open_details(page)
+            expect(panel.locator('.provider-balance-preview strong')).to_have_text([re.compile(r'^0\s+CNY$'), re.compile(r'^20\s+USD$')])
+            expect(panel).to_contain_text('各 Key 不合并计数')
+            expect(panel.get_by_text('首项余额更新时间：', exact=False)).to_be_visible()
+            checks.append('Summary distinguishes negative and tiny-negative balances, unknown and unlimited values; multiple keys/currencies show a first item rather than a false total')
+
+            page = new_page("window.balance.items.unshift({keyId:'disabled',keyLabel:'已停用账户',status:'disabled',entries:[{label:'账户余额',scope:'account',currency:'CNY',remaining:999}],updatedAt:window.iso(-7200000)},{keyId:'empty',keyLabel:'空账户',status:'unknown',entries:[],updatedAt:window.iso(-3600000)});")
+            ready(page)
+            expect(balance_summary(page).locator('strong')).to_have_text(re.compile(r'^0\s*CNY$'))
+            panel = open_details(page)
+            expect(panel.get_by_text('余额更新时间：', exact=False)).to_have_text('余额更新时间：' + page.evaluate('window.formatConnectionTime(window.balance.items[2].updatedAt)'))
+            expect(panel.locator('.provider-balance-preview strong')).to_have_text(re.compile(r'^0\s+CNY$'))
+
+            page = new_page("delete window.balance.items[0].updatedAt;window.balance.items.push({keyId:'second',keyLabel:'第二账户',status:'ok',entries:[{label:'账户余额',scope:'account',currency:'USD',remaining:20}],updatedAt:window.iso(-200000)});")
+            ready(page)
+            expect(balance_summary(page).locator('strong')).to_have_text(re.compile(r'^0\s*CNY$'))
+            panel = open_details(page)
+            expect(panel.get_by_text('余额更新时间：', exact=False)).to_have_count(0)
+
+            page = new_page('window.balance.items[0].status="disabled";')
+            ready(page)
+            expect(balance_summary(page).get_by_text('余额未知', exact=True)).to_be_visible()
+            panel = open_details(page)
+            expect(panel.get_by_text('余额更新时间：', exact=False)).to_have_count(0)
+            expect(panel.locator('.provider-balance-preview')).to_have_count(0)
+
+            for pause in ['window.state.providers[0].enabled=false;', "window.state.providers[0].balanceQuery={adapter:'disabled'};"]:
+                page = new_page()
+                ready(page)
+                expect(balance_summary(page).locator('strong')).to_have_text(re.compile(r'^0\s*CNY$'))
+                before = len(calls(page, 'provider.balance'))
+                page.evaluate(pause + 'window.renderOverview();')
+                expect(balance_summary(page).get_by_text('已暂停', exact=True)).to_be_visible()
+                panel = open_details(page)
+                expect(panel.get_by_text('余额更新时间：', exact=False)).to_have_count(0)
+                expect(panel.locator('.provider-balance-preview')).to_have_count(0)
+                assert len(calls(page, 'provider.balance')) == before
+            checks.append('Balance timestamp belongs to the visible first item; disabled or empty entries cannot supply it, a missing timestamp is not borrowed, and paused balances hide old amounts and timestamps')
 
             page = new_page("window.usage=['云桥AI 工具箱','yunqiao-connection-test','aurora','test-client',''].map((agent,index)=>window.record('tool-'+index,agent,-10000));")
             ready(page)
@@ -118,6 +210,8 @@ window.renderOverview();"""
             ready(page)
             expect(row(page).get_by_text('最近请求失败', exact=True)).to_be_visible()
             expect(row(page)).to_contain_text('认证或权限被拒绝')
+            expect(row(page).get_by_text('认证或权限被拒绝，请检查供应商密钥和模型权限。', exact=True)).to_be_visible()
+            open_details(page)
             expect(row(page).locator('time')).to_have_count(2)
             expect(row(page).locator('time').first).to_have_attribute('datetime', page.evaluate("window.usage.find(record=>record.requestId==='claude-success').ts"))
             expect(row(page)).not_to_contain_text('PRIVATE-CREDENTIAL-MUST-NOT-RENDER')
@@ -141,6 +235,7 @@ window.renderOverview();"""
             page.evaluate('window.holdUsage=false;window.pendingUsage.shift().resolve(window.usage)')
             ready(page)
             expect(row(page).get_by_text('最近请求失败', exact=True)).to_be_visible()
+            open_details(page)
             expect(row(page).locator('time').last).to_have_attribute('datetime', page.evaluate('window.iso(-1000)'))
             page.evaluate("window.emit(window.record('live-new','Claude Code',-1000,200))")
             expect(row(page).get_by_text('Claude 请求成功 · 待客户端核验', exact=True)).to_be_visible()
@@ -150,6 +245,7 @@ window.renderOverview();"""
             page = new_page("window.state.agents['claude-code'].mode='direct';")
             ready(page)
             expect(row(page).get_by_text('直连配置 · 待客户端验证', exact=True)).to_be_visible()
+            open_details(page)
             expect(row(page)).to_contain_text('直连无法观测')
             expect(row(page).locator('time')).to_have_count(0)
             expect(shared(page).get_by_text('近期请求成功', exact=True)).to_be_visible()
@@ -162,6 +258,9 @@ window.renderOverview();"""
             ready(page)
             expect(page.get_by_role('alert')).to_contain_text('请求记录暂时无法更新')
             expect(row(page).get_by_text('Claude 请求成功 · 待客户端核验', exact=True)).to_be_visible()
+            expect(balance_summary(page)).to_contain_text('上次成功结果')
+            expect(balance_summary(page).locator('strong')).to_have_text(re.compile(r'^0\s*CNY$'))
+            open_details(page)
             expect(row(page)).to_contain_text('有查询失败')
             expect(row(page)).to_contain_text('上次成功结果')
             expect(row(page).locator('.provider-balance-preview strong')).to_have_text('0 CNY')
@@ -198,7 +297,14 @@ window.renderOverview();"""
                 if arguments.screenshots:
                     arguments.screenshots.mkdir(parents=True, exist_ok=True)
                     page.screenshot(path=str(arguments.screenshots / f'client-connections-{theme}-narrow.png'), full_page=True)
-            checks.append('Long supplier/model labels fit a narrow light and dark window without horizontal overflow')
+                panel = open_details(page)
+                expect(panel.get_by_role('button', name='余额详情与供应商设置 →', exact=True)).to_be_visible()
+                assert page.evaluate('document.documentElement.scrollWidth<=window.innerWidth+1'), 'Expanded details overflow the narrow viewport'
+                if arguments.screenshots:
+                    page.screenshot(path=str(arguments.screenshots / f'client-connections-{theme}-narrow-details.png'), full_page=True)
+                panel.locator('summary').click()
+                expect(panel).not_to_have_attribute('open', '')
+            checks.append('Long supplier/model labels and expanded details fit a narrow light and dark window without horizontal overflow')
 
             for page, errors, network in pages:
                 assert not errors, errors

@@ -1,24 +1,62 @@
 .client-connections { margin: 0 0 26px; }
-.client-connections .section-heading { align-items: center; flex-wrap: wrap; gap: 12px; }
-.client-connections .section-heading .hint { margin: 5px 0 0; }
-.client-connection-list { display: grid; gap: 12px; }
-.client-connection-row { border: 1px solid var(--stroke); border-radius: 15px; background: var(--panel); padding: 20px; min-width: 0; }
-.client-connection-row.is-success { border-left: 3px solid #269779; }
-.client-connection-row.is-warning { border-left: 3px solid #c58b3b; }
-.connection-route { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; line-height: 1.7; }
-.connection-route strong { font-size: 15px; }
-.connection-route > span { color: var(--muted); }
-.connection-route code, .connection-route strong, .connection-route b { overflow-wrap: anywhere; min-width: 0; }
-.connection-route code { font-size: 12px; color: var(--accent); }
-.connection-result { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
-.connection-detail { font-size: 12px; line-height: 1.8; color: var(--text-2); margin: 9px 0 13px; }
-.connection-bottom { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; border-top: 1px solid var(--stroke); padding-top: 12px; }
-.connection-balance { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; }
-.connection-balance .provider-compact-balance { min-width: 0; }
-.connection-controls { display: flex; flex-wrap: wrap; gap: 8px; flex-shrink: 0; }
-.connection-footnote { margin: 10px 0 0; }
+.client-connections .section-heading { align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; }
+.client-connections .section-heading h2 { display: flex; align-items: center; gap: 9px; }
+.client-connections .connection-count { display: inline-grid; place-items: center; min-width: 21px; height: 21px; padding: 0 5px; border-radius: 6px; background: var(--panel-hi); color: var(--muted); font-size: 11px; font-weight: 500; }
+.client-connections .client-connection-list { display: grid; gap: 10px; }
+.client-connections .client-connection-row { border: 1px solid var(--stroke); border-radius: 13px; background: var(--panel); padding: 18px 20px 12px; min-width: 0; box-shadow: 0 2px 6px #00000003; }
+.client-connections .client-connection-row.is-warning { border-color: color-mix(in srgb, var(--warn) 38%, var(--stroke)); }
+.client-connections .connection-top { display: flex; align-items: center; justify-content: space-between; gap: 24px; min-width: 0; }
+.client-connections .connection-identity { display: flex; align-items: center; gap: 13px; flex: 1; min-width: 0; }
+.client-connections .connection-client-icon { display: grid; place-items: center; align-self: flex-start; width: 43px; height: 43px; flex: none; border-radius: 11px; color: var(--text-2); background: var(--panel-hi); border: 1px solid var(--stroke); }
+.client-connections .connection-route { display: flex; flex-direction: column; gap: 6px; min-width: 0; line-height: 1.45; }
+.client-connections .connection-route strong { font-size: 15px; font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
+.client-connections .connection-destination { display: flex; align-items: baseline; flex-wrap: wrap; gap: 5px 8px; min-width: 0; font-size: 12px; }
+.client-connections .connection-destination > span { color: var(--muted); }
+.client-connections .connection-destination b { color: var(--text-2); font-weight: 400; overflow-wrap: anywhere; min-width: 0; }
+.client-connections .connection-destination code { color: var(--text-2); font-size: 11px; font-family: inherit; background: var(--bg-2); border-radius: 4px; padding: 1px 5px; overflow-wrap: anywhere; min-width: 0; }
+.client-connections .connection-balance-summary { display: flex; flex-direction: column; align-items: flex-end; flex: 0 1 auto; gap: 3px; min-width: 115px; max-width: 250px; text-align: right; overflow-wrap: anywhere; }
+.client-connections .connection-balance-label { color: var(--muted); font-size: 10px; line-height: 1.4; }
+.client-connections .connection-balance-summary > strong { color: var(--text); font-size: 21px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.3; }
+.client-connections .connection-balance-summary > strong small { margin-left: 5px; font-size: 10px; font-weight: 400; color: var(--muted); }
+.client-connections .connection-balance-note { font-size: 10px; line-height: 1.4; color: var(--muted); }
+.client-connections .connection-balance-summary.needs-attention .connection-balance-note { color: var(--warn); }
+.client-connections .connection-bottom { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 18px; margin-top: 16px; }
+.client-connections .connection-result { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; min-width: 0; flex: 1 1 250px; }
+.client-connections .connection-status { display: inline-flex; align-items: center; gap: 6px; color: var(--text-2); font-size: 11px; line-height: 1.6; }
+.client-connections .connection-status i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); flex: none; }
+.client-connections .connection-status.is-success { color: var(--ok); }
+.client-connections .connection-status.is-success i { background: var(--ok); }
+.client-connections .connection-status.is-warning { color: var(--warn); }
+.client-connections .connection-status.is-warning i { background: var(--warn); }
+.client-connections .connection-last-success { color: var(--muted); font-size: 10px; line-height: 1.6; }
+.client-connections .connection-controls { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.client-connections .connection-warning { color: var(--warn); background: color-mix(in srgb, var(--warn) 6%, var(--panel)); border-radius: 7px; font-size: 11px; line-height: 1.8; padding: 8px 10px; margin: 13px 0 0; overflow-wrap: anywhere; }
+.client-connections .connection-details { margin-top: 4px; }
+.client-connections .connection-details > summary { display: flex; align-items: center; gap: 7px; width: fit-content; max-width: 100%; min-height: 26px; border-radius: 4px; color: var(--muted); font-size: 11px; cursor: pointer; list-style: none; user-select: none; }
+.client-connections .connection-details > summary::-webkit-details-marker { display: none; }
+.client-connections .connection-details > summary:hover { color: var(--text); }
+.client-connections .connection-details-chevron { display: block; width: 5px; height: 5px; border-right: 1px solid currentColor; border-bottom: 1px solid currentColor; transform: translateY(-2px) rotate(45deg); }
+.client-connections .connection-details[open] .connection-details-chevron { transform: translateY(1px) rotate(225deg); }
+.client-connections .connection-details-body { border-top: 1px solid var(--stroke); margin-top: 5px; padding-top: 13px; }
+.client-connections .connection-detail { display: flex; flex-wrap: wrap; gap: 7px 12px; font-size: 11px; color: var(--text-2); line-height: 1.7; }
+.client-connections .connection-detail-label { color: var(--muted); }
+.client-connections .connection-detail-description { color: var(--text-2); font-size: 11px; line-height: 1.8; margin: 7px 0; overflow-wrap: anywhere; }
+.client-connections .connection-balance { display: flex; flex-direction: column; align-items: flex-start; gap: 7px; min-width: 0; margin-top: 12px; }
+.client-connections .connection-balance .provider-compact-balance { min-width: 0; width: 100%; }
+.client-connections .connection-balance .text-button { white-space: normal; text-align: left; }
+.client-connections .connection-footnote { margin: 12px 0 2px; font-size: 10px; line-height: 1.8; overflow-wrap: anywhere; }
 @media (max-width: 720px) {
-  .client-connection-row { padding: 15px; }
-  .connection-bottom { align-items: stretch; flex-direction: column; gap: 12px; }
-  .connection-controls { flex-shrink: 1; }
+  .client-connections .client-connection-row { padding: 16px 15px 10px; }
+  .client-connections .connection-top { gap: 16px; }
+  .client-connections .connection-client-icon { display: none; }
+  .client-connections .connection-balance-summary { min-width: 85px; max-width: 145px; }
+  .client-connections .connection-balance-summary > strong { font-size: 18px; }
+  .client-connections .connection-bottom { gap: 10px; margin-top: 14px; }
+  .client-connections .connection-result { flex-basis: 100%; }
+}
+@media (max-width: 420px) {
+  .client-connections .connection-top { align-items: flex-start; gap: 14px; }
+  .client-connections .connection-balance-summary { min-width: 80px; max-width: 115px; }
+  .client-connections .connection-route strong { font-size: 14px; }
+  .client-connections .connection-destination { gap: 4px 6px; }
 }
