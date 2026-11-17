@@ -28,7 +28,7 @@ export function clientConnectionRevision(deps: Deps): string {
   return digest(JSON.stringify([deps.store.providers.revision(deps.store.providers.read()), deps.store.settings.revision(deps.store.settings.read()), identity(slice(deps.store.readAgentSnapshot().states))]));
 }
 const trusted = (configurationText?: string, onPrepared?: (info: ClientHistoryBackup) => Promise<void>, reservation?: ClientHistoryBackup) => ({
-  ...(configurationText === undefined ? {} : { configurationText }), backupAll: true, includeSubagents: true, requireAll: true,
+  ...(configurationText === undefined ? {} : { configurationText }), backupAll: true, includeSubagents: true, requireAll: true, preserveMissingSourceIndexes: true,
   ...(reservation ? { backupId: reservation.backupId } : {}),
   ...(onPrepared ? { lockHeld: true, onPrepared } : {}),
 });
@@ -41,10 +41,12 @@ export async function prepareClientHistory(deps: Deps, configurationText: string
   const summary = plan.summary;
   const backupRequired = summary.scanned > 0 || plan.dbPaths.length > 0;
   return { ok: true as const, ctx, revision: plan.revision, configurationText, history: {
-    total: summary.scanned, repairable: summary.repairable, unchanged: summary.unchanged, blocked: summary.blocked,
+    total: summary.scanned, repairable: summary.repairable, unchanged: summary.unchanged, blocked: summary.blocked, preserved: summary.preserved,
+    filesToBackUp: summary.filesToBackUp, indexDatabasesToBackUp: summary.indexDatabasesToBackUp,
+    blockedReasons: [...new Set(plan.items.filter(item => item.status === 'blocked').map(item => item.reason || '无法安全处理的历史记录'))].slice(0, 5),
     backupRequired, requiresClientExit: true,
     message: summary.blocked ? `有 ${summary.blocked} 个历史会话需要检查，尚未更改配置。`
-      : backupRequired ? `将自动备份全部 ${summary.scanned} 个历史会话及索引，并修复 ${summary.repairable} 个会话的归属。`
+      : backupRequired ? `将自动备份 ${summary.filesToBackUp} 个会话文件和 ${summary.indexDatabasesToBackUp} 个索引数据库，并修复 ${summary.repairable} 个会话的归属。${summary.preserved ? `${summary.preserved} 条缺少原文件的会话索引将原样保留，不影响应用配置。` : ''}`
         : '未发现已有历史会话，可直接应用配置。',
     warnings: [...plan.warnings, ...plan.items.filter(item => item.status === 'blocked').slice(0, 5).map(item => `${item.id}：${item.reason}`)],
   } };
@@ -130,7 +132,8 @@ export async function applyClientHistory<T extends { ok: boolean; message: strin
     ...(committed?.backup ? { backup: committed.backup } : {}), rolledBack: switched.rolledBack,
     recoveryRequired: switched.recoveryRequired, ...(switched.journalPath ? { recoveryPath: switched.journalPath } : {}) };
   return { ...switched.result!, history: {
-    backedUp: prepared.history.total, repaired: prepared.history.repairable, unchanged: prepared.history.unchanged,
+    backedUp: switched.history?.backedUp ?? 0, indexBackedUp: switched.history?.indexBackedUp ?? 0,
+    preserved: switched.history?.preserved ?? 0, repaired: switched.history?.updated ?? 0, unchanged: prepared.history.unchanged,
     backupId: switched.history?.backupId, backupPath: switched.history?.backup,
     message: switched.history?.message || '历史备份与修复已完成。',
   } };

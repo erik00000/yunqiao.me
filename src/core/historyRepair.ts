@@ -15,6 +15,8 @@ export interface HistoryRepairTrustedOptions {
   backupAll?: boolean;
   includeSubagents?: boolean;
   requireAll?: boolean;
+  /** Automatic whole-history configuration only: retain indexes with no source unchanged. */
+  preserveMissingSourceIndexes?: boolean;
   lockHeld?: boolean;
   /** A caller may persist this exact identity before the first journal write. */
   backupId?: string;
@@ -22,8 +24,8 @@ export interface HistoryRepairTrustedOptions {
   onPrepared?: (info: { backupId: string; backup: string }) => void | Promise<void>;
 }
 interface Options { targetProvider: string; scope: 'active' | 'archived' | 'all'; ids?: string[]; sourceProvider?: string; fixPaths: boolean }
-export interface HistoryRepairItem { id: string; title: string; path: string; paths: string[]; archived: boolean; beforeProvider: string; metadataProvider: string; targetProvider: string; changes: string[]; status: 'ready' | 'unchanged' | 'blocked'; reason?: string; encrypted: boolean }
-interface Summary { scanned: number; selected: number; repairable: number; metadataChanges: number; indexChanges: number; pathChanges: number; blocked: number; unchanged: number; encrypted: number }
+export interface HistoryRepairItem { id: string; title: string; path: string; paths: string[]; archived: boolean; beforeProvider: string; metadataProvider: string; targetProvider: string; changes: string[]; status: 'ready' | 'unchanged' | 'preserved' | 'blocked'; reason?: string; encrypted: boolean }
+interface Summary { scanned: number; selected: number; repairable: number; metadataChanges: number; indexChanges: number; pathChanges: number; blocked: number; unchanged: number; preserved: number; encrypted: number; filesToBackUp: number; indexDatabasesToBackUp: number }
 interface InternalPlan { ok: true; revision: string; options: Options; summary: Summary; items: HistoryRepairItem[]; warnings: string[]; dbPath: string; dbPaths: string[]; currentProvider: string; files: SourceFile[]; backupFiles: SourceFile[]; rows: RowState[]; schemas: Record<string, string>; configHash: string }
 interface FileBackup { path: string; original: string; staged: string; beforeHash: string; afterHash: string; mtimeMs: number; mode: number; sessionId: string }
 interface DatabaseBackup { path: string; backup: string; hash: string; schema: string }
@@ -237,15 +239,17 @@ async function providerInventory(ctx: HistoryContext, trusted: HistoryRepairTrus
   if (unindexed) warnings.push(`${unindexed} 个日志会话没有唯一有效的原生 threads 归属，未计入区域；预览会说明不能迁移的原因。`);
   return { ok: true, currentProvider: config.current, targets: config.targets, sources: [...sources.values()].sort((a, b) => a.id.localeCompare(b.id)), warnings };
 }
-function itemSummary(items: HistoryRepairItem[], files: SourceFile[], rows: RowState[], scanned: number): Summary {
+function itemSummary(items: HistoryRepairItem[], files: SourceFile[], rows: RowState[], scanned: number, filesToBackUp: number, indexDatabasesToBackUp: number): Summary {
   const ready = new Set(items.filter(i => i.status === 'ready').map(i => i.id));
   return { scanned, selected: items.length, repairable: ready.size, metadataChanges: files.filter(f => ready.has(f.id)).reduce((n, f) => n + f.metadataChanges, 0), indexChanges: rows.filter(r => r.before.model_provider !== r.after.model_provider).length,
-    pathChanges: rows.filter(r => r.before.rollout_path !== r.after.rollout_path || r.before.cwd !== r.after.cwd).length, blocked: items.filter(i => i.status === 'blocked').length, unchanged: items.filter(i => i.status === 'unchanged').length, encrypted: items.filter(i => i.encrypted).length };
+    pathChanges: rows.filter(r => r.before.rollout_path !== r.after.rollout_path || r.before.cwd !== r.after.cwd).length, blocked: items.filter(i => i.status === 'blocked').length, unchanged: items.filter(i => i.status === 'unchanged').length, preserved: items.filter(i => i.status === 'preserved').length, encrypted: items.filter(i => i.encrypted).length, filesToBackUp, indexDatabasesToBackUp };
 }
 async function buildPlan(ctx: HistoryContext, input: HistoryRepairOptions, trusted: HistoryRepairTrustedOptions = {}): Promise<InternalPlan> {
   const { options, config, targetConfigured } = normalizeOptions(ctx, input, trusted), selected = options.ids ? new Set(options.ids) : undefined;
   const { indexes, schemas, warnings } = readIndexes(ctx, trusted);
   const includeSubagents = trusted.includeSubagents === true && options.scope === 'all' && !options.ids && options.sourceProvider === undefined;
+  const preserveMissing = trusted.preserveMissingSourceIndexes === true && trusted.configurationText !== undefined && trusted.backupAll === true && trusted.requireAll === true
+    && options.scope === 'all' && !options.ids && options.sourceProvider === undefined;
   const paths = [...walkFiles(path.join(ctx.home, 'sessions'), [], 0, trusted.backupAll === true).map(file => ({ file, archived: false })), ...walkFiles(path.join(ctx.home, 'archived_sessions'), [], 0, trusted.backupAll === true).map(file => ({ file, archived: true }))];
   if (!targetConfigured && (paths.length || discoverHistoryDbs(ctx).length)) throw new Error('存在历史文件或索引，但目标供应商未在计划配置中定义，未迁移历史或更改配置');
   if (paths.length > MAX_FILES) throw new Error('会话超过 10000 个文件，未开始修复');
@@ -264,7 +268,29 @@ async function buildPlan(ctx: HistoryContext, input: HistoryRepairOptions, trust
     if (options.scope !== 'all' && (options.scope === 'archived') !== archived) continue;
     if (options.sourceProvider !== undefined && !canonical.some(row => row.values.model_provider === options.sourceProvider)) continue;
     const item: HistoryRepairItem = { id, title: canonical[0]?.title || indexRows[0]?.title || id, path: sources[0]?.path || String(indexRows[0]?.values.rollout_path || ''), paths: sources.map(s => s.path), archived, beforeProvider: [...new Set(canonical.map(r => String(r.values.model_provider ?? '(missing)')))].join(', '), metadataProvider: [...new Set(sources.flatMap(s => s.providers))].join(', '), targetProvider: options.targetProvider, changes: [], status: 'unchanged', encrypted: sources.some(s => s.encrypted) };
-    if (!sources.length) { item.status = 'blocked'; item.reason = '没有找到包含同一原生 ID 的会话原文件；未猜测补建索引或内容'; }
+    if (!sources.length) {
+      item.status = 'blocked'; item.reason = '没有找到包含同一原生 ID 的会话原文件；未猜测补建索引或内容';
+      if (preserveMissing && indexRows.length) {
+        const keys = indexRows.map(row => valueHash([row.dbPath, row.table, row.keys]));
+        const providers = new Set(indexRows.map(row => row.values.model_provider));
+        let existingSource = false;
+        for (const row of indexRows) {
+          if (typeof row.values.rollout_path !== 'string' || !row.values.rollout_path) continue;
+          // Stale catalog paths may name another machine, drive or UNC share.
+          // Scope-check lexically before any filesystem call: only the directories
+          // already scanned and checked above belong to this transaction.
+          if (process.platform !== 'win32' && path.win32.isAbsolute(row.values.rollout_path)) continue;
+          const candidate = path.resolve(ctx.home, row.values.rollout_path);
+          if (![path.join(ctx.home, 'sessions'), path.join(ctx.home, 'archived_sessions')].some(root => inside(root, candidate))) continue;
+          try { fs.lstatSync(candidate); existingSource = true; }
+          catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+        }
+        if (canonical.length > 1 || new Set(keys).size !== keys.length) item.reason = '同一会话存在重复原生索引行，无法确认唯一归属';
+        else if (providers.size > 1) item.reason = '缺少原文件的会话存在索引归属冲突，需要先核查';
+        else if (existingSource) item.reason = '索引指向现存文件，但无法匹配同一原生 ID，需要先核查';
+        else { item.status = 'preserved'; item.reason = '当前会话目录内未找到原文件；完整备份索引数据库，原样保留该行、路径与供应商归属，不探测外部路径、不补建或迁移内容'; }
+      }
+    }
     else if (sources.some(s => s.invalid)) { item.status = 'blocked'; item.reason = sources.find(s => s.invalid)?.invalid; }
     else if (!includeSubagents && (sources.some(s => s.subagent) || indexRows.some(r => /subagent|sub_agent/i.test(r.source || '')))) { item.status = 'blocked'; item.reason = '子智能体会话保留原归属，避免改变父子任务关系'; }
     else if (sources.some(s => s.archived !== sources[0].archived)) { item.status = 'blocked'; item.reason = '相同会话 ID 同时存在活动与归档目录，需要手动核查'; }
@@ -272,7 +298,7 @@ async function buildPlan(ctx: HistoryContext, input: HistoryRepairOptions, trust
     else if (canonical.length !== 1) { item.status = 'blocked'; item.reason = '同一会话存在多个原生 threads 行，无法确认唯一归属'; }
     else if (options.sourceProvider !== undefined && indexRows.some(row => row.table === 'local_thread_catalog' && row.values.model_provider !== options.sourceProvider && row.values.model_provider !== options.targetProvider)) { item.status = 'blocked'; item.reason = '本机目录归属既不属于原供应商也不属于目标供应商，需要先核查索引冲突'; }
     const rowChanges: RowState[] = [];
-    if (item.status !== 'blocked') {
+    if (item.status !== 'blocked' && item.status !== 'preserved') {
       for (const row of indexRows) {
         const after: Record<string, Cell> = { ...row.values, model_provider: options.targetProvider };
         if (options.fixPaths && Object.hasOwn(after, 'rollout_path')) {
@@ -306,8 +332,10 @@ async function buildPlan(ctx: HistoryContext, input: HistoryRepairOptions, trust
       backupFiles.push({ ...source, hash, afterHash: hash, metadataChanges: 0 });
     }
   }
-  const summary = itemSummary(items, files, rows, ids.length);
-  const revision = valueHash({ options, schemas, config: config.hash, items, files: files.map(f => [f.path, f.hash, f.afterHash]), backupFiles: backupFiles.map(f => [f.path, f.hash, f.afterHash]), backupAll: trusted.backupAll === true, includeSubagents, requireAll: trusted.requireAll === true, rows });
+  const summary = itemSummary(items, files, rows, ids.length, trusted.backupAll ? backupFiles.length : files.filter(source => source.metadataChanges).length,
+    trusted.backupAll ? dbPaths.length : new Set(rows.map(row => row.dbPath)).size);
+  const preservedIndexes = items.filter(item => item.status === 'preserved').map(item => [item.id, indexes.get(item.id)]);
+  const revision = valueHash({ options, schemas, config: config.hash, items, files: files.map(f => [f.path, f.hash, f.afterHash]), backupFiles: backupFiles.map(f => [f.path, f.hash, f.afterHash]), backupAll: trusted.backupAll === true, includeSubagents, preserveMissing, preservedIndexes, requireAll: trusted.requireAll === true, rows });
   return { ok: true, revision, options, summary, items, warnings, dbPath: dbPaths[0] || '', dbPaths, currentProvider: config.current, files, backupFiles, rows, schemas, configHash: config.hash };
 }
 const publicPlan = ({ files: _files, backupFiles: _backupFiles, rows: _rows, schemas: _schemas, configHash: _config, ...plan }: InternalPlan) => plan;
@@ -450,7 +478,7 @@ export function createHistoryRepairService(ctx: HistoryContext = historyContext(
         if (trusted.requireAll && plan.summary.blocked) throw new Error(`有 ${plan.summary.blocked} 个会话无法安全迁移，未修改任何历史。请检查预览中的原因后重试。`);
         const snapshots = trusted.backupAll ? plan.backupFiles : plan.files.filter(source => source.metadataChanges);
         const databasePaths = trusted.backupAll ? plan.dbPaths : [...new Set(plan.rows.map(row => row.dbPath))];
-        if (!plan.summary.repairable && !(trusted.backupAll && (snapshots.length || databasePaths.length))) return { ok: true, updated: 0, summary, message: '所选范围没有可安全执行的修复项' };
+        if (!plan.summary.repairable && !(trusted.backupAll && (snapshots.length || databasePaths.length))) return { ok: true, updated: 0, backedUp: 0, indexBackedUp: 0, preserved: summary.preserved, summary, message: '所选范围没有可安全执行的修复项' };
         const id = trusted.backupId ?? `provider-${Date.now()}-${randomBytes(6).toString('hex')}`, root = path.join(backupDir(ctx), id);
         fs.mkdirSync(backupDir(ctx), { recursive: true, mode: 0o700 });
         fs.mkdirSync(root, { mode: 0o700 });
@@ -486,7 +514,8 @@ export function createHistoryRepairService(ctx: HistoryContext = historyContext(
         for (const source of journal.files) if (await fileHash(source.path) !== source.afterHash) throw new Error('提交前检测到会话文件被外部修改');
         for (const db of dbs.values()) db.prepare('COMMIT').run();
         journal.status = 'complete'; saveJournal(journalFile(ctx, id), journal);
-        return { ok: true, updated: journal.sessions, backupId: id, backup: root, target: journal.targetProvider, summary, message: trusted.backupAll ? `已备份 ${journal.files.length} 个会话文件与 ${journal.databases.length} 个数据库，并迁移 ${journal.sessions} 个会话。聊天正文和父子任务关系保持原样。` : `已批量修复 ${journal.sessions} 个会话的归属与可确认的路径。完整备份已保存，聊天正文和加密内容保持原样。` };
+        return { ok: true, updated: journal.sessions, backedUp: journal.files.length, indexBackedUp: journal.databases.length, preserved: summary.preserved,
+          backupId: id, backup: root, target: journal.targetProvider, summary, message: trusted.backupAll ? `已备份 ${journal.files.length} 个会话文件与 ${journal.databases.length} 个索引数据库，并迁移 ${journal.sessions} 个会话。${summary.preserved ? `${summary.preserved} 条缺少原文件的会话索引已原样保留。` : ''}聊天正文和父子任务关系保持原样。` : `已批量修复 ${journal.sessions} 个会话的归属与可确认的路径。完整备份已保存，聊天正文和加密内容保持原样。` };
       } catch (error) {
         for (const db of dbs.values()) { try { db.prepare('ROLLBACK').run(); } catch {} db.close(); } dbs.clear();
         if (journal && fs.existsSync(journalFile(ctx, journal.id))) {

@@ -128,6 +128,68 @@ try {
     assert(aliases.every(id => f.store.listAgents()[id].connected)); assert.equal(f.rows().threads.find(row => row.id === child.id).parent_thread_id, parent.id);
   });
 
+  await check('The reported 108 sessions with 107 missing logs allow configuration, back up one real file, and leave every source-less index untouched through reapply and restore', async () => {
+    const f = fixture('one-log-many-indexes'), valid = f.add(300);
+    const missing = Array.from({ length: 107 }, (_, i) => f.add(301 + i, { provider: `prior-region-${i % 4}`, archived: i % 2 === 0, parent: i % 3 === 0 ? valid.id : undefined }));
+    for (const item of missing) { fs.unlinkSync(item.file); f.sessions.splice(f.sessions.indexOf(item), 1); }
+    const before = snapshot(f), preview = await f.preview();
+    assert.equal(preview.history.total, 108); assert.equal(preview.history.preserved, 107); assert.equal(preview.history.blocked, 0); assert.equal(preview.history.repairable, 1);
+    assert.equal(preview.history.filesToBackUp, 1); assert.equal(preview.history.indexDatabasesToBackUp, 1); assert.deepEqual(preview.history.blockedReasons, []);
+    assert.match(preview.history.message, /1 个会话文件和 1 个索引数据库/); assert.match(preview.history.message, /107 条.*原样保留/); assertSnapshot(f, before);
+    const preserved = () => ({ threads: f.rows().threads.filter(row => row.id !== valid.id), catalog: f.rows().catalog.filter(row => row.thread_id !== valid.id) });
+    const untouched = preserved();
+    const first = await f.call('agent.connect', { revision: preview.revision }); assert(first.ok, first.message);
+    assert.equal(first.history.backedUp, 1); assert.equal(first.history.indexBackedUp, 1); assert.equal(first.history.preserved, 107); assert.equal(first.history.repaired, 1);
+    aligned(f); assert.deepEqual(preserved(), untouched); historyBackup(f, first, before.files.filter(item => item.file === valid.file), before.rows);
+    assert.equal(read(f.auth), f.authBytes); assert(aliases.every(id => f.store.listAgents()[id].connected));
+    const repeatBefore = snapshot(f), repeated = await f.connect({ model: 'model-two' }); assert(repeated.ok, repeated.message);
+    assert.equal(repeated.history.backedUp, 1); assert.equal(repeated.history.preserved, 107); assert.equal(repeated.history.repaired, 0); assert.notEqual(repeated.history.backupId, first.history.backupId);
+    assert.equal(json(repeated.backup).files[0].backup, json(first.backup).files[0].backup); aligned(f); assert.deepEqual(preserved(), untouched);
+    historyBackup(f, repeated, repeatBefore.files.filter(item => item.file === valid.file), repeatBefore.rows);
+    const restoreBefore = snapshot(f), restored = await f.call('agent.disconnect'); assert(restored.ok, restored.message);
+    assert.equal(restored.history.backedUp, 1); assert.equal(restored.history.indexBackedUp, 1); assert.equal(restored.history.preserved, 107); assert.equal(read(f.config), originalConfig);
+    aligned(f, '国内.中转'); assert.deepEqual(preserved(), untouched); historyBackup(f, restored, restoreBefore.files.filter(item => item.file === valid.file), restoreBefore.rows);
+    for (const item of missing) assert(!fs.existsSync(item.file));
+  });
+
+  await check('An index-only history can connect switch model and disconnect with complete database backups and zero invented source files', async () => {
+    const f = fixture('index-only-connection');
+    for (const number of [420, 421, 422]) { const item = f.add(number, { archived: number % 2 === 0 }); fs.unlinkSync(item.file); f.sessions.splice(f.sessions.indexOf(item), 1); }
+    const originalRows = f.rows(), preview = await f.preview();
+    assert.equal(preview.history.total, 3); assert.equal(preview.history.preserved, 3); assert.equal(preview.history.filesToBackUp, 0); assert.equal(preview.history.indexDatabasesToBackUp, 1); assert(preview.history.backupRequired);
+    for (const operation of [() => f.call('agent.connect', { revision: preview.revision }), () => f.connect({ authMode: 'coexist' }), () => f.call('agent.disconnect')]) {
+      const result = await operation(); assert(result.ok, result.message); assert.equal(result.history.backedUp, 0); assert.equal(result.history.indexBackedUp, 1); assert.equal(result.history.preserved, 3); assert.equal(result.history.repaired, 0);
+      assert.deepEqual(f.rows(), originalRows); historyBackup(f, result, [], originalRows); assert.equal(read(f.auth), f.authBytes);
+    }
+    assert.equal(read(f.config), originalConfig); assert(aliases.every(id => !f.store.listAgents()[id].connected));
+  });
+
+  await check('State failure with preserved indexes rolls back the valid log and configuration without rewriting orphan rows, then explicit retry succeeds once', async () => {
+    const f = fixture('preserved-state-failure'), valid = f.add(430), missing = f.add(431); fs.unlinkSync(missing.file); f.sessions.splice(f.sessions.indexOf(missing), 1);
+    const before = snapshot(f), result = await failState(f, () => f.connect()); assert(result.rolledBack); assertSnapshot(f, before); assert.equal(read(valid.file), valid.content);
+    const retried = await f.connect(); assert(retried.ok, retried.message); assert.equal(retried.history.preserved, 1); assert.equal(retried.history.backedUp, 1); assert.equal(retried.history.repaired, 1); aligned(f);
+    const missingBefore = before.rows.threads.find(row => row.id === missing.id); assert.deepEqual(f.rows().threads.find(row => row.id === missing.id), missingBefore); assert(!fs.existsSync(missing.file));
+    const manifests = fs.readdirSync(path.dirname(retried.history.backupPath), { withFileTypes: true });
+    assert.equal(manifests.length, 2, 'One rolled-back batch plus one explicit retry');
+  });
+
+  await check('Real broken logs keep the apply blocked with an actionable reason even when missing-source records can be preserved', async () => {
+    const f = fixture('preserved-plus-broken'), valid = f.add(440), missing = f.add(441), broken = f.add(442);
+    fs.unlinkSync(missing.file); f.sessions.splice(f.sessions.indexOf(missing), 1); write(broken.file, broken.content + '{incomplete');
+    const before = snapshot(f), preview = await f.preview();
+    assert.equal(preview.history.preserved, 1); assert.equal(preview.history.blocked, 1); assert.match(preview.history.blockedReasons[0], /JSON/);
+    const result = await f.call('agent.connect', { revision: preview.revision }); assert.equal(result.ok, false); assertSnapshot(f, before); assert.equal(read(valid.file), valid.content);
+  });
+
+  await check('An index-only database backup failure blocks client writes and keeps the original connection state for a safe retry', async () => {
+    const f = fixture('index-only-backup-failure'), missing = f.add(450); fs.unlinkSync(missing.file); f.sessions.splice(f.sessions.indexOf(missing), 1);
+    const before = snapshot(f), preview = await f.preview(), prepare = DatabaseSync.prototype.prepare; let reached = false, result;
+    DatabaseSync.prototype.prepare = function(sql) { if (sql === 'VACUUM INTO ?') { reached = true; throw new Error(fault); } return prepare.call(this, sql); };
+    try { result = await f.call('agent.connect', { revision: preview.revision }); } finally { DatabaseSync.prototype.prepare = prepare; }
+    assert(reached); assert.equal(result.ok, false); assert(result.rolledBack); assertSnapshot(f, before); noSecrets(result);
+    const retry = await f.connect(); assert(retry.ok, retry.message); assert.equal(retry.history.backedUp, 0); assert.equal(retry.history.indexBackedUp, 1); assert.equal(retry.history.preserved, 1);
+  });
+
   await check('Already aligned histories still receive full backups on model changes without changing source bytes', async () => {
     const f = fixture('aligned'), plan = await f.preview(), target = effective(plan.files.find(file => file.path === f.config).after); f.add(10, { provider: target });
     const first = await f.connect(); assert(first.ok, first.message);

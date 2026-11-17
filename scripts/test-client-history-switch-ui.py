@@ -1,4 +1,5 @@
 """History-safe client setup UI using isolated IPC fixtures; no native clients or user files."""
+import argparse
 import json
 from pathlib import Path
 import subprocess
@@ -11,16 +12,16 @@ ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = """() => {
  window.generation=0;
  window.resetFixture=(agentId='chatgpt-desktop')=>{
-   window.generation++;window.calls=[];window.pending=[];window.holdApply=false;window.applyFailure=null;
-   window.historyPlan={total:12,repairable:8,unchanged:4,blocked:0,backupRequired:true,requiresClientExit:true,message:'将活动和归档会话一起迁移到本次配置。',warnings:[]};
-   window.historyResult={backedUp:12,repaired:8,unchanged:4,backupId:'fixture-backup',backupPath:'C:/Fixture/history-backup',message:'历史备份和迁移均已完成。'};
+   window.generation++;window.calls=[];window.pending=[];window.holdApply=false;window.applyFailure=null;window.previewWarnings=[];
+   window.historyPlan={total:12,repairable:8,unchanged:4,blocked:0,preserved:0,filesToBackUp:12,indexDatabasesToBackUp:2,blockedReasons:[],backupRequired:true,requiresClientExit:true,message:'将活动和归档会话一起迁移到本次配置。',warnings:[]};
+   window.historyResult={backedUp:12,indexBackedUp:2,preserved:0,repaired:8,unchanged:4,backupId:'fixture-backup',backupPath:'C:/Fixture/history-backup',message:'历史备份和迁移均已完成。'};
    const claude=agentId==='claude-code';const cli=agentId!=='chatgpt-desktop';
    window.state={settings:{},platform:'win32',agents:{},presets:[],providers:[{id:'supplier',name:'历史测试供应商',baseUrl:'https://fixture.invalid/v1',format:claude?'anthropic':'openai-responses',enabled:true,models:[{id:'first-model',contextWindow:272000},{id:'selected-model',contextWindow:128000}],apiKeys:[]}],detected:{[agentId]:{installed:true,configured:true,supportsCodexConfig:true,command:'C:/Fixture/ChatGPT.exe',configPath:'C:/Fixture/.codex/config.toml',evidence:[]}},agentCatalog:[{id:agentId,name:claude?'Claude Code':cli?'Codex CLI':'ChatGPT 桌面版',category:cli?'cli':'desktop',vendor:claude?'Anthropic':'OpenAI',description:'隔离客户端',protocol:claude?'anthropic':'openai-responses',support:'automatic',supportNote:'隔离的自动配置向导'}],codexCoexist:{identity:{available:false},models:[],warnings:[]}};
  };
  window.resetFixture();
  window.aurora={invoke:async(action,payload={})=>{
    window.calls.push({action,payload:structuredClone(payload)});
-   if(action==='agent.preview')return {ok:true,revision:'fixture-history-revision-'+window.calls.length,files:[{path:'C:/Fixture/.codex/config.toml',before:'original fixture',after:'reviewed fixture'}],warnings:[],requiresRestart:true,...(window.historyPlan?{history:structuredClone(window.historyPlan)}:{})};
+   if(action==='agent.preview')return {ok:true,revision:'fixture-history-revision-'+window.calls.length,files:[{path:'C:/Fixture/.codex/config.toml',before:'original fixture',after:'reviewed fixture'}],warnings:structuredClone(window.previewWarnings),requiresRestart:true,...(window.historyPlan?{history:structuredClone(window.historyPlan)}:{})};
    if(action==='agent.connect'){
      if(window.holdApply)await new Promise(resolve=>window.pending.push(resolve));
      return window.applyFailure?structuredClone(window.applyFailure):{ok:true,message:'隔离配置已应用',path:'C:/Fixture/.codex/config.toml',...(window.historyResult?{history:structuredClone(window.historyResult)}:{})};
@@ -33,6 +34,11 @@ FIXTURE = """() => {
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--screenshots', type=Path, help='Optional local evidence directory')
+    args = parser.parse_args()
+    if args.screenshots:
+        args.screenshots.mkdir(parents=True, exist_ok=True)
     checks, errors, network = [], [], []
     with tempfile.TemporaryDirectory(prefix='yunqiao-history-switch-ui-') as temporary:
         bundle = Path(temporary) / 'ui.js'
@@ -84,8 +90,8 @@ window.renderAgents();"""
 
             dialog = open_preview()
             summary = dialog.get_by_role('region', name='历史会话自动处理', exact=True)
-            expect(summary).to_contain_text('共 12 个会话 · 8 个需要修复 · 4 个无需修改')
-            expect(summary).to_contain_text('应用配置时自动备份历史并完成修复，无需另行批量操作')
+            expect(summary).to_contain_text('共 12 个会话记录 · 8 个需要修复 · 4 个无需修改')
+            expect(summary).to_contain_text('应用配置时自动备份历史并修复可处理的会话，无需另行批量操作')
             expect(summary).to_contain_text('请先保存工作')
             expect(summary.get_by_role('checkbox')).to_have_count(0)
             expect(dialog.get_by_role('button', name='备份历史并应用配置', exact=True)).to_be_enabled()
@@ -114,7 +120,8 @@ window.renderAgents();"""
             page.evaluate('window.pending.shift()()')
             expect(dialog.get_by_role('heading', name='配置已应用', exact=True)).to_be_visible()
             outcome = dialog.get_by_role('status', name='历史会话处理结果', exact=True)
-            expect(outcome).to_contain_text('已备份 12 个会话，已修复 8 个，4 个无需修改')
+            expect(outcome).to_contain_text('已备份 12 个会话文件和 2 个索引数据库')
+            expect(outcome).to_contain_text('已修复 8 个会话，4 个无需修改')
             outcome.get_by_text('查看历史备份位置', exact=True).click()
             expect(outcome).to_contain_text('C:/Fixture/history-backup')
             expect(dialog).to_contain_text('无需再手动修复')
@@ -133,7 +140,7 @@ window.renderAgents();"""
 
             dialog = open_preview(setup='window.historyPlan.blocked=2;window.historyPlan.total=14')
             expect(dialog.get_by_role('button', name='备份历史并应用配置', exact=True)).to_be_disabled()
-            expect(dialog.get_by_role('alert')).to_contain_text('2 个会话暂不能安全修复，已停止应用；当前配置保持不变')
+            expect(dialog.get_by_role('alert')).to_contain_text('2 个历史会话需要检查，配置尚未修改')
             assert count('agent.connect') == 0
             page.evaluate('window.historyPlan.blocked=0;window.historyPlan.total=12')
             dialog.get_by_role('button', name='重新检查历史', exact=True).click()
@@ -158,6 +165,75 @@ window.renderAgents();"""
             expect(dialog.get_by_role('button', name='已退出，重新应用', exact=True)).to_be_visible()
             assert count('agent.restart') == count('agent.lifecycle') == 0
             passed('Codex CLI uses the same mandatory history flow and never terminates or reopens a terminal on a busy result')
+
+            page.set_viewport_size({'width': 800, 'height': 850})
+            page.evaluate("document.documentElement.dataset.theme='dark'")
+            dialog = open_preview(setup="""window.historyPlan={total:108,repairable:1,unchanged:0,blocked:0,preserved:107,filesToBackUp:1,indexDatabasesToBackUp:2,backupRequired:true,requiresClientExit:true,message:'将备份现有文件和索引，原样保留缺少原文件的索引。',warnings:[]};window.historyResult={backedUp:1,indexBackedUp:2,repaired:1,unchanged:0,preserved:107,backupId:'fixture-backup',backupPath:'C:/Fixture/history-backup'}""")
+            summary = dialog.get_by_role('region', name='历史会话自动处理', exact=True)
+            expect(summary).to_contain_text('107 条索引原样保留')
+            expect(summary).to_contain_text('将备份 1 个会话文件和 2 个索引数据库')
+            expect(summary).to_contain_text('不影响应用配置')
+            expect(dialog.get_by_role('button', name='备份历史并应用配置', exact=True)).to_be_enabled()
+            dialog.get_by_role('button', name='备份历史并应用配置', exact=True).scroll_into_view_if_needed()
+            assert dialog.evaluate('(element)=>element.scrollWidth<=element.clientWidth+1')
+            assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+            if args.screenshots:
+                page.screenshot(path=str(args.screenshots / 'missing-source-107-apply-enabled.png'))
+            assert count('agent.connect') == 0
+            dialog.get_by_role('button', name='备份历史并应用配置', exact=True).click()
+            expect(dialog.get_by_role('heading', name='配置已应用', exact=True)).to_be_visible()
+            outcome = dialog.get_by_role('status', name='历史会话处理结果', exact=True)
+            expect(outcome).to_contain_text('已备份 1 个会话文件和 2 个索引数据库')
+            expect(outcome).to_contain_text('已修复 1 个会话，0 个无需修改')
+            expect(outcome).to_contain_text('107 条未找到原文件的会话索引已随数据库备份并原样保留')
+            expect(outcome).not_to_contain_text('已备份 108')
+            expect(dialog).not_to_contain_text('无需再手动修复')
+            assert count('agent.connect') == 1 and count('agent.restart') == 0
+            passed('107 missing-source index records are preserved while one valid conversation can be backed up and applied, with accurate results')
+
+            dialog = open_preview(setup="""window.historyPlan={total:107,repairable:0,unchanged:0,blocked:0,preserved:107,filesToBackUp:0,indexDatabasesToBackUp:2,backupRequired:true,requiresClientExit:true,warnings:[]};window.historyResult={backedUp:0,indexBackedUp:2,repaired:0,unchanged:0,preserved:107,backupId:'fixture-index-backup',backupPath:'C:/Fixture/history-backup'}""")
+            expect(dialog.get_by_role('region', name='历史会话自动处理', exact=True)).to_contain_text('将备份 0 个会话文件和 2 个索引数据库')
+            expect(dialog.get_by_role('button', name='备份历史并应用配置', exact=True)).to_be_enabled()
+            dialog.get_by_role('button', name='备份历史并应用配置', exact=True).click()
+            outcome = dialog.get_by_role('status', name='历史会话处理结果', exact=True)
+            expect(outcome).to_contain_text('已备份 0 个会话文件和 2 个索引数据库')
+            expect(outcome).to_contain_text('已修复 0 个会话，0 个无需修改')
+            expect(outcome).to_contain_text('107 条未找到原文件的会话索引')
+            expect(dialog).not_to_contain_text('无需再手动修复')
+            assert count('agent.connect') == 1 and count('agent.restart') == 0
+            passed('Index-only history still permits configuration and reports database backup instead of inventing backed-up conversations')
+
+            page.set_viewport_size({'width': 860, 'height': 620})
+            dialog = open_preview(setup="""window.historyPlan.blocked=2;window.historyPlan.total=14;window.historyPlan.blockedReasons=['会话记录不是完整有效的 JSON，未自动改写'];window.historyPlan.warnings=['会话记录不是完整有效的 JSON，未自动改写'];window.previewWarnings=Array(12).fill('较长配置预览中的说明：请核对供应商和模型，再应用配置。')""")
+            dialog.evaluate('(element)=>element.scrollTop=element.scrollHeight')
+            footer = dialog.locator('.foot')
+            problem = footer.get_by_role('alert', name='历史问题处理', exact=True)
+            expect(problem).to_be_in_viewport()
+            expect(problem).to_contain_text('2 个历史会话需要检查，配置尚未修改')
+            expect(problem).to_contain_text('会话记录不是完整有效的 JSON，未自动改写')
+            expect(problem.get_by_role('button', name='重新检查历史', exact=True)).to_be_enabled()
+            expect(footer.get_by_role('button', name='备份历史并应用配置', exact=True)).to_be_disabled()
+            expect(footer.get_by_role('button', name='备份历史并应用配置', exact=True)).to_be_in_viewport()
+            assert dialog.evaluate('(element)=>element.scrollHeight>element.clientHeight')
+            problem.get_by_role('button', name='查看具体原因', exact=True).click()
+            summary = dialog.get_by_role('region', name='历史会话自动处理', exact=True)
+            expect(summary).to_be_focused()
+            expect(summary).to_be_in_viewport()
+            dialog.evaluate('(element)=>element.scrollTop=element.scrollHeight')
+            problem.get_by_role('button', name='重新检查历史', exact=True).click()
+            expect(problem.get_by_role('button', name='重新检查历史', exact=True)).to_be_enabled()
+            expect(footer.get_by_role('button', name='备份历史并应用配置', exact=True)).to_be_disabled()
+            assert count('agent.preview') == 2 and count('agent.connect') == count('agent.restart') == 0
+            page.set_viewport_size({'width': 800, 'height': 850})
+            dialog.evaluate('(element)=>element.scrollTop=element.scrollHeight')
+            expect(problem).to_be_in_viewport()
+            expect(problem.get_by_role('button', name='重新检查历史', exact=True)).to_be_in_viewport()
+            assert dialog.evaluate('(element)=>element.scrollWidth<=element.clientWidth+1')
+            assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+            if args.screenshots:
+                page.screenshot(path=str(args.screenshots / 'blocked-history-footer-recovery.png'))
+            passed('A small scrolled viewport keeps real blockers and recovery controls beside Apply, and rechecking cannot write configuration')
+            page.set_viewport_size({'width': 1380, 'height': 1050})
 
             dialog = open_preview(setup='window.historyPlan={total:0,repairable:0,unchanged:0,blocked:0,backupRequired:false,requiresClientExit:false,message:"没有已有历史会话。"}')
             expect(dialog.get_by_role('button', name='备份并应用配置', exact=True)).to_be_enabled()

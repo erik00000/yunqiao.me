@@ -6,7 +6,7 @@ import { acquireHistoryLock, assertClientsStopped, historyLocation, normalizeHis
 
 export interface ClientHistorySwitchSnapshot { files: Array<PlannedFile & { afterExisted?: boolean }>; stateBefore: unknown; stateAfter: unknown }
 export interface ClientHistoryBackup { backupId: string; backup: string }
-export interface ClientHistoryApplyReply { ok: boolean; backupId?: string; backup?: string; rolledBack?: boolean; updated?: number; summary?: unknown; message?: string }
+export interface ClientHistoryApplyReply { ok: boolean; backupId?: string; backup?: string; rolledBack?: boolean; updated?: number; backedUp?: number; indexBackedUp?: number; preserved?: number; summary?: unknown; message?: string }
 export interface ClientHistorySwitchService {
   apply(input: Record<string, unknown> & { revision: string }): Promise<ClientHistoryApplyReply>;
   restorePreview(input: { backupId: string }): Promise<{ ok: boolean; revision?: string; message?: string }>;
