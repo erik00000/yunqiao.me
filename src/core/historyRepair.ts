@@ -244,6 +244,18 @@ function itemSummary(items: HistoryRepairItem[], files: SourceFile[], rows: RowS
   return { scanned, selected: items.length, repairable: ready.size, metadataChanges: files.filter(f => ready.has(f.id)).reduce((n, f) => n + f.metadataChanges, 0), indexChanges: rows.filter(r => r.before.model_provider !== r.after.model_provider).length,
     pathChanges: rows.filter(r => r.before.rollout_path !== r.after.rollout_path || r.before.cwd !== r.after.cwd).length, blocked: items.filter(i => i.status === 'blocked').length, unchanged: items.filter(i => i.status === 'unchanged').length, preserved: items.filter(i => i.status === 'preserved').length, encrypted: items.filter(i => i.encrypted).length, filesToBackUp, indexDatabasesToBackUp };
 }
+/** Lexical scope only; never probe catalog paths on another machine or outside the scanned roots. */
+export function historyIndexSourcePath(home: string, indexedPath: string, platform: NodeJS.Platform = process.platform): string | undefined {
+  const paths = platform === 'win32' ? path.win32 : path.posix;
+  // win32.isAbsolute('/Users/...') is true too: it cannot distinguish a local
+  // POSIX absolute path from a foreign Windows path. Match Windows syntax only.
+  if (platform !== 'win32' && (/^[a-z]:/i.test(indexedPath) || indexedPath.startsWith('\\') || indexedPath.startsWith('//'))) return undefined;
+  const candidate = paths.resolve(home, indexedPath);
+  return ['sessions', 'archived_sessions'].some(directory => {
+    const relative = paths.relative(paths.join(home, directory), candidate);
+    return !!relative && relative !== '..' && !relative.startsWith('..' + paths.sep) && !paths.isAbsolute(relative);
+  }) ? candidate : undefined;
+}
 async function buildPlan(ctx: HistoryContext, input: HistoryRepairOptions, trusted: HistoryRepairTrustedOptions = {}): Promise<InternalPlan> {
   const { options, config, targetConfigured } = normalizeOptions(ctx, input, trusted), selected = options.ids ? new Set(options.ids) : undefined;
   const { indexes, schemas, warnings } = readIndexes(ctx, trusted);
@@ -279,9 +291,8 @@ async function buildPlan(ctx: HistoryContext, input: HistoryRepairOptions, trust
           // Stale catalog paths may name another machine, drive or UNC share.
           // Scope-check lexically before any filesystem call: only the directories
           // already scanned and checked above belong to this transaction.
-          if (process.platform !== 'win32' && path.win32.isAbsolute(row.values.rollout_path)) continue;
-          const candidate = path.resolve(ctx.home, row.values.rollout_path);
-          if (![path.join(ctx.home, 'sessions'), path.join(ctx.home, 'archived_sessions')].some(root => inside(root, candidate))) continue;
+          const candidate = historyIndexSourcePath(ctx.home, row.values.rollout_path);
+          if (!candidate) continue;
           try { fs.lstatSync(candidate); existingSource = true; }
           catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
         }

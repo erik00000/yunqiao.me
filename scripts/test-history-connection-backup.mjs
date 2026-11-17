@@ -20,7 +20,7 @@ async function check(name, run) { await run(); checks++; console.log('PASS', nam
 try {
   const bundle = path.join(root, 'history.cjs');
   await build({ stdin: { contents: "export * from './src/core/historyRepair.ts'; export { acquireHistoryLock } from './src/core/historyRepairIO.ts';", resolveDir: workspace, loader: 'ts' }, outfile: bundle, platform: 'node', format: 'cjs', bundle: true, logLevel: 'silent' });
-  const { createHistoryRepairService, runHistoryRepairAction, acquireHistoryLock } = createRequire(import.meta.url)(bundle);
+  const { createHistoryRepairService, runHistoryRepairAction, acquireHistoryLock, historyIndexSourcePath } = createRequire(import.meta.url)(bundle);
   function fixture(name, options = {}) {
     const home = path.join(root, name, '.codex'); fs.mkdirSync(home, { recursive: true });
     const configPath = path.join(home, 'config.toml');
@@ -54,6 +54,25 @@ try {
     const preview = await service.restorePreview({ backupId: result.backupId }); assert(preview.ok, preview.message);
     const restored = await service.restore({ backupId: result.backupId, revision: preview.revision }); assert(restored.ok, restored.message);
   }
+  await check('Native POSIX absolute logs stay in scope on macOS/Linux while Windows drives UNC paths and all outside roots remain unprobed on every platform', async () => {
+    for (const platform of ['darwin', 'linux']) {
+      const home = platform === 'darwin' ? '/Users/fixture/.codex' : '/home/fixture/.codex';
+      for (const directory of ['sessions', 'archived_sessions']) {
+        const absolute = `${home}/${directory}/2026/rollout.jsonl`;
+        assert.equal(path.win32.isAbsolute(absolute), true, 'Fixture reproduces overlapping Windows/POSIX syntax');
+        assert.equal(historyIndexSourcePath(home, absolute, platform), absolute, `${platform} keeps its local absolute log for ID verification`);
+        assert.equal(historyIndexSourcePath(home, `${directory}/2026/rollout.jsonl`, platform), absolute);
+        assert.equal(historyIndexSourcePath(home, `${home}/${directory}-other/rollout.jsonl`, platform), undefined);
+      }
+      for (const file of ['Z:\\other\\rollout.jsonl', 'Z:/other/rollout.jsonl', 'Z:relative.jsonl', '\\\\server\\share\\rollout.jsonl', '//server/share/rollout.jsonl', '\\rooted\\rollout.jsonl', '/outside/rollout.jsonl', '../outside.jsonl', 'sessions/../../outside.jsonl']) {
+        assert.equal(historyIndexSourcePath(home, file, platform), undefined, `${platform} must not probe ${file}`);
+      }
+    }
+    const home = 'C:\\Users\\fixture\\.codex';
+    assert.equal(historyIndexSourcePath(home, 'C:/Users/fixture/.codex/sessions/2026/rollout.jsonl', 'win32'), 'C:\\Users\\fixture\\.codex\\sessions\\2026\\rollout.jsonl');
+    assert.equal(historyIndexSourcePath(home, 'archived_sessions\\2026\\rollout.jsonl', 'win32'), 'C:\\Users\\fixture\\.codex\\archived_sessions\\2026\\rollout.jsonl');
+    for (const file of ['D:\\elsewhere\\rollout.jsonl', '\\\\server\\share\\rollout.jsonl', '//server/share/rollout.jsonl', '/Users/other/.codex/sessions/log.jsonl', 'sessions\\..\\..\\outside.jsonl', 'sessions-other\\rollout.jsonl']) assert.equal(historyIndexSourcePath(home, file, 'win32'), undefined);
+  });
   await check('Planned configuration migrates all provider regions, archived histories and parent/child sessions while preserving content and settings', async () => {
     const f = fixture('whole-tree'), parent = f.add(1), child = f.add(2, { parent: parent.id, provider: 'old-secondary' }), archived = f.add(3, { archived: true, provider: 'other' }), aligned = f.add(4, { provider: 'yunqiao' });
     const unrelatedPath = path.join(f.home, 'sqlite', 'auxiliary.db'); fs.mkdirSync(path.dirname(unrelatedPath), { recursive: true });
