@@ -201,12 +201,14 @@ try {
     assert.equal(manifests.length, 2, 'One rolled-back batch plus one explicit retry');
   });
 
-  await check('Real broken logs keep the apply blocked with an actionable reason even when missing-source records can be preserved', async () => {
+  await check('Real broken logs are backed up and skipped while valid history and client configuration can still be applied', async () => {
     const f = fixture('preserved-plus-broken'), valid = f.add(440), missing = f.add(441), broken = f.add(442);
     fs.unlinkSync(missing.file); f.sessions.splice(f.sessions.indexOf(missing), 1); write(broken.file, broken.content + '{incomplete');
     const before = snapshot(f), preview = await f.preview();
-    assert.equal(preview.history.preserved, 1); assert.equal(preview.history.blocked, 1); assert.match(preview.history.blockedReasons[0], /JSON/);
-    const result = await f.call('agent.connect', { revision: preview.revision }); assert.equal(result.ok, false); assertSnapshot(f, before); assert.equal(read(valid.file), valid.content);
+    assert.equal(preview.history.preserved, 1); assert.equal(preview.history.blocked, 0); assert.equal(preview.history.skipped, 1); assert.match(preview.history.skippedReasons[0], /JSON/);
+    const result = await f.call('agent.connect', { revision: preview.revision }); assert(result.ok, result.message); assert.equal(result.history.repaired, 1); assert.equal(result.history.skipped, 1);
+    assert.equal(read(broken.file), broken.content + '{incomplete'); assert.deepEqual(f.rows().threads.find(row => row.id === broken.id), before.rows.threads.find(row => row.id === broken.id)); assert.notEqual(read(valid.file), valid.content);
+    historyBackup(f, result, before.files.filter(file => f.sessions.some(item => item.file === file.file)), before.rows);
   });
 
   await check('An index-only database backup failure blocks client writes and keeps the original connection state for a safe retry', async () => {
@@ -225,6 +227,22 @@ try {
     assert.equal(result.history.repaired, 0); assert.equal(result.history.unchanged, 1); assert.equal(result.history.backedUp, 1);
     const historyBefore = before.files.filter(file => f.sessions.some(s => s.file === file.file)); assertFiles(historyBefore); historyBackup(f, result, historyBefore, before.rows);
     assert.equal(json(result.backup).files[0].backup, json(first.backup).files[0].backup);
+  });
+
+  await check('Concrete storage failures return safe retry instructions and never commit configuration while raw semantic history is skipped', async () => {
+    for (const [code, expected] of [['ENOSPC', 'CLIENT_HISTORY_STORAGE_FULL'], ['EACCES', 'CLIENT_HISTORY_STORAGE_DENIED'], ['EIO', 'CLIENT_HISTORY_STORAGE_IO'], ['SQLITE_BUSY', 'CLIENT_HISTORY_STORAGE_BUSY']]) {
+      const f = fixture(`storage-${code}`), broken = f.add(2900); write(broken.file, broken.content + '{partial');
+      const before = snapshot(f), preview = await f.preview(), copyFile = fs.promises.copyFile; let failed = false, result;
+      fs.promises.copyFile = async function(from, to, ...args) { if (!failed && String(to).endsWith('.original.jsonl')) { failed = true; throw Object.assign(new Error('fixture-private-refresh secret-path'), { code }); } return copyFile.call(this, from, to, ...args); };
+      try { result = await f.call('agent.connect', { revision: preview.revision }); } finally { fs.promises.copyFile = copyFile; }
+      assert(failed); assert.equal(result.ok, false); assert.equal(result.code, expected); assert.match(result.message, /重试/); noSecrets(result); assertSnapshot(f, before);
+      const retry = await f.connect(); assert(retry.ok, retry.message); assert.equal(retry.history.skipped, 1); assert.equal(read(broken.file), broken.content + '{partial');
+    }
+  });
+  await check('State failure after semantic skipping restores configuration and safe history while preserving a later append to untouched invalid history', async () => {
+    const f = fixture('skipped-append-state-failure'), safe = f.add(2910), broken = f.add(2911); write(broken.file, broken.content + '{partial');
+    const config = read(f.config), rows = f.rows(), result = await failState(f, () => f.connect(), () => fs.appendFileSync(broken.file, 'later external work'));
+    assert(result.rolledBack); assert.equal(read(f.config), config); assert.equal(read(safe.file), safe.content); assert.equal(read(broken.file), broken.content + '{partiallater external work'); assert.deepEqual(f.rows(), rows);
   });
 
   await check('Reapplying an older yunqiao configuration repairs original and newly created provider regions without losing its first restore point', async () => {
@@ -259,10 +277,12 @@ try {
     const retry = await f.call('agent.connect', { revision: preview.revision }); assert(retry.ok, retry.message); aligned(f);
   });
 
-  await check('Blocked history prevents the whole switch instead of partially applying the remaining sessions', async () => {
+  await check('Skipping a semantic conflict keeps full backups and the complete reason list while continuing the safe configuration switch', async () => {
     const f = fixture('blocked'); f.add(50); const broken = f.add(51); write(broken.file, broken.content + '{incomplete');
-    const before = snapshot(f), preview = await f.preview(); assert.equal(preview.history.blocked, 1);
-    const result = await f.call('agent.connect', { revision: preview.revision }); assert.equal(result.ok, false); assertSnapshot(f, before);
+    const before = snapshot(f), preview = await f.preview(); assert.equal(preview.history.blocked, 0); assert.equal(preview.history.skipped, 1);
+    const result = await f.call('agent.connect', { revision: preview.revision }); assert(result.ok, result.message); assert.equal(result.history.skipped, 1);
+    historyBackup(f, result, before.files.filter(file => f.sessions.some(item => item.file === file.file)), before.rows);
+    const manifest = json(path.join(result.history.backupPath, 'manifest.json')); assert.equal(manifest.skipped[0].id, broken.id); assert.match(manifest.skipped[0].reason, /JSON/); assert.equal(read(broken.file), broken.content + '{incomplete');
   });
 
   for (const change of ['append', 'new-session', 'index']) await check(`History ${change} after preview invalidates the reviewed connection before any configuration write`, async () => {

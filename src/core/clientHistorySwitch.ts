@@ -2,11 +2,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import type { PlannedFile } from './agents/configFiles.js';
-import { acquireHistoryLock, assertClientsStopped, historyLocation, normalizeHistoryContext, repairRoot, type HistoryContext } from './historyRepairIO.js';
+import { acquireHistoryLock, assertClientsStopped, historyLocation, normalizeHistoryContext, repairRoot, historyStorageFailure, historyStorageMessages, type HistoryStorageCode, type HistoryContext } from './historyRepairIO.js';
 
 export interface ClientHistorySwitchSnapshot { files: Array<PlannedFile & { afterExisted?: boolean }>; stateBefore: unknown; stateAfter: unknown }
 export interface ClientHistoryBackup { backupId: string; backup: string }
-export interface ClientHistoryApplyReply { ok: boolean; backupId?: string; backup?: string; rolledBack?: boolean; updated?: number; backedUp?: number; indexBackedUp?: number; preserved?: number; summary?: unknown; message?: string }
+export interface ClientHistoryApplyReply { ok: boolean; failureCode?: HistoryStorageCode; backupId?: string; backup?: string; rolledBack?: boolean; updated?: number; backedUp?: number; indexBackedUp?: number; preserved?: number; skipped?: number; summary?: unknown; message?: string }
 export interface ClientHistorySwitchService {
   apply(input: Record<string, unknown> & { revision: string }): Promise<ClientHistoryApplyReply>;
   restorePreview(input: { backupId: string }): Promise<{ ok: boolean; revision?: string; message?: string }>;
@@ -31,7 +31,7 @@ export interface ClientHistorySwitchOptions<T extends { ok: boolean }> extends C
   commit(control: { setStateAfter(stateAfter: unknown): void }): Promise<T>;
 }
 export interface ClientHistorySwitchResult<T = unknown> {
-  ok: boolean; code?: 'CLIENT_HISTORY_BUSY' | 'CLIENT_HISTORY_CONFLICT' | 'CLIENT_HISTORY_RECOVERY_REQUIRED' | 'CLIENT_HISTORY_FAILED';
+  ok: boolean; code?: 'CLIENT_HISTORY_BUSY' | 'CLIENT_HISTORY_CONFLICT' | 'CLIENT_HISTORY_RECOVERY_REQUIRED' | 'CLIENT_HISTORY_FAILED' | HistoryStorageCode;
   transactionId?: string; journalPath?: string; history?: ClientHistoryApplyReply; result?: T;
   rolledBack?: boolean; recoveryRequired?: boolean; message: string;
 }
@@ -223,7 +223,7 @@ async function stopped(c: Context): Promise<void> {
 function lock(c: Context): () => void {
   safePath(c.ctx.home, repairRoot(c.ctx));
   try { return acquireHistoryLock(c.ctx); }
-  catch { throw new SwitchError('CLIENT_HISTORY_BUSY', '已有历史修复、恢复或配置切换正在执行，请稍后重试。'); }
+  catch (error) { if (historyStorageFailure(error)) throw error; throw new SwitchError('CLIENT_HISTORY_BUSY', '已有历史修复、恢复或配置切换正在执行，请稍后重试。'); }
 }
 async function recoverOne(c: Context, options: ClientHistorySwitchRecoveryOptions, owned: OwnedJournal): Promise<boolean> {
   try {
@@ -269,6 +269,7 @@ async function recoverOne(c: Context, options: ClientHistorySwitchRecoveryOption
   }
 }
 function failure(error: unknown): ClientHistorySwitchResult {
+  const storage = historyStorageFailure(error); if (storage) return { ok: false, code: storage, message: historyStorageMessages[storage] };
   return { ok: false, code: error instanceof SwitchError ? error.code : 'CLIENT_HISTORY_FAILED',
     message: error instanceof SwitchError ? error.message : '客户端配置切换未完成，已保留当前配置和备份，请检查后重试。' };
 }
@@ -310,7 +311,8 @@ export async function runClientHistorySwitch<T extends { ok: boolean }>(options:
     }
     if (!history.ok) {
       if (history.rolledBack && owned.value.history && alreadyRestored(c, owned.value.history)) { owned.value.historyRestored = true; save(c, owned); }
-      throw new SwitchError('CLIENT_HISTORY_FAILED', '历史备份或迁移未完成，未提交新的客户端配置。');
+      if (history.failureCode && Object.hasOwn(historyStorageMessages, history.failureCode)) throw new SwitchError(history.failureCode, historyStorageMessages[history.failureCode]);
+      throw new SwitchError('CLIENT_HISTORY_FAILED', '历史备份或迁移未完成，未提交新的客户端配置。请重新预览后重试。');
     }
     if ((history.updated || 0) > 0 && !owned.value.history) { owned.value.historyUntracked = true; save(c, owned); throw conflict(); }
     if (!owned.value.history) { owned.value.historyAbsent = true; save(c, owned); }

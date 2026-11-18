@@ -3,11 +3,11 @@ import path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import { parse as parseToml } from 'smol-toml';
 import { atomicWrite } from './agents/configFiles.js';
-import { acquireHistoryLock, assertClientsStopped, checkedFile, discoverHistoryDbs, fileHash, historyContext, historyLocation, normalizeHistoryContext, sameHistoryFile, inside, openHistoryDb, repairRoot, saveJournal, sqlIdentifier, tableColumns, valueHash, type HistoryContext, type SqlDb } from './historyRepairIO.js';
+import { acquireHistoryLock, assertClientsStopped, checkedFile, discoverHistoryDbs, fileHash, historyContext, historyLocation, normalizeHistoryContext, sameHistoryFile, inside, openHistoryDb, repairRoot, saveJournal, sqlIdentifier, tableColumns, valueHash, historyStorageFailure, historyStorageMessages, type HistoryContext, type SqlDb } from './historyRepairIO.js';
 
 type Cell = string | number | null;
 interface RowState { dbPath: string; table: 'threads' | 'local_thread_catalog'; keys: Record<string, Cell>; before: Record<string, Cell>; after: Record<string, Cell>; sessionId: string }
-interface SourceFile { path: string; id: string; hash: string; afterHash: string; size: number; mtimeMs: number; mode: number; providers: string[]; cwd?: string; archived: boolean; metadataChanges: number; encrypted: boolean; subagent: boolean; invalid?: string }
+interface SourceFile { path: string; id: string; relatedIds: string[]; hash: string; afterHash: string; size: number; mtimeMs: number; mode: number; providers: string[]; cwd?: string; archived: boolean; metadataChanges: number; encrypted: boolean; subagent: boolean; invalid?: string }
 export interface HistoryRepairOptions { targetProvider?: string; scope?: 'active' | 'archived' | 'all'; ids?: string[]; sourceProvider?: string; fixPaths?: boolean }
 /** Main-process transaction options; never accepted from an RPC payload. */
 export interface HistoryRepairTrustedOptions {
@@ -17,6 +17,8 @@ export interface HistoryRepairTrustedOptions {
   requireAll?: boolean;
   /** Automatic whole-history configuration only: retain indexes with no source unchanged. */
   preserveMissingSourceIndexes?: boolean;
+  /** Automatic configuration only: fully back up semantic conflicts without rewriting them. */
+  preserveUnrepairableHistory?: boolean;
   lockHeld?: boolean;
   /** A caller may persist this exact identity before the first journal write. */
   backupId?: string;
@@ -24,17 +26,37 @@ export interface HistoryRepairTrustedOptions {
   onPrepared?: (info: { backupId: string; backup: string }) => void | Promise<void>;
 }
 interface Options { targetProvider: string; scope: 'active' | 'archived' | 'all'; ids?: string[]; sourceProvider?: string; fixPaths: boolean }
-export interface HistoryRepairItem { id: string; title: string; path: string; paths: string[]; archived: boolean; beforeProvider: string; metadataProvider: string; targetProvider: string; changes: string[]; status: 'ready' | 'unchanged' | 'preserved' | 'blocked'; reason?: string; encrypted: boolean }
-interface Summary { scanned: number; selected: number; repairable: number; metadataChanges: number; indexChanges: number; pathChanges: number; blocked: number; unchanged: number; preserved: number; encrypted: number; filesToBackUp: number; indexDatabasesToBackUp: number }
-interface InternalPlan { ok: true; revision: string; options: Options; summary: Summary; items: HistoryRepairItem[]; warnings: string[]; dbPath: string; dbPaths: string[]; currentProvider: string; files: SourceFile[]; backupFiles: SourceFile[]; rows: RowState[]; schemas: Record<string, string>; configHash: string }
+export interface HistoryRepairItem { id: string; title: string; path: string; paths: string[]; archived: boolean; beforeProvider: string; metadataProvider: string; targetProvider: string; changes: string[]; status: 'ready' | 'unchanged' | 'preserved' | 'skipped' | 'blocked'; reason?: string; encrypted: boolean }
+interface Summary { scanned: number; selected: number; repairable: number; metadataChanges: number; indexChanges: number; pathChanges: number; blocked: number; unchanged: number; preserved: number; skipped: number; encrypted: number; filesToBackUp: number; indexDatabasesToBackUp: number }
+interface BackupOnlyDatabase { path: string; reason: string; raw: boolean }
+interface InternalPlan { ok: true; revision: string; options: Options; summary: Summary; items: HistoryRepairItem[]; warnings: string[]; dbPath: string; dbPaths: string[]; currentProvider: string; files: SourceFile[]; backupFiles: SourceFile[]; rows: RowState[]; schemas: Record<string, string>; databaseRevisions: Record<string, string>; indexRevision: string; backupOnlyDatabases: BackupOnlyDatabase[]; configHash: string }
 interface FileBackup { path: string; original: string; staged: string; beforeHash: string; afterHash: string; mtimeMs: number; mode: number; sessionId: string }
-interface DatabaseBackup { path: string; backup: string; hash: string; schema: string }
-interface Journal { format: 'aurora-history-provider-v1'; id: string; createdAt: string; targetProvider: string; sessions: number; status: 'prepared' | 'applying' | 'complete' | 'restoring' | 'restored' | 'interrupted'; restoredAt?: string; home: string; sqliteHome: string; options: Options; files: FileBackup[]; databases: DatabaseBackup[]; rows: RowState[]; error?: string }
+interface DatabaseBackup { path: string; backup: string; hash: string; schema: string; raw?: boolean; companions?: Array<{ path: string; backup: string; hash: string }> }
+interface Journal { format: 'aurora-history-provider-v1'; id: string; createdAt: string; targetProvider: string; sessions: number; status: 'prepared' | 'applying' | 'complete' | 'restoring' | 'restored' | 'interrupted'; restoredAt?: string; home: string; sqliteHome: string; options: Options; files: FileBackup[]; databases: DatabaseBackup[]; rows: RowState[]; skipped?: Array<{ id: string; paths: string[]; reason: string }>; backupOnlyDatabases?: BackupOnlyDatabase[]; error?: string }
 const UUID = /^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$/;
 const MAX_FILES = 10000;
 const MAX_LINE = 32 * 1024 * 1024;
 const serialize = (value: any): Cell => typeof value === 'bigint' ? Number(value) : value === undefined ? null : value;
 function schemaHash(db: SqlDb): string { return valueHash(db.prepare("SELECT name, sql FROM sqlite_master WHERE type IN ('table','index','trigger') ORDER BY type,name").all()); }
+class HistorySemanticsError extends Error {}
+const sqliteContentError = (error: unknown): boolean => {
+  const value = error as { code?: string; errcode?: number; cause?: unknown };
+  return (typeof value?.errcode === 'number' && [11, 26].includes(value.errcode & 255)) || /^SQLITE_(CORRUPT|NOTADB)(_|$)/.test(value?.code || '') || (!!value?.cause && sqliteContentError(value.cause));
+};
+function fileHashSync(file: string): string {
+  const hash = createHash('sha256'), buffer = Buffer.alloc(256 * 1024), fd = fs.openSync(file, 'r');
+  try { let length: number; while ((length = fs.readSync(fd, buffer, 0, buffer.length, null))) hash.update(buffer.subarray(0, length)); return hash.digest('hex'); }
+  finally { fs.closeSync(fd); }
+}
+function rawDatabaseFiles(ctx: HistoryContext, file: string): string[] {
+  return [file, file + '-wal', file + '-shm', file + '-journal'].filter(candidate => {
+    try { checkedFile(ctx.sqliteHome, candidate); return true; }
+    catch (error) { if (candidate !== file && (error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
+  });
+}
+function rawDatabaseRevision(ctx: HistoryContext, file: string, raw = true): string {
+  return valueHash(rawDatabaseFiles(ctx, file).filter(candidate => raw || !candidate.endsWith('-shm')).map(candidate => [candidate, fileHashSync(candidate)]));
+}
 const providerIdentity = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 200 && value.trim() === value && !/[\u0000-\u001f\u007f]/.test(value);
 const recordObject = (value: any): value is Record<string, any> => !!value && typeof value === 'object' && !Array.isArray(value);
 function readProvider(ctx: HistoryContext, trusted: HistoryRepairTrustedOptions = {}): { current: string; available: Set<string>; targets: Array<{ id: string; name: string; current: boolean }>; hash: string } {
@@ -114,13 +136,15 @@ async function* rawLines(file: string): AsyncGenerator<Buffer> {
   if (pending.length) yield pending;
 }
 function parseLine(line: Buffer): { record: any; ending: string; bom: string } | null {
-  let text = line.toString('utf8'); const bom = text.startsWith('\uFEFF') ? '\uFEFF' : ''; text = text.slice(bom.length);
+  let text: string;
+  try { text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(line); }
+  catch { throw new HistorySemanticsError('会话记录包含无效 UTF-8 字节'); }
+  const bom = text.startsWith('\uFEFF') ? '\uFEFF' : ''; text = text.slice(bom.length);
   const ending = text.endsWith('\r\n') ? '\r\n' : text.endsWith('\n') ? '\n' : '';
   if (ending) text = text.slice(0, -ending.length);
   if (!text.trim()) return null;
-  if (text.includes('\uFFFD')) throw new Error('会话记录包含无效 UTF-8 文本');
   try { return { record: JSON.parse(text), ending, bom }; }
-  catch { throw new Error('会话记录不是完整有效的 JSON，未自动改写'); }
+  catch { throw new HistorySemanticsError('会话记录不是完整有效的 JSON，未自动改写'); }
 }
 function rewritten(line: Buffer, parsed: ReturnType<typeof parseLine>, target: string): Buffer {
   if (!parsed || parsed.record?.type !== 'session_meta' || parsed.record.payload?.model_provider === target) return line;
@@ -128,7 +152,7 @@ function rewritten(line: Buffer, parsed: ReturnType<typeof parseLine>, target: s
 }
 async function inspectFile(file: string, target: string, archived: boolean): Promise<SourceFile> {
   const stat = fs.statSync(file), before = createHash('sha256'), after = createHash('sha256');
-  const result: SourceFile = { path: file, id: '', hash: '', afterHash: '', size: stat.size, mtimeMs: stat.mtimeMs, mode: stat.mode, providers: [], archived, metadataChanges: 0, encrypted: false, subagent: false };
+  const result: SourceFile = { path: file, id: '', relatedIds: [], hash: '', afterHash: '', size: stat.size, mtimeMs: stat.mtimeMs, mode: stat.mode, providers: [], archived, metadataChanges: 0, encrypted: false, subagent: false };
   const ids = new Set<string>(); let metadata = 0;
   try {
     for await (const line of rawLines(file)) {
@@ -151,15 +175,30 @@ async function inspectFile(file: string, target: string, archived: boolean): Pro
     result.hash = before.digest('hex'); result.afterHash = after.digest('hex');
     const next = fs.statSync(file);
     if (next.size !== stat.size || next.mtimeMs !== stat.mtimeMs || next.ino !== stat.ino) throw new Error('扫描时会话文件发生变化，请退出客户端后重新预览');
-  } catch (error) { result.id = [...ids][0] || path.basename(file).match(/[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}/i)?.[0] || `invalid-${valueHash(file).slice(0, 12)}`; result.invalid = String((error as Error).message); }
+  } catch (error) {
+    // I/O and concurrent writes are not semantic conflicts: never claim their
+    // bytes were backed up, or allow configuration to commit after a stale scan.
+    if ((error as NodeJS.ErrnoException).code || /扫描时会话文件发生变化/.test(String((error as Error).message))) throw error;
+    result.id = [...ids][0] || path.basename(file).match(/[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}/i)?.[0] || `invalid-${valueHash(file).slice(0, 12)}`; result.invalid = String((error as Error).message);
+  }
+  result.relatedIds = [...ids];
   return result;
 }
 interface IndexRow { dbPath: string; table: RowState['table']; keys: Record<string, Cell>; values: Record<string, Cell>; title: string; archived: boolean; source?: string }
-function readIndexes(ctx: HistoryContext, trusted: HistoryRepairTrustedOptions = {}): { indexes: Map<string, IndexRow[]>; schemas: Record<string, string>; warnings: string[] } {
-  const indexes = new Map<string, IndexRow[]>(), schemas: Record<string, string> = {}, warnings: string[] = [];
+function readIndexes(ctx: HistoryContext, trusted: HistoryRepairTrustedOptions = {}, preserveUnrepairable = false): { indexes: Map<string, IndexRow[]>; schemas: Record<string, string>; databaseRevisions: Record<string, string>; backupOnlyDatabases: BackupOnlyDatabase[]; warnings: string[] } {
+  const indexes = new Map<string, IndexRow[]>(), schemas: Record<string, string> = {}, databaseRevisions: Record<string, string> = {}, backupOnlyDatabases: BackupOnlyDatabase[] = [], warnings: string[] = [];
   for (const dbPath of discoverHistoryDbs(ctx)) {
-    const db = openHistoryDb(dbPath, true);
+    let db: SqlDb | undefined;
     try {
+      if (preserveUnrepairable && fs.statSync(dbPath).size > 0) {
+        // Check a plainly non-SQLite file without opening SQLite: a stray hot
+        // journal must not turn readable corrupt bytes into a recovery write.
+        const header = Buffer.alloc(16), fd = fs.openSync(dbPath, 'r');
+        try { fs.readSync(fd, header, 0, header.length, 0); } finally { fs.closeSync(fd); }
+        if (!header.equals(Buffer.from('SQLite format 3\0'))) throw Object.assign(new Error('历史数据库文件头无效，将原样备份'), { errcode: 26 });
+      }
+      db = openHistoryDb(dbPath, true);
+      if (preserveUnrepairable && db.prepare('PRAGMA quick_check(1)').all().some(row => Object.values(row)[0] !== 'ok')) throw Object.assign(new Error('历史数据库完整性检查未通过，将原样备份'), { errcode: 11 });
       const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(row => row.name);
       if (trusted.backupAll) schemas[dbPath] = schemaHash(db);
       if (!tables.includes('threads') && !tables.includes('local_thread_catalog')) continue;
@@ -169,7 +208,7 @@ function readIndexes(ctx: HistoryContext, trusted: HistoryRepairTrustedOptions =
         const columns = tableColumns(db, table), idColumn = table === 'threads' ? 'id' : 'thread_id';
         if (!columns.has(idColumn) || !columns.has('model_provider')) {
           const message = `${path.basename(dbPath)} 的 ${table} 结构未知，未自动修改`;
-          if (trusted.requireAll) throw new Error(message);
+          if (trusted.requireAll) throw new HistorySemanticsError(message);
           warnings.push(message); continue;
         }
         const fields = [idColumn, 'model_provider', 'rollout_path', 'cwd', 'archived', 'title', 'display_title', 'host_id', 'source', 'source_kind', 'thread_source'].filter(field => columns.has(field));
@@ -183,17 +222,17 @@ function readIndexes(ctx: HistoryContext, trusted: HistoryRepairTrustedOptions =
             // hosts yet. With zero rows there is no ownership to infer or skip.
             if (trusted.requireAll && !db.prepare('SELECT 1 AS found FROM local_thread_catalog LIMIT 1').get()) continue;
             const message = `${path.basename(dbPath)} 无法确认本地主机目录，跳过该目录投影`;
-            if (trusted.requireAll) throw new Error(message);
+            if (trusted.requireAll) throw new HistorySemanticsError(message);
             warnings.push(message); continue;
           }
           where = ` WHERE host_id IN (${localIds.map(() => '?').join(',')})`; params = localIds;
         }
-        const rows = db.prepare(`SELECT ${fields.map(sqlIdentifier).join(',')} FROM ${sqlIdentifier(table)}${where}`).all(...params);
-        if (rows.length > 50000) throw new Error('会话索引超过 50000 条，请使用客户端原生工具分批维护');
+        const rows = db.prepare(`SELECT ${fields.map(sqlIdentifier).join(',')} FROM ${sqlIdentifier(table)}${where} LIMIT 50001`).all(...params);
+        if (rows.length > 50000) throw new HistorySemanticsError('会话索引超过 50000 条，本次完整备份并保留原始历史');
         for (const row of rows) {
           const id = row[idColumn];
           if (typeof id !== 'string' || !UUID.test(id)) {
-            if (trusted.requireAll) throw new Error(`${path.basename(dbPath)} 的 ${table} 含有无法确认的原生会话 ID，未自动迁移`);
+            if (trusted.requireAll) throw new HistorySemanticsError(`${path.basename(dbPath)} 的 ${table} 含有无法确认的原生会话 ID，未自动迁移`);
             continue;
           }
           const keys: Record<string, Cell> = { [idColumn]: id }; if (table === 'local_thread_catalog' && columns.has('host_id')) keys.host_id = row.host_id;
@@ -202,9 +241,15 @@ function readIndexes(ctx: HistoryContext, trusted: HistoryRepairTrustedOptions =
           indexes.set(id, [...(indexes.get(id) || []), indexed]);
         }
       }
-    } finally { db.close(); }
+    } catch (error) {
+      if (!preserveUnrepairable || (!(error instanceof HistorySemanticsError) && !sqliteContentError(error))) throw error;
+      const raw = sqliteContentError(error), reason = String((error as Error).message);
+      if (raw) schemas[dbPath] = '';
+      databaseRevisions[dbPath] = rawDatabaseRevision(ctx, dbPath, raw);
+      backupOnlyDatabases.push({ path: dbPath, reason, raw }); warnings.push(`${path.basename(dbPath)} 将完整备份并原样保留；本次仅保存配置，不迁移无法确认关联的历史。`);
+    } finally { db?.close(); }
   }
-  return { indexes, schemas, warnings };
+  return { indexes, schemas, databaseRevisions, backupOnlyDatabases, warnings };
 }
 
 /** Only native threads determine the visible provider region; rollout metadata is supporting evidence. */
@@ -242,7 +287,7 @@ async function providerInventory(ctx: HistoryContext, trusted: HistoryRepairTrus
 function itemSummary(items: HistoryRepairItem[], files: SourceFile[], rows: RowState[], scanned: number, filesToBackUp: number, indexDatabasesToBackUp: number): Summary {
   const ready = new Set(items.filter(i => i.status === 'ready').map(i => i.id));
   return { scanned, selected: items.length, repairable: ready.size, metadataChanges: files.filter(f => ready.has(f.id)).reduce((n, f) => n + f.metadataChanges, 0), indexChanges: rows.filter(r => r.before.model_provider !== r.after.model_provider).length,
-    pathChanges: rows.filter(r => r.before.rollout_path !== r.after.rollout_path || r.before.cwd !== r.after.cwd).length, blocked: items.filter(i => i.status === 'blocked').length, unchanged: items.filter(i => i.status === 'unchanged').length, preserved: items.filter(i => i.status === 'preserved').length, encrypted: items.filter(i => i.encrypted).length, filesToBackUp, indexDatabasesToBackUp };
+    pathChanges: rows.filter(r => r.before.rollout_path !== r.after.rollout_path || r.before.cwd !== r.after.cwd).length, blocked: items.filter(i => i.status === 'blocked').length, unchanged: items.filter(i => i.status === 'unchanged').length, preserved: items.filter(i => i.status === 'preserved').length, skipped: items.filter(i => i.status === 'skipped').length, encrypted: items.filter(i => i.encrypted).length, filesToBackUp, indexDatabasesToBackUp };
 }
 /** Lexical scope only; never probe catalog paths on another machine or outside the scanned roots. */
 export function historyIndexSourcePath(home: string, indexedPath: string, platform: NodeJS.Platform = process.platform): string | undefined {
@@ -258,7 +303,9 @@ export function historyIndexSourcePath(home: string, indexedPath: string, platfo
 }
 async function buildPlan(ctx: HistoryContext, input: HistoryRepairOptions, trusted: HistoryRepairTrustedOptions = {}): Promise<InternalPlan> {
   const { options, config, targetConfigured } = normalizeOptions(ctx, input, trusted), selected = options.ids ? new Set(options.ids) : undefined;
-  const { indexes, schemas, warnings } = readIndexes(ctx, trusted);
+  const preserveUnrepairable = trusted.preserveUnrepairableHistory === true && trusted.configurationText !== undefined && trusted.backupAll === true && trusted.requireAll === true
+    && options.scope === 'all' && !options.ids && options.sourceProvider === undefined;
+  const { indexes, schemas, warnings, databaseRevisions, backupOnlyDatabases } = readIndexes(ctx, trusted, preserveUnrepairable);
   const includeSubagents = trusted.includeSubagents === true && options.scope === 'all' && !options.ids && options.sourceProvider === undefined;
   const preserveMissing = trusted.preserveMissingSourceIndexes === true && trusted.configurationText !== undefined && trusted.backupAll === true && trusted.requireAll === true
     && options.scope === 'all' && !options.ids && options.sourceProvider === undefined;
@@ -272,7 +319,7 @@ async function buildPlan(ctx: HistoryContext, input: HistoryRepairOptions, trust
     byId.set(source.id, [...(byId.get(source.id) || []), source]);
   }
   const ids = [...new Set([...byId.keys(), ...indexes.keys(), ...(selected || [])])].sort();
-  const items: HistoryRepairItem[] = [], files: SourceFile[] = [], rows: RowState[] = [];
+  const items: HistoryRepairItem[] = []; let files: SourceFile[] = [], rows: RowState[] = [];
   for (const id of ids) {
     if (selected && !selected.has(id)) continue;
     const sources = byId.get(id) || [], indexRows = indexes.get(id) || [], canonical = indexRows.filter(row => row.table === 'threads');
@@ -280,7 +327,8 @@ async function buildPlan(ctx: HistoryContext, input: HistoryRepairOptions, trust
     if (options.scope !== 'all' && (options.scope === 'archived') !== archived) continue;
     if (options.sourceProvider !== undefined && !canonical.some(row => row.values.model_provider === options.sourceProvider)) continue;
     const item: HistoryRepairItem = { id, title: canonical[0]?.title || indexRows[0]?.title || id, path: sources[0]?.path || String(indexRows[0]?.values.rollout_path || ''), paths: sources.map(s => s.path), archived, beforeProvider: [...new Set(canonical.map(r => String(r.values.model_provider ?? '(missing)')))].join(', '), metadataProvider: [...new Set(sources.flatMap(s => s.providers))].join(', '), targetProvider: options.targetProvider, changes: [], status: 'unchanged', encrypted: sources.some(s => s.encrypted) };
-    if (!sources.length) {
+    if (preserveUnrepairable && backupOnlyDatabases.length) { item.status = 'blocked'; item.reason = '部分历史数据库内容或结构无法核验，全部历史仅完整备份并原样保留'; }
+    else if (!sources.length) {
       item.status = 'blocked'; item.reason = '没有找到包含同一原生 ID 的会话原文件；未猜测补建索引或内容';
       if (preserveMissing && indexRows.length) {
         const keys = indexRows.map(row => valueHash([row.dbPath, row.table, row.keys]));
@@ -314,6 +362,7 @@ async function buildPlan(ctx: HistoryContext, input: HistoryRepairOptions, trust
     else if (sources.some(s => s.archived !== sources[0].archived)) { item.status = 'blocked'; item.reason = '相同会话 ID 同时存在活动与归档目录，需要手动核查'; }
     else if (!indexRows.some(r => r.table === 'threads')) { item.status = 'blocked'; item.reason = '缺少原生 threads 行；仅有日志不足以安全重建所有必填索引字段'; }
     else if (canonical.length !== 1) { item.status = 'blocked'; item.reason = '同一会话存在多个原生 threads 行，无法确认唯一归属'; }
+    else if (new Set(indexRows.map(row => valueHash([row.dbPath, row.table, row.keys]))).size !== indexRows.length) { item.status = 'blocked'; item.reason = '同一会话存在重复原生索引行，无法确认唯一归属'; }
     else if (options.sourceProvider !== undefined && indexRows.some(row => row.table === 'local_thread_catalog' && row.values.model_provider !== options.sourceProvider && row.values.model_provider !== options.targetProvider)) { item.status = 'blocked'; item.reason = '本机目录归属既不属于原供应商也不属于目标供应商，需要先核查索引冲突'; }
     const rowChanges: RowState[] = [];
     if (item.status !== 'blocked' && item.status !== 'preserved') {
@@ -335,6 +384,25 @@ async function buildPlan(ctx: HistoryContext, input: HistoryRepairOptions, trust
     }
     item.changes = [...new Set(item.changes)]; items.push(item);
   }
+  if (preserveUnrepairable) {
+    // Build a graph from metadata IDs and in-scope rollout references. A conflict
+    // in one session must also protect another session pointing at its file.
+    const linked = new Map<string, Set<string>>(), byPath = new Map<string, Set<string>>();
+    const pathKey = (file: string) => process.platform === 'win32' ? file.toLowerCase() : file;
+    const connect = (ids: Iterable<string>) => { const values = [...new Set(ids)]; for (const id of values) { const neighbors = linked.get(id) || new Set<string>(); for (const other of values) neighbors.add(other); linked.set(id, neighbors); } };
+    for (const sources of byId.values()) for (const source of sources) {
+      const owners = new Set([source.id, ...source.relatedIds]); byPath.set(pathKey(source.path), owners); connect(owners);
+    }
+    for (const [id, entries] of indexes) for (const row of entries) {
+      if (typeof row.values.rollout_path !== 'string') continue;
+      const candidate = historyIndexSourcePath(ctx.home, row.values.rollout_path); if (!candidate) continue;
+      const owners = byPath.get(pathKey(candidate)); if (owners) connect([id, ...owners]);
+    }
+    const unsafe = new Set(items.filter(item => item.status === 'blocked').map(item => item.id)), queue = [...unsafe];
+    while (queue.length) for (const id of linked.get(queue.pop()!) || []) if (!unsafe.has(id)) { unsafe.add(id); queue.push(id); }
+    for (const item of items) if (unsafe.has(item.id)) { item.status = 'skipped'; item.reason ||= '与需原样保留的历史共享会话 ID 或文件路径，本次一并跳过修复'; item.changes = []; }
+    files = files.filter(source => !unsafe.has(source.id)); rows = rows.filter(row => !unsafe.has(row.sessionId));
+  }
   if (items.some(i => i.encrypted)) warnings.push('部分会话包含 encrypted_content。修复保留这些内容原样，跨账号或供应商能否续聊仍取决于原客户端和原始身份。');
   if (options.sourceProvider !== undefined) warnings.push('来源筛选以原生 threads 索引为准。迁移同步日志与本机目录归属，不移动会话文件，也不更改当前客户端的模型或供应商配置。');
   warnings.push('本操作同步供应商归属与可确认的文件路径，不修改聊天正文、账号凭据、任务执行状态，也不自动恢复被删除的任务。');
@@ -352,11 +420,12 @@ async function buildPlan(ctx: HistoryContext, input: HistoryRepairOptions, trust
   }
   const summary = itemSummary(items, files, rows, ids.length, trusted.backupAll ? backupFiles.length : files.filter(source => source.metadataChanges).length,
     trusted.backupAll ? dbPaths.length : new Set(rows.map(row => row.dbPath)).size);
-  const preservedIndexes = items.filter(item => item.status === 'preserved').map(item => [item.id, indexes.get(item.id)]);
-  const revision = valueHash({ options, schemas, config: config.hash, items, files: files.map(f => [f.path, f.hash, f.afterHash]), backupFiles: backupFiles.map(f => [f.path, f.hash, f.afterHash]), backupAll: trusted.backupAll === true, includeSubagents, preserveMissing, preservedIndexes, requireAll: trusted.requireAll === true, rows });
-  return { ok: true, revision, options, summary, items, warnings, dbPath: dbPaths[0] || '', dbPaths, currentProvider: config.current, files, backupFiles, rows, schemas, configHash: config.hash };
+  const preservedIndexes = items.filter(item => item.status === 'preserved' || item.status === 'skipped').map(item => [item.id, indexes.get(item.id)]);
+  const indexRevision = valueHash([...indexes]);
+  const revision = valueHash({ options, schemas, databaseRevisions, backupOnlyDatabases, config: config.hash, items, files: files.map(f => [f.path, f.hash, f.afterHash]), backupFiles: backupFiles.map(f => [f.path, f.hash, f.afterHash]), backupAll: trusted.backupAll === true, includeSubagents, preserveMissing, preserveUnrepairable, preservedIndexes, requireAll: trusted.requireAll === true, rows });
+  return { ok: true, revision, options, summary, items, warnings, dbPath: dbPaths[0] || '', dbPaths, currentProvider: config.current, files, backupFiles, rows, schemas, databaseRevisions, indexRevision, backupOnlyDatabases, configHash: config.hash };
 }
-const publicPlan = ({ files: _files, backupFiles: _backupFiles, rows: _rows, schemas: _schemas, configHash: _config, ...plan }: InternalPlan) => plan;
+const publicPlan = ({ files: _files, backupFiles: _backupFiles, rows: _rows, schemas: _schemas, databaseRevisions: _databaseRevisions, indexRevision: _indexRevision, configHash: _config, ...plan }: InternalPlan) => plan;
 function backupDir(ctx: HistoryContext): string { return path.join(repairRoot(ctx), 'provider-backups'); }
 function journalFile(ctx: HistoryContext, id: string): string { if (!/^provider-\d+-[a-f0-9]{12}$/.test(id)) throw new Error('备份批次 ID 无效'); return path.join(backupDir(ctx), id, 'manifest.json'); }
 function loadJournal(ctx: HistoryContext, id: string): Journal {
@@ -365,8 +434,19 @@ function loadJournal(ctx: HistoryContext, id: string): Journal {
   const value = JSON.parse(fs.readFileSync(file, 'utf8')) as Journal;
   if (value.format !== 'aurora-history-provider-v1' || value.id !== id || historyLocation(value.home) !== ctx.home || historyLocation(value.sqliteHome) !== ctx.sqliteHome) throw new Error('备份不属于当前客户端配置目录');
   const root = path.dirname(file);
-  for (const f of value.files) { checkedFile(ctx.home, f.path); checkedFile(root, f.original); if (!inside(historyLocation(root), historyLocation(f.staged))) throw new Error('备份中暂存路径无效'); }
-  for (const db of value.databases) { checkedFile(ctx.sqliteHome, db.path); checkedFile(root, db.backup); }
+  for (const f of value.files) {
+    if (!inside(ctx.home, path.resolve(f.path))) throw new Error('历史文件路径不属于本次修复目录');
+    if (f.beforeHash !== f.afterHash) checkedFile(ctx.home, f.path);
+    checkedFile(root, f.original); if (!inside(historyLocation(root), historyLocation(f.staged))) throw new Error('备份中暂存路径无效');
+  }
+  for (const db of value.databases) {
+    if (!inside(ctx.sqliteHome, path.resolve(db.path))) throw new Error('历史数据库路径不属于本次修复目录');
+    if (value.rows.some(row => row.dbPath === db.path)) checkedFile(ctx.sqliteHome, db.path);
+    checkedFile(root, db.backup);
+    for (const companion of db.companions || []) {
+      if (![db.path + '-wal', db.path + '-shm', db.path + '-journal'].includes(companion.path)) throw new Error('数据库附属文件路径无效'); checkedFile(root, companion.backup);
+    }
+  }
   for (const row of value.rows) {
     if (!value.databases.some(db => db.path === row.dbPath) || !['threads', 'local_thread_catalog'].includes(row.table) || Object.keys(row.keys).some(k => !['id', 'thread_id', 'host_id'].includes(k)) || Object.keys(row.before).some(k => !['model_provider', 'rollout_path', 'cwd'].includes(k)) || Object.keys(row.after).sort().join() !== Object.keys(row.before).sort().join()) throw new Error('备份中的数据库变更超出允许范围');
   }
@@ -408,9 +488,12 @@ async function replaceFile(ctx: HistoryContext, source: string, target: string, 
   }
   finally { if (fs.existsSync(temporary)) fs.unlinkSync(temporary); }
 }
-function openJournalDbs(journal: Journal): Map<string, SqlDb> {
+function openJournalDbs(journal: Journal, restoring = false): Map<string, SqlDb> {
   const dbs = new Map<string, SqlDb>();
-  try { for (const entry of journal.databases) { const db = openHistoryDb(entry.path, false); dbs.set(entry.path, db); db.prepare('BEGIN IMMEDIATE').run(); if (schemaHash(db) !== entry.schema) throw new Error('数据库结构在预览或备份后变化，不能自动恢复'); } return dbs; }
+  try { for (const entry of journal.databases) {
+    if (entry.raw || journal.backupOnlyDatabases?.some(database => database.path === entry.path) || (restoring && !journal.rows.some(row => row.dbPath === entry.path))) continue;
+    const db = openHistoryDb(entry.path, false); dbs.set(entry.path, db); db.prepare('BEGIN IMMEDIATE').run(); if (schemaHash(db) !== entry.schema) throw new Error('数据库结构在预览或备份后变化，不能自动恢复');
+  } return dbs; }
   catch (error) { for (const db of dbs.values()) { try { db.prepare('ROLLBACK').run(); } catch {} db.close(); } throw error; }
 }
 async function restoreInspection(ctx: HistoryContext, journal: Journal): Promise<{ ok: boolean; revision: string; summary: { sessions: number; files: number; rows: number }; conflicts: string[]; message: string }> {
@@ -418,8 +501,10 @@ async function restoreInspection(ctx: HistoryContext, journal: Journal): Promise
   if (journal.status === 'restored') conflicts.push('该备份批次已经恢复');
   for (const file of journal.files) {
     try {
-      const current = await fileHash(file.path), original = await fileHash(file.original); state.push([file.path, current, original]);
+      const original = await fileHash(file.original);
       if (original !== file.beforeHash) conflicts.push(`原始文件备份校验失败：${file.path}`);
+      if (file.beforeHash === file.afterHash) { state.push([file.path, original]); continue; }
+      const current = await fileHash(file.path); state.push([file.path, current, original]);
       if (![file.beforeHash, file.afterHash].includes(current)) conflicts.push(`文件在修复后有新增或修改，保留现状：${file.path}`);
     } catch { conflicts.push(`无法读取会话或原始备份：${file.path}`); }
   }
@@ -427,6 +512,8 @@ async function restoreInspection(ctx: HistoryContext, journal: Journal): Promise
     let db: SqlDb | undefined;
     try {
       if (await fileHash(entry.backup) !== entry.hash) conflicts.push(`数据库快照校验失败：${entry.path}`);
+      for (const companion of entry.companions || []) if (await fileHash(companion.backup) !== companion.hash) conflicts.push(`数据库附属文件备份校验失败：${companion.path}`);
+      if (!journal.rows.some(row => row.dbPath === entry.path)) { state.push([entry.path, entry.hash]); continue; }
       db = openHistoryDb(entry.path, true); const schema = schemaHash(db); state.push([entry.path, schema]);
       if (schema !== entry.schema) conflicts.push(`数据库结构已变化：${entry.path}`);
       for (const row of journal.rows.filter(row => row.dbPath === entry.path)) {
@@ -442,19 +529,20 @@ async function restoreJournal(ctx: HistoryContext, journal: Journal, revision?: 
   const inspection = await restoreInspection(ctx, journal);
   if (!inspection.ok) return { ...inspection, backupId: journal.id };
   if (revision && revision !== inspection.revision) throw new Error('恢复预览后历史又有变化，请重新预览');
-  const dbs = openJournalDbs(journal), file = journalFile(ctx, journal.id);
+  const dbs = openJournalDbs(journal, true), file = journalFile(ctx, journal.id);
   try {
     const current = await restoreInspection(ctx, journal);
     if (!current.ok || current.revision !== inspection.revision) throw new Error('取得写锁后检测到历史变化，未执行恢复');
     journal.status = 'restoring'; saveJournal(file, journal);
     for (const source of journal.files) {
+      if (source.beforeHash === source.afterHash) continue;
       const hash = await fileHash(source.path);
       if (hash === source.beforeHash) continue;
       if (hash !== source.afterHash) throw new Error('会话文件在恢复期间被其他程序修改，已保留现有内容');
       await replaceFile(ctx, source.original, source.path, source.mode, source.mtimeMs, source.afterHash, source.beforeHash);
     }
     for (const row of journal.rows) writeRow(dbs.get(row.dbPath)!, row, row.before);
-    for (const source of journal.files) if (await fileHash(source.path) !== source.beforeHash) throw new Error('提交恢复前检测到会话文件被外部修改');
+    for (const source of journal.files) if (source.beforeHash !== source.afterHash && await fileHash(source.path) !== source.beforeHash) throw new Error('提交恢复前检测到会话文件被外部修改');
     for (const db of dbs.values()) db.prepare('COMMIT').run();
     journal.status = 'restored'; journal.restoredAt = new Date().toISOString(); saveJournal(file, journal);
     return { ok: true, backupId: journal.id, updated: journal.sessions, message: `已恢复 ${journal.sessions} 个会话在本批修复前的元数据与索引。备份继续保留。` };
@@ -473,14 +561,14 @@ export function createHistoryRepairService(ctx: HistoryContext = historyContext(
     const list: any[] = [];
     for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
       if (!entry.isDirectory() || !/^provider-\d+-[a-f0-9]{12}$/.test(entry.name)) continue;
-      try { const j = loadJournal(ctx, entry.name); list.push({ id: j.id, createdAt: j.createdAt, targetProvider: j.targetProvider, sessions: j.sessions, restoredAt: j.restoredAt, path: path.join(root, entry.name), status: j.status === 'complete' || j.status === 'restored' ? j.status : 'interrupted' }); }
+      try { const j = loadJournal(ctx, entry.name); list.push({ id: j.id, createdAt: j.createdAt, targetProvider: j.targetProvider, sessions: j.sessions, skipped: j.skipped || [], backupOnlyDatabases: j.backupOnlyDatabases || [], restoredAt: j.restoredAt, path: path.join(root, entry.name), status: j.status === 'complete' || j.status === 'restored' ? j.status : 'interrupted' }); }
       catch { list.push({ id: entry.name, createdAt: '', targetProvider: '', sessions: 0, path: path.join(root, entry.name), status: 'interrupted', error: '备份清单需要手动检查' }); }
     }
     return { ok: true, backups: list.sort((a, b) => b.createdAt.localeCompare(a.createdAt)) };
   }
   return {
     async providers() { try { return await providerInventory(ctx, trusted); } catch (error) { return { ok: false, message: String((error as Error).message), currentProvider: '', targets: [], sources: [], warnings: [] }; } },
-    async preview(input: HistoryRepairOptions = {}) { try { return publicPlan(await buildPlan(ctx, input, trusted)); } catch (error) { return { ok: false, message: String((error as Error).message), items: [], warnings: [] }; } },
+    async preview(input: HistoryRepairOptions = {}) { try { return publicPlan(await buildPlan(ctx, input, trusted)); } catch (error) { const failureCode = historyStorageFailure(error); return { ok: false, failureCode, message: failureCode ? historyStorageMessages[failureCode] : String((error as Error).message), items: [], warnings: [] }; } },
     backups,
     async apply(input: HistoryRepairOptions & { revision: string }) {
       let unlock: (() => void) | undefined, journal: Journal | undefined;
@@ -496,11 +584,11 @@ export function createHistoryRepairService(ctx: HistoryContext = historyContext(
         if (trusted.requireAll && plan.summary.blocked) throw new Error(`有 ${plan.summary.blocked} 个会话无法安全迁移，未修改任何历史。请检查预览中的原因后重试。`);
         const snapshots = trusted.backupAll ? plan.backupFiles : plan.files.filter(source => source.metadataChanges);
         const databasePaths = trusted.backupAll ? plan.dbPaths : [...new Set(plan.rows.map(row => row.dbPath))];
-        if (!plan.summary.repairable && !(trusted.backupAll && (snapshots.length || databasePaths.length))) return { ok: true, updated: 0, backedUp: 0, indexBackedUp: 0, preserved: summary.preserved, summary, message: '所选范围没有可安全执行的修复项' };
+        if (!plan.summary.repairable && !(trusted.backupAll && (snapshots.length || databasePaths.length))) return { ok: true, updated: 0, backedUp: 0, indexBackedUp: 0, preserved: summary.preserved, skipped: summary.skipped, summary, message: '所选范围没有可安全执行的修复项' };
         const id = trusted.backupId ?? `provider-${Date.now()}-${randomBytes(6).toString('hex')}`, root = path.join(backupDir(ctx), id);
         fs.mkdirSync(backupDir(ctx), { recursive: true, mode: 0o700 });
         fs.mkdirSync(root, { mode: 0o700 });
-        journal = { format: 'aurora-history-provider-v1', id, createdAt: new Date().toISOString(), targetProvider: plan.options.targetProvider, sessions: plan.summary.repairable, status: 'prepared', home: ctx.home, sqliteHome: ctx.sqliteHome, options: plan.options, files: [], databases: [], rows: [] };
+        journal = { format: 'aurora-history-provider-v1', id, createdAt: new Date().toISOString(), targetProvider: plan.options.targetProvider, sessions: plan.summary.repairable, status: 'prepared', home: ctx.home, sqliteHome: ctx.sqliteHome, options: plan.options, files: [], databases: [], rows: [], skipped: plan.items.filter(item => item.status === 'skipped').map(item => ({ id: item.id, paths: item.paths, reason: item.reason || '无法确认安全修复范围' })), backupOnlyDatabases: plan.backupOnlyDatabases };
         saveJournal(journalFile(ctx, id), journal);
         await trusted.onPrepared?.({ backupId: id, backup: root });
         for (const source of snapshots) {
@@ -514,15 +602,33 @@ export function createHistoryRepairService(ctx: HistoryContext = historyContext(
           saveJournal(journalFile(ctx, id), journal);
         }
         for (const dbPath of databasePaths) {
-          const backup = path.join(root, `database-${journal.databases.length}.sqlite`), db = openHistoryDb(dbPath, false);
-          try { db.prepare('VACUUM INTO ?').run(backup); } finally { db.close(); }
-          fs.chmodSync(backup, 0o600); journal.databases.push({ path: dbPath, backup, hash: await fileHash(backup), schema: plan.schemas[dbPath] });
+          const backup = path.join(root, `database-${journal.databases.length}.sqlite`), backupOnly = plan.backupOnlyDatabases.find(entry => entry.path === dbPath);
+          if (backupOnly?.raw) {
+            if (rawDatabaseRevision(ctx, dbPath) !== plan.databaseRevisions[dbPath]) throw new Error('备份前历史数据库发生变化，请重新预览');
+            const companions: NonNullable<DatabaseBackup['companions']> = [];
+            for (const source of rawDatabaseFiles(ctx, dbPath)) {
+              const destination = source === dbPath ? backup : backup + source.slice(dbPath.length);
+              await fs.promises.copyFile(source, destination, fs.constants.COPYFILE_EXCL); fs.chmodSync(destination, 0o600);
+              const hash = await fileHash(destination); if (hash !== await fileHash(source)) throw new Error('创建原始数据库备份时文件发生变化');
+              if (source !== dbPath) companions.push({ path: source, backup: destination, hash });
+            }
+            if (rawDatabaseRevision(ctx, dbPath) !== plan.databaseRevisions[dbPath]) throw new Error('备份过程中原始数据库或附属文件发生变化');
+            journal.databases.push({ path: dbPath, backup, hash: await fileHash(backup), schema: '', raw: true, companions });
+          } else {
+            const db = openHistoryDb(dbPath, !!backupOnly);
+            try { db.prepare('VACUUM INTO ?').run(backup); } finally { db.close(); }
+            fs.chmodSync(backup, 0o600); journal.databases.push({ path: dbPath, backup, hash: await fileHash(backup), schema: plan.schemas[dbPath] });
+          }
           saveJournal(journalFile(ctx, id), journal);
         }
         journal.rows = plan.rows;
         saveJournal(journalFile(ctx, id), journal);
         await assertClientsStopped(ctx);
         for (const [file, db] of openJournalDbs(journal)) dbs.set(file, db);
+        if (trusted.preserveUnrepairableHistory) {
+          const current = readIndexes(ctx, trusted, true);
+          if (valueHash([...current.indexes]) !== plan.indexRevision || valueHash(current.databaseRevisions) !== valueHash(plan.databaseRevisions)) throw new Error('备份过程中历史索引或原始数据库发生变化，请重新预览');
+        }
         if (readProvider(ctx, trusted).hash !== plan.configHash) throw new Error('备份过程中客户端配置变化，请重新预览');
         for (const source of trusted.backupAll ? plan.backupFiles : plan.files) if (await fileHash(source.path) !== source.hash) throw new Error('备份过程中会话原文件发生变化');
         for (const row of plan.rows) if (valueHash(currentRow(dbs.get(row.dbPath)!, row)) !== valueHash(row.before)) throw new Error('备份过程中会话索引发生变化');
@@ -532,16 +638,17 @@ export function createHistoryRepairService(ctx: HistoryContext = historyContext(
         for (const source of journal.files) if (await fileHash(source.path) !== source.afterHash) throw new Error('提交前检测到会话文件被外部修改');
         for (const db of dbs.values()) db.prepare('COMMIT').run();
         journal.status = 'complete'; saveJournal(journalFile(ctx, id), journal);
-        return { ok: true, updated: journal.sessions, backedUp: journal.files.length, indexBackedUp: journal.databases.length, preserved: summary.preserved,
-          backupId: id, backup: root, target: journal.targetProvider, summary, message: trusted.backupAll ? `已备份 ${journal.files.length} 个会话文件与 ${journal.databases.length} 个索引数据库，并迁移 ${journal.sessions} 个会话。${summary.preserved ? `${summary.preserved} 条缺少原文件的会话索引已原样保留。` : ''}聊天正文和父子任务关系保持原样。` : `已批量修复 ${journal.sessions} 个会话的归属与可确认的路径。完整备份已保存，聊天正文和加密内容保持原样。` };
+        return { ok: true, updated: journal.sessions, backedUp: journal.files.length, indexBackedUp: journal.databases.length, preserved: summary.preserved, skipped: summary.skipped,
+          backupId: id, backup: root, target: journal.targetProvider, summary, message: trusted.backupAll ? `已备份 ${journal.files.length} 个会话文件与 ${journal.databases.length} 个索引数据库，并迁移 ${journal.sessions} 个会话。${summary.preserved ? `${summary.preserved} 条缺少原文件的会话索引已原样保留。` : ''}${summary.skipped ? `${summary.skipped} 个无法安全修复的会话已完整备份并跳过，原始内容与索引保持不变。` : ''}聊天正文和父子任务关系保持原样。` : `已批量修复 ${journal.sessions} 个会话的归属与可确认的路径。完整备份已保存，聊天正文和加密内容保持原样。` };
       } catch (error) {
+        const failureCode = historyStorageFailure(error);
         for (const db of dbs.values()) { try { db.prepare('ROLLBACK').run(); } catch {} db.close(); } dbs.clear();
         if (journal && fs.existsSync(journalFile(ctx, journal.id))) {
           journal.status = 'interrupted'; journal.error = String((error as Error).message); saveJournal(journalFile(ctx, journal.id), journal);
           const rollback = await restoreJournal(ctx, journal).catch(e => ({ ok: false, message: String(e.message || e) }));
-          return { ok: false, backupId: journal.id, backup: path.dirname(journalFile(ctx, journal.id)), summary, rolledBack: rollback.ok, message: `批量修复未完成：${String((error as Error).message)}。${rollback.ok ? '已恢复本次写入。' : '部分状态需要恢复，完整备份已保留。'}` };
+          return { ok: false, failureCode, backupId: journal.id, backup: path.dirname(journalFile(ctx, journal.id)), summary, rolledBack: rollback.ok, message: failureCode ? historyStorageMessages[failureCode] : `批量修复未完成：${String((error as Error).message)}。${rollback.ok ? '已恢复本次写入。' : '部分状态需要恢复，完整备份已保留。'}` };
         }
-        return { ok: false, summary, rolledBack: true, message: String((error as Error).message) };
+        return { ok: false, failureCode, summary, rolledBack: true, message: failureCode ? historyStorageMessages[failureCode] : String((error as Error).message) };
       } finally { for (const db of dbs.values()) db.close(); unlock?.(); }
     },
     async restorePreview(input: { backupId: string }) { try { return await restoreInspection(ctx, loadJournal(ctx, input.backupId)); } catch (error) { return { ok: false, message: String((error as Error).message), conflicts: [String((error as Error).message)] }; } },

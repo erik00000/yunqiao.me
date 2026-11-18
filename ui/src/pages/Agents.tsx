@@ -72,7 +72,7 @@ export default function Agents({ state, reload, go }: PageProps) {
     {!clients.length && <Empty icon="⌕" title="没有匹配的客户端" hint="调整筛选条件，或搜索 Claude、Codex、WorkBuddy。" />}
     <div className="page-footnote"><Ico name="cloud" size={15} /><span>还没有模型服务？从厂商目录发现国内外供应商。</span><button className="text-button" onClick={() => go('catalog')}>浏览厂商目录 →</button></div>
     {selected && <ConnectWizard agent={state.agentCatalog.find(agent => agent.id === selected.id) || selected} state={state} reload={reload} onClose={() => setSelected(null)} />}
-    {restoring && <Modal title={`恢复 ${restoring.name} 的原配置`} sub="恢复接入前保存的配置备份。此操作会退出云桥的网关配置。" onClose={() => { if (!busy) setRestoring(null); }} foot={<><Btn disabled={busy} onClick={() => setRestoring(null)}>取消</Btn><Btn variant="primary" disabled={busy} onClick={async () => { setBusy(true); try { const r = await call('agent.disconnect', { agentId: restoring.id }); if (!r.ok) throw new Error(r.message); await reload(); setRestoring(null); toast.push(r.history ? `${r.message} 已备份 ${r.history.backedUp} 个会话文件${typeof r.history.indexBackedUp === 'number' ? `和 ${r.history.indexBackedUp} 个索引数据库` : ''}，修复 ${r.history.repaired} 个会话。${r.history.preserved ? `另有 ${r.history.preserved} 条缺少原文件的索引已备份并原样保留。` : ''}` : r.message || '原配置已恢复', 'ok'); } catch (e: any) { toast.push(e.message, 'bad'); } finally { setBusy(false); } }}>{busy ? '正在备份并恢复…' : '恢复原配置'}</Btn></>}><div className="notice">{['codex-cli', 'chatgpt-desktop', 'codex-desktop'].includes(restoring.id) ? '请先保存工作并完全退出 ChatGPT / Codex 及相关终端会话。恢复时会先备份现有会话文件和完整索引，再同步可处理会话的供应商归属；缺少原文件的索引会备份并原样保留。完成后重新打开客户端。' : '恢复后，请重启对应客户端。你的历史会话不受此操作影响。'}</div></Modal>}
+    {restoring && <Modal title={`恢复 ${restoring.name} 的原配置`} sub="恢复接入前保存的配置备份。此操作会退出云桥的网关配置。" onClose={() => { if (!busy) setRestoring(null); }} foot={<><Btn disabled={busy} onClick={() => setRestoring(null)}>取消</Btn><Btn variant="primary" disabled={busy} onClick={async () => { setBusy(true); try { const r = await call('agent.disconnect', { agentId: restoring.id }); if (!r.ok) throw new Error(r.message); await reload(); setRestoring(null); toast.push(r.history ? `${r.message} 已备份 ${r.history.backedUp} 个会话文件${typeof r.history.indexBackedUp === 'number' ? `和 ${r.history.indexBackedUp} 个索引数据库` : ''}，修复 ${r.history.repaired} 个会话。${r.history.preserved ? `另有 ${r.history.preserved} 条缺少原文件的索引已备份并原样保留。` : ''}${r.history.skipped ? `${r.history.skipped} 个暂不可修复的会话已完整备份并跳过，原内容未改动。` : ''}` : r.message || '原配置已恢复', 'ok'); } catch (e: any) { toast.push(e.message, 'bad'); } finally { setBusy(false); } }}>{busy ? '正在备份并恢复…' : '恢复原配置'}</Btn></>}><div className="notice">{['codex-cli', 'chatgpt-desktop', 'codex-desktop'].includes(restoring.id) ? '请先保存工作并完全退出 ChatGPT / Codex 及相关终端会话。恢复时会先备份现有会话文件和完整索引，再同步可处理会话的供应商归属；缺少原文件的索引和暂不可修复的会话会完整备份并原样保留，不影响恢复配置。完成后重新打开客户端。' : '恢复后，请重启对应客户端。你的历史会话不受此操作影响。'}</div></Modal>}
   </>;
 }
 
@@ -106,8 +106,6 @@ function ConnectWizard({ agent, state, reload, onClose }: { agent: AgentCatalogI
   const [preview, setPreview] = useState<any>(null);
   const [result, setResult] = useState<any>(null);
   const [historyBusy, setHistoryBusy] = useState(false);
-  const [historyChecking, setHistoryChecking] = useState(false);
-  const historyReview = useRef<HTMLElement>(null);
   const [error, setError] = useState('');
   const [desktopDetection, setDesktopDetection] = useState<AgentDetection | null>(null);
   const [recoveryOperation, setRecoveryOperation] = useState<'detect' | 'select' | null>(null);
@@ -142,9 +140,10 @@ function ConnectWizard({ agent, state, reload, onClose }: { agent: AgentCatalogI
   const canSetPermissions = codex || agent.id === 'claude-code';
   const payload = { agentId: agent.id, providerId, model: chosenModel, mode: connectionMode, authMode: selectedAuthMode, permissionMode: canSetPermissions ? permissionMode : 'preserve', skipOnboarding: agent.id === 'claude-code' && skipOnboarding };
   const historyPreview = codex ? preview?.history : undefined;
-  const historyBlocked = !!historyPreview && historyPreview.blocked > 0;
   const historyBackupRequired = historyPreview?.backupRequired === true;
   const preservedHistory = historyPreview?.preserved || 0;
+  const skippedHistory = historyPreview?.skipped || 0;
+  const historyNotes = [...new Set<string>([...(historyPreview?.skippedReasons || []), ...(historyPreview?.warnings || [])])];
   const testRevision = JSON.stringify([provider?.name, provider?.enabled, provider?.baseUrl, provider?.format, provider?.proxy, provider?.headers, provider?.apiKeys, state.settings.proxy, state.settings.gatewayHost, state.settings.gatewayPort, state.settings.gatewayToken]);
   function clearSelectionFeedback() { setPreview(null); setHistoryBusy(false); }
   useEffect(() => {
@@ -180,10 +179,6 @@ function ConnectWizard({ agent, state, reload, onClose }: { agent: AgentCatalogI
     await ensureSelectedModel();
     const r = await call('agent.preview', payload); if (!r.ok) throw new Error(r.message || '无法生成配置预览'); setPreview({ ...r, selection: payload }); setHistoryBusy(false); setStep(2);
   }
-  async function recheckHistory() {
-    setHistoryChecking(true);
-    try { await prepare(); } finally { setHistoryChecking(false); }
-  }
   async function recoverDesktop(operation: 'detect' | 'select') {
     const priorError = error;
     setRecoveryOperation(operation); setPreview(null);
@@ -206,7 +201,6 @@ function ConnectWizard({ agent, state, reload, onClose }: { agent: AgentCatalogI
     } finally { if (alive.current) setRecoveryOperation(null); }
   }
   async function apply() {
-    if (historyBlocked) return;
     let r: any;
     try {
       r = await call('agent.connect', { ...preview.selection, revision: preview.revision });
@@ -223,19 +217,11 @@ function ConnectWizard({ agent, state, reload, onClose }: { agent: AgentCatalogI
   }
   if (support === 'unsupported' && !codingDesktop) return <Modal title={agent.name} sub="客户端兼容性说明" onClose={onClose} foot={<><Btn onClick={onClose}>关闭</Btn>{agent.docsUrl && <Btn variant="primary" onClick={() => call('app.openExternal', { url: agent.docsUrl })}>打开官方说明 ↗</Btn>}</>}><div className="compatibility-info"><ClientMark id={agent.id} name={agent.name} /><h2>通过官方账号使用此客户端</h2><p>{agent.supportNote || agent.description}</p><p>如需自定义供应商，可选择支持自定义 API 的编程客户端或 API 工具。</p></div></Modal>;
   return <Modal title={`配置 ${agent.name}`} sub="选择供应商和模型，预览后再应用到客户端。" onClose={() => { if (!busy && !clientActionActive) onClose(); }} width={800} foot={<div style={{ width: '100%', minWidth: 0 }}>
-    {!result && step === 2 && historyBlocked && <div className="notice warning" role="alert" aria-label="历史问题处理" style={{ display: 'block', marginBottom: 12, overflowWrap: 'anywhere' }}>
-      <b>{historyPreview.blocked} 个历史会话需要检查，配置尚未修改。</b>
-      <p>{historyPreview.blockedReasons?.[0] || historyPreview.message || '历史文件或索引存在冲突，请查看具体原因。'}</p>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
-        <Btn size="sm" disabled={busy} onClick={() => { historyReview.current?.scrollIntoView({ block: 'start' }); historyReview.current?.focus({ preventScroll: true }); }}>查看具体原因</Btn>
-        <Btn size="sm" disabled={busy} onClick={() => run(recheckHistory)}>{historyChecking ? '正在重新检查…' : '重新检查历史'}</Btn>
-      </div>
-    </div>}
-    <div style={{ display: 'flex', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 8 }}><Btn variant="ghost" disabled={busy || clientActionActive} onClick={onClose}>{result ? '完成' : '取消'}</Btn>{!result && step > 0 && <Btn disabled={busy} onClick={() => { setStep(step - 1); clearSelectionFeedback(); setError(''); }}>上一步</Btn>}{!result && step === 0 && <Btn variant="primary" disabled={busy || (!creating && !provider?.enabled)} onClick={() => run(async () => { if (creating) await saveNew(); else setStep(1); })}>{busy ? '保存中…' : creating ? '保存并选模型 →' : '下一步：选择模型 →'}</Btn>}{!result && step === 1 && <Btn variant="primary" disabled={busy || connectionTestActive || !chosenModel} onClick={() => run(prepare)}>{busy ? '生成预览…' : '预览配置 →'}</Btn>}{!result && step === 2 && support === 'automatic' && <Btn variant="primary" disabled={busy || historyBlocked} onClick={() => run(apply)}>{busy ? historyChecking ? '正在重新检查…' : historyBackupRequired ? '正在备份历史并应用…' : '正在应用…' : historyBusy ? '已退出，重新应用' : historyBackupRequired ? '备份历史并应用配置' : '备份并应用配置'}</Btn>}</div></div>}>
+    <div style={{ display: 'flex', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 8 }}><Btn variant="ghost" disabled={busy || clientActionActive} onClick={onClose}>{result ? '完成' : '取消'}</Btn>{!result && step > 0 && <Btn disabled={busy} onClick={() => { setStep(step - 1); clearSelectionFeedback(); setError(''); }}>上一步</Btn>}{!result && step === 0 && <Btn variant="primary" disabled={busy || (!creating && !provider?.enabled)} onClick={() => run(async () => { if (creating) await saveNew(); else setStep(1); })}>{busy ? '保存中…' : creating ? '保存并选模型 →' : '下一步：选择模型 →'}</Btn>}{!result && step === 1 && <Btn variant="primary" disabled={busy || connectionTestActive || !chosenModel} onClick={() => run(prepare)}>{busy ? '生成预览…' : '预览配置 →'}</Btn>}{!result && step === 2 && support === 'automatic' && <Btn variant="primary" disabled={busy} onClick={() => run(apply)}>{busy ? historyBackupRequired ? '正在备份历史并应用…' : '正在应用…' : historyBusy ? '已退出，重新应用' : historyBackupRequired ? '备份历史并应用配置' : '备份并应用配置'}</Btn>}</div></div>}>
     <div className="wizard-steps">{['连接供应商', '选择模型', '预览并应用'].map((name, i) => <div key={name} className={step === i ? 'active' : step > i ? 'done' : ''}><span>{step > i ? '✓' : i + 1}</span>{name}</div>)}</div>
     {error && <div className="notice warning" role="alert">{error}</div>}
     <fieldset disabled={busy} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
-    {result ? <div className="connection-success"><span><Ico name="check" size={32} /></span><h2>配置已应用</h2><p>{result.message || `重启 ${agent.name} 后开始使用。`}</p>{codex && result.history && <div role="status" aria-label="历史会话处理结果"><p>已备份 {result.history.backedUp} 个会话文件{typeof result.history.indexBackedUp === 'number' ? `和 ${result.history.indexBackedUp} 个索引数据库` : ''}。</p><p>已修复 {result.history.repaired} 个会话，{result.history.unchanged} 个无需修改。</p>{result.history.preserved > 0 && <p>{result.history.preserved} 条未找到原文件的会话索引已随数据库备份并原样保留；未补建会话内容。</p>}{result.history.message && <p>{result.history.message}</p>}{result.history.backupPath && <details><summary>查看历史备份位置</summary><p className="mono muted">{result.history.backupPath}</p></details>}</div>}{payload.authMode === 'coexist' && <p>重启客户端后，在模型菜单选择“官方”或对应供应商。切换服务建议新建会话，避免不同供应商的加密上下文不兼容。</p>}<div className="review-summary"><b>{provider?.name}</b><span>→</span><code>{chosenModel}</code></div>{result.path && <p className="mono muted">{result.path}</p>}</div> : <>
+    {result ? <div className="connection-success"><span><Ico name="check" size={32} /></span><h2>配置已应用</h2><p>{result.message || `重启 ${agent.name} 后开始使用。`}</p>{codex && result.history && <div role="status" aria-label="历史会话处理结果"><p>已备份 {result.history.backedUp} 个会话文件{typeof result.history.indexBackedUp === 'number' ? `和 ${result.history.indexBackedUp} 个索引数据库` : ''}。</p><p>已修复 {result.history.repaired} 个会话，{result.history.unchanged} 个无需修改。</p>{result.history.preserved > 0 && <p>{result.history.preserved} 条未找到原文件的会话索引已随数据库备份并原样保留；未补建会话内容。</p>}{result.history.skipped > 0 && <p>{result.history.skipped} 个会话未修复，已完整备份并原样保留；不影响使用新配置。</p>}{!result.history.skipped && result.history.skippedReasons?.length > 0 && <p>无法核验的历史索引已完整备份并原样保留，未修改其中的会话内容。</p>}{result.history.skippedReasons?.length > 0 && <details><summary>查看未修复原因</summary>{result.history.skippedReasons.map((reason: string, index: number) => <p key={index}>{reason}</p>)}</details>}{result.history.backupPath && <details><summary>查看历史备份位置</summary><p className="mono muted">{result.history.backupPath}</p></details>}</div>}{payload.authMode === 'coexist' && <p>重启客户端后，在模型菜单选择“官方”或对应供应商。切换服务建议新建会话，避免不同供应商的加密上下文不兼容。</p>}<div className="review-summary"><b>{provider?.name}</b><span>→</span><code>{chosenModel}</code></div>{result.path && <p className="mono muted">{result.path}</p>}</div> : <>
       {step === 0 && <>
         {codex && <div className="notice"><Ico name="user" size={18} /><div className="grow"><b>官方账号与第三方模型</b><p>{officialAvailable ? '已检测到官方登录。共存模式保留账号身份，并在同一模型菜单中显示官方与第三方模型。' : state.codexCoexist?.identity.message || '登录官方客户端后，可在这里开启账号与第三方模型共存。'}</p>{officialAvailable && <label className="checkbox-label"><input type="checkbox" aria-label="保留官方账号并与第三方模型共存" checked={authMode === 'coexist' || providerId === 'official'} disabled={providerId === 'official'} onChange={e => { setAuthMode(e.target.checked ? 'coexist' : 'api'); if (e.target.checked) setMode('gateway'); clearSelectionFeedback(); }} />保留官方账号并与第三方模型共存</label>}<p className="hint">{authMode === 'coexist' || providerId === 'official' ? '共存模式保留官方账号身份；第三方服务仅使用你配置的供应商密钥。' : 'API 模式保留官方登录文件，但桌面账号显示可能变化，官方聊天及云功能可能暂不可用；需要这些功能时，请使用共存模式。'}</p></div></div>}
         {codex && authMode === 'coexist' && state.codexCoexist?.warnings.map((message, i) => <div className="notice warning" key={i}>{message}</div>)}
@@ -268,7 +254,17 @@ function ConnectWizard({ agent, state, reload, onClose }: { agent: AgentCatalogI
       </>}
       {step === 2 && preview && <>
         <div className="review-summary"><b>{agent.name}</b><span>→</span><b>{provider?.name}</b><span>→</span><code>{chosenModel}</code><span className="chip">{preview.selection.mode === 'direct' ? '直连供应商' : '本地网关'}</span></div>
-        {historyPreview && <section ref={historyReview} tabIndex={-1} className={`notice${historyBlocked ? ' warning' : ''}`} aria-label="历史会话自动处理"><Ico name="chat" size={18} /><div className="grow"><b>历史会话自动备份与修复</b><p>共 {historyPreview.total} 个会话记录 · {historyPreview.repairable} 个需要修复 · {historyPreview.unchanged} 个无需修改{preservedHistory ? ` · ${preservedHistory} 条索引原样保留` : ''}。</p>{typeof historyPreview.filesToBackUp === 'number' && <p>将备份 {historyPreview.filesToBackUp} 个会话文件和 {historyPreview.indexDatabasesToBackUp || 0} 个索引数据库。</p>}{preservedHistory > 0 && <p>{preservedHistory} 条记录未找到原会话文件，将随索引数据库完整备份并原样保留，不影响应用配置。</p>}{historyPreview.message && <p>{historyPreview.message}</p>}{historyBackupRequired && <p>应用配置时自动备份历史并修复可处理的会话，无需另行批量操作。</p>}{historyPreview.requiresClientExit && <p>应用前请先保存工作，完全退出 ChatGPT 桌面版、Codex 及相关终端会话。</p>}{historyPreview.warnings?.map((warning: string, index: number) => <p key={index}>{warning}</p>)}{historyBlocked && <p>{historyPreview.blocked} 个会话暂不能安全修复。请核对上述原因，再使用下方“重新检查历史”；当前配置保持不变。</p>}</div></section>}
+        {historyPreview && <section className="notice" aria-label="历史会话自动处理"><Ico name="chat" size={18} /><div className="grow">
+          <b>历史会话自动备份与修复</b>
+          <p>共 {historyPreview.total} 个会话记录 · {historyPreview.repairable} 个需要修复 · {historyPreview.unchanged} 个无需修改{preservedHistory ? ` · ${preservedHistory} 条索引原样保留` : ''}{skippedHistory ? ` · ${skippedHistory} 个备份后跳过修复` : ''}。</p>
+          {typeof historyPreview.filesToBackUp === 'number' && <p>将备份 {historyPreview.filesToBackUp} 个会话文件和 {historyPreview.indexDatabasesToBackUp || 0} 个索引数据库。</p>}
+          {preservedHistory > 0 && <p>{preservedHistory} 条记录未找到原会话文件，将随索引数据库完整备份并原样保留，不影响应用配置。</p>}
+          {skippedHistory > 0 && <p>暂不可修复的 {skippedHistory} 个会话会先完整备份，再保留原内容并继续应用配置。</p>}
+          {!skippedHistory && historyPreview.skippedReasons?.length > 0 && <p>部分历史索引无法核验，将完整备份并原样保留，不影响应用配置。</p>}
+          {historyBackupRequired && <p>应用配置时自动备份历史并修复可处理的会话，无需另行批量操作。</p>}
+          {historyPreview.requiresClientExit && <p>应用前请先保存工作，完全退出 ChatGPT 桌面版、Codex 及相关终端会话。</p>}
+          {historyNotes.length > 0 && <details><summary>{skippedHistory ? '查看跳过修复的原因' : '查看历史说明'}</summary>{historyNotes.map((note, index) => <p key={index}>{note}</p>)}</details>}
+        </div></section>}
         {preview.warnings?.map((w: string, i: number) => <div className="notice warning" key={i}>{w}</div>)}
         {agent.supportNote && <p className="muted">{agent.supportNote}</p>}
         {preview.files?.map((f: any) => <details className="config-preview" key={f.path} open><summary>{f.existed ? '修改' : '新建'} · {f.path}</summary><div className="preview-columns"><div><label>当前配置</label><pre>{f.before || '此文件尚不存在'}</pre></div><div><label>应用后</label><pre>{f.after}</pre></div></div></details>)}
@@ -278,6 +274,6 @@ function ConnectWizard({ agent, state, reload, onClose }: { agent: AgentCatalogI
     </>}
     {!result && <div hidden={step !== 1}><ClientConnectionTests {...payload} disabled={busy || !chosenModel} selectionRevision={testRevision} prepare={ensureSelectedModel} onActiveChange={setConnectionTestActive} /></div>}
     </fieldset>
-    {result && <div className="client-restart-success"><h3>{agent.category === 'cli' ? '打开新终端，加载新配置' : '最后一步：重新启动客户端'}</h3><p className="hint">{connectionMode === 'gateway' ? '使用期间保持云桥运行。' : '直连供应商，加载配置后无需保持云桥运行。'}{codex && result.history ? result.history.preserved > 0 ? '可处理的历史会话已修复；缺少原文件的索引已备份并保留，重启后即可使用新配置。' : '历史会话已自动处理，重启后即可查看并使用，无需再手动修复。' : '重启后新建对话，选择刚配置的模型开始使用。'}</p><div className="client-tools"><ClientRestart agent={agent} primary onActiveChange={setClientActionActive} /><ClientDiagnostics agent={agent} /><ClientPermissions agent={agent} onActiveChange={setClientActionActive} onRestored={async () => { setPermissionMode('preserve'); await reload(); }} /></div></div>}
+    {result && <div className="client-restart-success"><h3>{agent.category === 'cli' ? '打开新终端，加载新配置' : '最后一步：重新启动客户端'}</h3><p className="hint">{connectionMode === 'gateway' ? '使用期间保持云桥运行。' : '直连供应商，加载配置后无需保持云桥运行。'}{codex && result.history ? (result.history.skipped > 0 || result.history.skippedReasons?.length > 0) ? '历史备份已完成，未修复内容保持原样。重启后即可使用新配置；备份位置和未修复原因可在上方查看。' : result.history.preserved > 0 ? '可处理的历史会话已修复；缺少原文件的索引已备份并保留，重启后即可使用新配置。' : '历史会话已自动处理，重启后即可查看并使用，无需再手动修复。' : '重启后新建对话，选择刚配置的模型开始使用。'}</p><div className="client-tools"><ClientRestart agent={agent} primary onActiveChange={setClientActionActive} /><ClientDiagnostics agent={agent} /><ClientPermissions agent={agent} onActiveChange={setClientActionActive} onRestored={async () => { setPermissionMode('preserve'); await reload(); }} /></div></div>}
   </Modal>;
 }

@@ -241,14 +241,14 @@ try {
     assert.equal(read(thread.file), thread.content); assert.equal(f.provider(thread.id), 'previous');
     assert.equal(f.db.prepare('SELECT model_provider FROM local_thread_catalog WHERE host_id=? AND thread_id=?').get('desktop', thread.id).model_provider, 'previous');
   });
-  await check('Concurrent changes to an already-aligned backed-up log are preserved and reported as incomplete rollback', async () => {
+  await check('Concurrent changes to an untouched backed-up log prevent apply and remain intact while actual changes roll back', async () => {
     const f = fixture('preserve-append'), first = f.add(120), aligned = f.add(121, { provider: 'yunqiao' });
     const originalRename = fs.promises.rename; let appended;
     fs.promises.rename = async (from, to) => { const value = await originalRename(from, to); if (to === first.file) { appended = read(aligned.file) + '{"type":"event_msg","payload":{"message":"new work"}}\n'; write(aligned.file, appended); } return value; };
     let result;
     try { ({ result } = await apply(f.service())); } finally { fs.promises.rename = originalRename; }
-    assert.equal(result.ok, false); assert.equal(result.rolledBack, false); assert.equal(read(aligned.file), appended);
-    assert.equal(JSON.parse(read(path.join(result.backup, 'manifest.json'))).status, 'interrupted');
+    assert.equal(result.ok, false); assert.equal(result.rolledBack, true); assert.equal(read(aligned.file), appended);
+    assert.equal(JSON.parse(read(path.join(result.backup, 'manifest.json'))).status, 'restored');
     assert.equal(f.provider(first.id), 'previous');
   });
   await check('Restoring a trusted legacy managed current provider is allowed only with its actual provider table', async () => {
@@ -425,7 +425,7 @@ try {
     assert(result.ok, result.message); assert.equal(result.preserved, 4); assert.equal(result.backedUp, 0); assert.equal(read(outside), 'untouched external file');
     const inaccessible = f.add(474); fs.unlinkSync(inaccessible.file);
     fs.lstatSync = function(file, ...args) { if (String(file) === inaccessible.file) throw Object.assign(new Error('fixture source access denied'), { code: 'EACCES' }); return lstat.call(this, file, ...args); };
-    try { const preview = await f.service().preview(); assert.equal(preview.ok, false); assert.match(preview.message, /access denied/); }
+    try { const preview = await f.service().preview(); assert.equal(preview.ok, false); assert.equal(preview.failureCode, 'CLIENT_HISTORY_STORAGE_DENIED'); assert.match(preview.message, /权限/); }
     finally { fs.lstatSync = lstat; }
   });
   await check('Database backup failure in an index-only batch prevents success and leaves all original rows unchanged', async () => {
@@ -501,6 +501,115 @@ try {
     db.close(); fs.unlinkSync(databasePath);
     write(path.join(home, 'sessions', 'unindexed.jsonl'), '{"type":"session_meta","payload":{"id":"' + id(200) + '","model_provider":"old"}}\n');
     const withFile = await service.preview(); assert.equal(withFile.ok, false); assert.match(withFile.message, /目标供应商/);
+  });
+  const resilient = { ...automatic, preserveUnrepairableHistory: true };
+  await check('Automatic semantic skipping backs up 120 sessions in 41 files and 8 databases while repairing 10 preserving 79 and skipping 31', async () => {
+    const f = fixture('120-semantic-skips'), safe = Array.from({ length: 10 }, (_, i) => f.add(2000 + i)), broken = Array.from({ length: 31 }, (_, i) => f.add(2100 + i));
+    const missing = Array.from({ length: 79 }, (_, i) => f.add(2200 + i)); for (const item of missing) fs.unlinkSync(item.file);
+    for (const item of broken.slice(0, 10)) fs.appendFileSync(item.file, Buffer.from([0xc3, 0x28, 10]));
+    for (const [i, item] of broken.slice(21).entries()) f.db.prepare('UPDATE threads SET rollout_path=? WHERE id=?').run(broken[21 + (i + 1) % 10].file, item.id);
+    const copies = [{ path: f.databasePath, db: f.db }];
+    const schema = f.db.prepare("SELECT sql FROM sqlite_master WHERE type='table' ORDER BY name").all().map(row => row.sql).join(';');
+    for (let i = 0; i < 7; i++) {
+      const file = path.join(f.home, 'sqlite', `copy-${i}.db`); fs.mkdirSync(path.dirname(file), { recursive: true }); const db = new DatabaseSync(file); databases.push(db); copies.push({ path: file, db }); db.exec(schema);
+      db.exec("INSERT INTO local_thread_catalog_hosts VALUES('desktop','local'),('remote','remote'); CREATE TABLE opaque(value BLOB); INSERT INTO opaque VALUES(X'00FFAA');");
+      if (i === 0) for (const item of broken.slice(10, 21)) { const row = f.db.prepare('SELECT * FROM threads WHERE id=?').get(item.id); db.prepare('INSERT INTO threads VALUES(?,?,?,?,?,?,?,?,?,?)').run(...Object.values(row)); }
+    }
+    const before = copies.map(copy => databaseContents(copy.db)), bytes = [...safe, ...broken].map(item => [item.file, fs.readFileSync(item.file)]), service = f.service(resilient);
+    const { preview, result } = await apply(service);
+    assert.deepEqual([preview.summary.scanned, preview.summary.repairable, preview.summary.preserved, preview.summary.skipped, preview.summary.blocked, preview.summary.filesToBackUp, preview.summary.indexDatabasesToBackUp], [120, 10, 79, 31, 0, 41, 8]);
+    assert(result.ok, result.message); assert.equal(result.skipped, 31); assert.equal(result.updated, 10);
+    const journal = JSON.parse(read(path.join(result.backup, 'manifest.json'))); assert.equal(journal.skipped.length, 31); assert(journal.skipped.every(item => item.reason)); assert.equal(journal.files.length, 41); assert.equal(journal.databases.length, 8); assert(journal.rows.every(row => safe.some(item => item.id === row.sessionId)));
+    for (const [file, content] of bytes) assert.deepEqual(fs.readFileSync(journal.files.find(item => item.path === file).original), content);
+    for (const [i, copy] of copies.entries()) { const db = new DatabaseSync(journal.databases.find(item => item.path === copy.path).backup, { readOnly: true }); try { assert.deepEqual(databaseContents(db), before[i]); } finally { db.close(); } }
+    for (const item of broken) assert.deepEqual(fs.readFileSync(item.file), bytes.find(([file]) => file === item.file)[1]);
+    const repeat = await apply(service); assert(repeat.result.ok, repeat.result.message); assert.equal(repeat.result.updated, 0); assert.equal(repeat.result.skipped, 31); await restore(service, repeat.result);
+    await restore(service, result); for (const [file, content] of bytes) assert.deepEqual(fs.readFileSync(file), content); for (const [i, copy] of copies.entries()) assert.deepEqual(databaseContents(copy.db), before[i]);
+    assert.equal(service.backups().backups.find(item => item.id === result.backupId).skipped.length, 31);
+  });
+  await check('Fatal UTF-8 decoding preserves legal replacement characters non-BMP text and BOM while malformed bytes and anonymous JSON are backed up raw', async () => {
+    const f = fixture('utf8-semantics'), valid = f.add(2300), invalid = f.add(2301);
+    write(valid.file, valid.content.replace('正文 保留原字节', '正文 \ufffd 😀 𠮷')); fs.appendFileSync(invalid.file, Buffer.from([0xf0, 0x28, 0x8c, 0x28]));
+    const anonymous = path.join(f.home, 'sessions', 'anonymous.jsonl'); write(anonymous, '{invalid fixture JSON');
+    const before = [valid.file, invalid.file, anonymous].map(file => [file, fs.readFileSync(file)]), { preview, result } = await apply(f.service(resilient)); assert(result.ok, result.message);
+    assert.equal(preview.summary.repairable, 1); assert.equal(preview.summary.skipped, 2); assert.equal(result.backedUp, 3); assert(read(valid.file).startsWith('\ufeff')); assert(read(valid.file).includes('\ufffd 😀 𠮷'));
+    for (const [file, bytes] of before.slice(1)) assert.deepEqual(fs.readFileSync(file), bytes);
+    await restore(f.service(resilient), result); for (const [file, bytes] of before) assert.deepEqual(fs.readFileSync(file), bytes);
+  });
+  await check('Skipping conflicts propagates through all parsed IDs and reversed rollout references while independent sessions still migrate', async () => {
+    for (const kind of ['multiple-metadata-ids', 'invalid-first-line-index-reference', 'wrong-path-chain']) {
+      const f = fixture(kind), a = f.add(2400), b = f.add(2401), c = f.add(2402), safe = f.add(2403);
+      if (kind === 'multiple-metadata-ids') { fs.appendFileSync(a.file, JSON.stringify({ type: 'session_meta', payload: { id: b.id, model_provider: 'previous' } }) + '\n'); f.db.prepare('UPDATE threads SET rollout_path=? WHERE id=?').run(b.file, c.id); }
+      else if (kind === 'invalid-first-line-index-reference') { write(a.file, '{invalid'); f.db.prepare('UPDATE threads SET rollout_path=? WHERE id=?').run(a.file, b.id); f.db.prepare('UPDATE threads SET rollout_path=? WHERE id=?').run(b.file, c.id); }
+      else { f.db.prepare('UPDATE threads SET rollout_path=? WHERE id=?').run(b.file, a.id); f.db.prepare('UPDATE threads SET rollout_path=? WHERE id=?').run(c.file, b.id); }
+      const bytes = [a, b, c].map(item => [item.file, fs.readFileSync(item.file)]), before = f.db.prepare('SELECT * FROM threads ORDER BY id').all(), { preview, result } = await apply(f.service(resilient));
+      assert(result.ok, result.message); assert.equal(preview.summary.skipped, 3, kind); assert.equal(preview.summary.repairable, 1, kind); assert.equal(f.provider(safe.id), 'yunqiao');
+      for (const [file, content] of bytes) assert.deepEqual(fs.readFileSync(file), content); for (const item of [a, b, c]) assert.deepEqual(f.db.prepare('SELECT * FROM threads WHERE id=?').get(item.id), before.find(row => row.id === item.id));
+    }
+  });
+  await check('Unknown schemas and host ownership back up complete databases and leave all potentially associated logs unchanged', async () => {
+    for (const kind of ['unknown-schema', 'unknown-host', 'invalid-native-id']) {
+      const f = fixture(kind), item = f.add(2500);
+      if (kind === 'unknown-schema') f.db.exec('ALTER TABLE threads RENAME COLUMN model_provider TO legacy_provider;');
+      else if (kind === 'unknown-host') f.db.exec("UPDATE local_thread_catalog_hosts SET host_kind='unknown' WHERE host_id='desktop';");
+      else f.db.prepare('UPDATE threads SET id=? WHERE id=?').run('not-a-native-uuid', item.id);
+      const before = databaseContents(f.db), { preview, result } = await apply(f.service(resilient)); assert(result.ok, result.message); assert.equal(preview.summary.repairable, 0); assert.equal(result.updated, 0); assert.equal(result.backedUp, 1); assert.equal(result.indexBackedUp, 1); assert(preview.backupOnlyDatabases.length); assert.equal(read(item.file), item.content); assert.deepEqual(databaseContents(f.db), before);
+      const journal = JSON.parse(read(path.join(result.backup, 'manifest.json'))); assert.equal(journal.rows.length, 0); assert(journal.backupOnlyDatabases[0].reason);
+      await restore(f.service(resilient), result); assert.deepEqual(databaseContents(f.db), before);
+    }
+  });
+  await check('An unknown-schema database with persistent WAL survives read-only snapshots without self-induced revision changes', async () => {
+    const f = fixture('persistent-wal-unknown'), item = f.add(2550); f.db.exec('ALTER TABLE threads RENAME COLUMN model_provider TO legacy_provider;');
+    // Copy all persisted bytes while the writer is live, then close it and
+    // restore that exact private WAL state to emulate a writer that exited.
+    const original = databaseContents(f.db), files = [f.databasePath, f.databasePath + '-wal', f.databasePath + '-shm'].filter(file => fs.existsSync(file)).map(file => [file, fs.readFileSync(file)]);
+    f.db.close(); for (const [file, bytes] of files) fs.writeFileSync(file, bytes);
+    const { preview, result } = await apply(f.service(resilient)); assert(result.ok, result.message); assert.equal(preview.summary.skipped, 1); assert.equal(result.updated, 0); assert.equal(read(item.file), item.content);
+    const journal = JSON.parse(read(path.join(result.backup, 'manifest.json'))), db = new DatabaseSync(journal.databases[0].backup, { readOnly: true }); try { assert.deepEqual(databaseContents(db), original); } finally { db.close(); }
+    for (const [file, bytes] of files.filter(([file]) => !file.endsWith('-shm'))) assert.deepEqual(fs.readFileSync(file), bytes);
+    await restore(f.service(resilient), result);
+  });
+  await check('Corrupt readable SQLite and its WAL/SHM use verified raw backups and never prevent an otherwise safe configuration plan', async () => {
+    for (const kind of ['not-a-database', 'damaged-unrelated-page']) {
+      const f = fixture(kind), item = f.add(2600), corrupt = path.join(f.home, 'state_9.sqlite');
+      if (kind === 'not-a-database') { write(corrupt, 'private corrupt database bytes'); write(corrupt + '-wal', 'private raw WAL bytes'); write(corrupt + '-shm', 'private raw SHM bytes'); write(corrupt + '-journal', 'private raw rollback-journal bytes'); }
+      else {
+        const db = new DatabaseSync(corrupt); db.exec("CREATE TABLE hidden(data BLOB); INSERT INTO hidden VALUES(zeroblob(10000));"); const pageSize = db.prepare('PRAGMA page_size').get().page_size, rootPage = db.prepare("SELECT rootpage FROM sqlite_master WHERE name='hidden'").get().rootpage; db.close();
+        const fd = fs.openSync(corrupt, 'r+'); try { fs.writeSync(fd, Buffer.from([0]), 0, 1, (rootPage - 1) * pageSize); } finally { fs.closeSync(fd); }
+        const readable = new DatabaseSync(corrupt, { readOnly: true }); try { assert.equal(readable.prepare("SELECT name FROM sqlite_master WHERE type='table'").get().name, 'hidden'); } finally { readable.close(); }
+      }
+      const files = [corrupt, corrupt + '-wal', corrupt + '-shm', corrupt + '-journal'].filter(file => fs.existsSync(file)).map(file => [file, fs.readFileSync(file)]), { preview, result } = await apply(f.service(resilient));
+      assert(result.ok, result.message); assert.equal(preview.summary.skipped, 1); assert.equal(result.updated, 0); assert.equal(result.indexBackedUp, 2); assert.equal(read(item.file), item.content);
+      const journal = JSON.parse(read(path.join(result.backup, 'manifest.json'))), raw = journal.databases.find(entry => entry.path === corrupt); assert.equal(raw.raw, true); assert.equal(journal.rows.length, 0);
+      for (const [file, bytes] of files) { assert.deepEqual(fs.readFileSync(file), bytes); const backup = file === corrupt ? raw.backup : raw.companions.find(entry => entry.path === file).backup; assert.deepEqual(fs.readFileSync(backup), bytes); }
+      fs.appendFileSync(corrupt, 'later external bytes'); await restore(f.service(resilient), result); assert(fs.readFileSync(corrupt).includes(Buffer.from('later external bytes')));
+    }
+  });
+  await check('Skipped files may receive later external content without blocking restoration of only the files and rows this batch modified', async () => {
+    const f = fixture('skipped-later-append'), safe = f.add(2700), skipped = f.add(2701); write(skipped.file, skipped.content + '{partial');
+    const { result } = await apply(f.service(resilient)); assert(result.ok, result.message); fs.appendFileSync(skipped.file, 'later external continuation'); const current = fs.readFileSync(skipped.file);
+    await restore(f.service(resilient), result); assert.equal(read(safe.file), safe.content); assert.deepEqual(fs.readFileSync(skipped.file), current);
+  });
+  await check('Semantic preservation is trusted only and cannot be enabled by manual options or partial automatic scopes', async () => {
+    const f = fixture('semantic-trust'), broken = f.add(2800); write(broken.file, broken.content + '{partial');
+    for (const trusted of [{ ...resilient, backupAll: false }, { ...resilient, requireAll: false }, { ...resilient, configurationText: undefined }]) { const preview = await f.service(trusted).preview(); assert(preview.ok); assert.equal(preview.summary.skipped, 0); assert.equal(preview.summary.blocked, 1); }
+    for (const input of [{ ids: [broken.id] }, { scope: 'active' }, { sourceProvider: 'previous' }]) { const preview = await f.service(resilient).preview(input); assert(preview.ok); assert.equal(preview.summary.skipped, 0); assert.equal(preview.summary.blocked, 1); }
+    const manual = await createHistoryRepairService(f.ctx).preview({ preserveUnrepairableHistory: true, ...resilient }); assert(manual.ok); assert.equal(manual.summary.skipped, 0); assert.equal(manual.summary.blocked, 1);
+  });
+  await check('Duplicate catalog keys with real source files are a skipped semantic conflict rather than a late transaction failure', async () => {
+    const f = fixture('real-source-duplicate-catalog'), item = f.add(2810); f.db.exec("CREATE TABLE copied AS SELECT * FROM local_thread_catalog; INSERT INTO copied SELECT * FROM local_thread_catalog WHERE host_id='desktop'; DROP TABLE local_thread_catalog; ALTER TABLE copied RENAME TO local_thread_catalog;");
+    const before = databaseContents(f.db), { preview, result } = await apply(f.service(resilient)); assert(result.ok, result.message); assert.equal(preview.summary.skipped, 1); assert.equal(result.updated, 0); assert.equal(read(item.file), item.content); assert.deepEqual(databaseContents(f.db), before);
+  });
+  await check('Changes to raw database bytes or companion presence invalidate preview and changes during backup prevent application', async () => {
+    for (const kind of ['before', 'during', 'companion-presence']) {
+      const f = fixture(`raw-race-${kind}`), item = f.add(2820), corrupt = path.join(f.home, 'state_9.sqlite'); write(corrupt, 'invalid sqlite bytes');
+      const service = f.service(resilient), preview = await service.preview(); assert(preview.ok, preview.message); const copyFile = fs.promises.copyFile;
+      if (kind === 'before') fs.appendFileSync(corrupt, 'external edit');
+      else if (kind === 'companion-presence') write(corrupt + '-journal', 'external journal');
+      else fs.promises.copyFile = async function(from, to, ...args) { const result = await copyFile.call(this, from, to, ...args); if (String(from) === corrupt) fs.appendFileSync(corrupt, 'during backup edit'); return result; };
+      let result; try { result = await service.apply({ revision: preview.revision }); } finally { fs.promises.copyFile = copyFile; }
+      assert.equal(result.ok, false); assert.equal(read(item.file), item.content); assert.equal(f.provider(item.id), 'previous'); assert(read(corrupt).includes(kind === 'companion-presence' ? 'invalid' : 'edit'));
+    }
   });
   console.log(`History connection backups: ${checks} isolated checks passed`);
 } finally {

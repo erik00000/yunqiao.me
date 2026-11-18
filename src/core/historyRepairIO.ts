@@ -10,6 +10,21 @@ import { getDetectionContext } from './agents/adapters.js';
 import { detectDesktopAsync } from './agents/detectionAsync.js';
 
 export const runFile = promisify(execFile);
+export const historyStorageMessages = {
+  CLIENT_HISTORY_STORAGE_FULL: '历史备份空间不足，未提交新的客户端配置。请清理磁盘空间后重试。',
+  CLIENT_HISTORY_STORAGE_DENIED: '无法读写历史备份目录，未提交新的客户端配置。请检查目录权限或文件占用后重试。',
+  CLIENT_HISTORY_STORAGE_BUSY: '历史数据库仍被其他程序占用，未提交新的客户端配置。请完全退出客户端后重试。',
+  CLIENT_HISTORY_STORAGE_IO: '读取或保存历史备份失败，未提交新的客户端配置。请检查磁盘与备份目录是否可用后重试。',
+} as const;
+export type HistoryStorageCode = keyof typeof historyStorageMessages;
+export function historyStorageFailure(error: unknown): HistoryStorageCode | undefined {
+  const value = error as { code?: string; errcode?: number; cause?: unknown }, sqlite = typeof value?.errcode === 'number' ? value.errcode & 255 : -1;
+  if (value?.code === 'ENOSPC' || value?.code === 'SQLITE_FULL' || sqlite === 13) return 'CLIENT_HISTORY_STORAGE_FULL';
+  if (['EACCES', 'EPERM', 'EROFS', 'SQLITE_READONLY', 'SQLITE_PERM'].includes(value?.code || '') || [3, 8].includes(sqlite)) return 'CLIENT_HISTORY_STORAGE_DENIED';
+  if (['EBUSY', 'SQLITE_BUSY', 'SQLITE_LOCKED'].includes(value?.code || '') || [5, 6].includes(sqlite)) return 'CLIENT_HISTORY_STORAGE_BUSY';
+  if (['EIO', 'ENOENT', 'ENOTDIR', 'SQLITE_IOERR', 'SQLITE_CANTOPEN'].includes(value?.code || '') || [10, 14].includes(sqlite)) return 'CLIENT_HISTORY_STORAGE_IO';
+  return value?.cause ? historyStorageFailure(value.cause) : undefined;
+}
 export interface HistoryContext { home: string; sqliteHome: string; blockingProcesses?: () => Promise<string[]> }
 /** Resolve existing ancestors too, so a not-yet-created journal keeps its parent's canonical identity. */
 export function historyLocation(file: string): string {
@@ -80,7 +95,7 @@ export function acquireHistoryLock(ctx: HistoryContext): () => void {
 export interface SqlDb { prepare(sql: string): { all(...values: any[]): any[]; get(...values: any[]): any; run(...values: any[]): { changes: number | bigint } }; close(): void; }
 export function openHistoryDb(file: string, readOnly: boolean): SqlDb {
   try { const { DatabaseSync } = require('node:sqlite'); const db = new DatabaseSync(file, { readOnly }); db.prepare('PRAGMA busy_timeout = 2000').run(); return db; }
-  catch (error) { throw new Error(`无法读取历史 SQLite 数据库：${String((error as Error).message)}`); }
+  catch (error) { throw new Error(`无法读取历史 SQLite 数据库：${String((error as Error).message)}`, { cause: error }); }
 }
 export const sqlIdentifier = (value: string): string => { if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) throw new Error('不受支持的数据库字段'); return `"${value}"`; };
 export function tableColumns(db: SqlDb, table: string): Set<string> { return new Set(db.prepare(`PRAGMA table_info(${sqlIdentifier(table)})`).all().map(row => row.name)); }
