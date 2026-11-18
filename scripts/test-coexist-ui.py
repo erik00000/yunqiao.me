@@ -166,9 +166,10 @@ def main():
                 dialog.get_by_label('选择模型', exact=True).select_option(model)
                 before = config_file.read_bytes()
                 dialog.get_by_role('button', name='预览配置 →', exact=True).click()
-                expect(dialog.locator('.config-preview')).to_have_count(1)
+                file_preview = dialog.locator('.config-preview:has(> .preview-columns)')
+                expect(file_preview).to_have_count(1)
                 assert config_file.read_bytes() == before
-                preview = dialog.locator('.config-preview').inner_text()
+                preview = file_preview.inner_text()
                 for secret in ['fixture-source-key-one', 'fixture-local-gateway-token', 'fixture-refresh-never-import']:
                     assert secret not in preview
                 dialog.get_by_role('button', name='保存配置', exact=True).click()
@@ -285,7 +286,7 @@ def main():
             dialog.get_by_role('button', name='下一步：选择模型 →', exact=True).click()
             dialog.get_by_label('手动模型 ID', exact=True).fill('manual-model-valid')
             dialog.get_by_role('button', name='预览配置 →', exact=True).click()
-            expect(dialog.locator('.config-preview')).to_have_count(1)
+            expect(dialog.locator('.config-preview:has(> .preview-columns)')).to_have_count(1)
             assert config_file.read_bytes() == before_manual
             saved = next(item for item in state()['providers'] if item['id'] == empty['id'])
             assert [model['id'] for model in saved['models']] == ['manual-model-valid']
