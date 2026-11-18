@@ -203,6 +203,45 @@ window.renderAgents();"""
             assert count('agent.connect') == 1 and count('agent.restart') == 0
             passed('Index-only history still permits configuration and reports database backup instead of inventing backed-up conversations')
 
+            dialog = open_preview(setup="""window.historyPlan={total:121,repairable:9,unchanged:1,blocked:0,preserved:111,filesToBackUp:42,indexDatabasesToBackUp:8,backupRequired:true,requiresClientExit:true,blockedReasons:[],message:'将完整备份 42 个会话文件和 8 个索引数据库。58 个会话在不同索引库中留有无日志索引副本，另有 53 个单库无日志索引；均保持原样。',warnings:[]};window.historyResult={backedUp:42,indexBackedUp:8,repaired:9,unchanged:1,preserved:111,backupId:'fixture-multi-database-backup',backupPath:'C:/Fixture/history-backup'}""")
+            summary = dialog.get_by_role('region', name='历史会话自动处理', exact=True)
+            expect(summary).to_contain_text('共 121 个会话记录 · 9 个需要修复 · 1 个无需修改 · 111 条索引原样保留')
+            expect(summary).to_contain_text('将备份 42 个会话文件和 8 个索引数据库')
+            expect(summary).to_contain_text('58 个会话在不同索引库中留有无日志索引副本')
+            apply_button = dialog.get_by_role('button', name='备份历史并应用配置', exact=True)
+            expect(apply_button).to_be_enabled()
+            expect(dialog.get_by_role('alert', name='历史问题处理', exact=True)).to_have_count(0)
+            apply_button.scroll_into_view_if_needed()
+            assert dialog.evaluate('(element)=>element.scrollWidth<=element.clientWidth+1')
+            assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+            if args.screenshots:
+                page.screenshot(path=str(args.screenshots / 'multiple-databases-121-apply-enabled.png'))
+            assert count('agent.connect') == 0
+            apply_button.click()
+            expect(dialog.get_by_role('heading', name='配置已应用', exact=True)).to_be_visible()
+            outcome = dialog.get_by_role('status', name='历史会话处理结果', exact=True)
+            expect(outcome).to_contain_text('已备份 42 个会话文件和 8 个索引数据库')
+            expect(outcome).to_contain_text('已修复 9 个会话，1 个无需修改')
+            expect(outcome).to_contain_text('111 条未找到原文件的会话索引已随数据库备份并原样保留')
+            expect(outcome).not_to_contain_text('已备份 121')
+            expect(outcome).not_to_contain_text('已修复 121')
+            expect(dialog).not_to_contain_text('无需再手动修复')
+            assert count('agent.connect') == 1 and count('agent.restart') == 0
+            passed('121 records across eight index databases allow apply when 58 cross-database index copies and 53 other missing-source records are preserved, reporting 42 actual file backups and 9 repairs')
+
+            dialog = open_preview(setup="""window.historyPlan={total:121,repairable:9,unchanged:1,blocked:58,preserved:53,filesToBackUp:42,indexDatabasesToBackUp:8,backupRequired:true,requiresClientExit:true,blockedReasons:['同一数据库内有重复原生索引行，不能确认唯一记录'],message:'存在需要检查的历史记录。',warnings:['同一数据库内有重复原生索引行，不能确认唯一记录']}""")
+            dialog.evaluate('(element)=>element.scrollTop=element.scrollHeight')
+            problem = dialog.get_by_role('alert', name='历史问题处理', exact=True)
+            expect(problem).to_contain_text('58 个历史会话需要检查，配置尚未修改')
+            expect(problem).to_contain_text('同一数据库内有重复原生索引行，不能确认唯一记录')
+            expect(dialog.get_by_role('button', name='备份历史并应用配置', exact=True)).to_be_disabled()
+            expect(problem.get_by_role('button', name='重新检查历史', exact=True)).to_be_enabled()
+            problem.get_by_role('button', name='重新检查历史', exact=True).click()
+            expect(problem.get_by_role('button', name='重新检查历史', exact=True)).to_be_enabled()
+            expect(dialog.get_by_role('button', name='备份历史并应用配置', exact=True)).to_be_disabled()
+            assert count('agent.preview') == 2 and count('agent.connect') == count('agent.restart') == 0
+            passed('Real duplicate-row conflicts remain blocked with a nearby reason and read-only recheck despite preserved records elsewhere')
+
             page.set_viewport_size({'width': 860, 'height': 620})
             dialog = open_preview(setup="""window.historyPlan.blocked=2;window.historyPlan.total=14;window.historyPlan.blockedReasons=['会话记录不是完整有效的 JSON，未自动改写'];window.historyPlan.warnings=['会话记录不是完整有效的 JSON，未自动改写'];window.previewWarnings=Array(12).fill('较长配置预览中的说明：请核对供应商和模型，再应用配置。')""")
             dialog.evaluate('(element)=>element.scrollTop=element.scrollHeight')

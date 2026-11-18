@@ -284,7 +284,14 @@ async function buildPlan(ctx: HistoryContext, input: HistoryRepairOptions, trust
       item.status = 'blocked'; item.reason = '没有找到包含同一原生 ID 的会话原文件；未猜测补建索引或内容';
       if (preserveMissing && indexRows.length) {
         const keys = indexRows.map(row => valueHash([row.dbPath, row.table, row.keys]));
-        const providers = new Set(indexRows.map(row => row.values.model_provider));
+        // Multiple databases may retain separate snapshots of a source-less
+        // session. Preserve each copy verbatim; only contradictions within one
+        // database or repeated row identities make this read-only case unsafe.
+        const providersByDatabase = new Map<string, Set<Cell>>();
+        for (const row of indexRows) {
+          const providers = providersByDatabase.get(row.dbPath) || new Set<Cell>();
+          providers.add(row.values.model_provider); providersByDatabase.set(row.dbPath, providers);
+        }
         let existingSource = false;
         for (const row of indexRows) {
           if (typeof row.values.rollout_path !== 'string' || !row.values.rollout_path) continue;
@@ -296,8 +303,8 @@ async function buildPlan(ctx: HistoryContext, input: HistoryRepairOptions, trust
           try { fs.lstatSync(candidate); existingSource = true; }
           catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
         }
-        if (canonical.length > 1 || new Set(keys).size !== keys.length) item.reason = '同一会话存在重复原生索引行，无法确认唯一归属';
-        else if (providers.size > 1) item.reason = '缺少原文件的会话存在索引归属冲突，需要先核查';
+        if (new Set(keys).size !== keys.length) item.reason = '同一会话存在重复原生索引行，无法确认唯一归属';
+        else if ([...providersByDatabase.values()].some(providers => providers.size > 1)) item.reason = '缺少原文件的会话存在索引归属冲突，需要先核查';
         else if (existingSource) item.reason = '索引指向现存文件，但无法匹配同一原生 ID，需要先核查';
         else { item.status = 'preserved'; item.reason = '当前会话目录内未找到原文件；完整备份索引数据库，原样保留该行、路径与供应商归属，不探测外部路径、不补建或迁移内容'; }
       }

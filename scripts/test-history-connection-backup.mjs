@@ -54,6 +54,44 @@ try {
     const preview = await service.restorePreview({ backupId: result.backupId }); assert(preview.ok, preview.message);
     const restored = await service.restore({ backupId: result.backupId, revision: preview.revision }); assert(restored.ok, restored.message);
   }
+  function databaseContents(db) {
+    const schema = db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all();
+    const tables = schema.filter(row => row.type === 'table').map(row => [row.name,
+      db.prepare(`SELECT * FROM "${row.name.replaceAll('"', '""')}"`).all().sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))]);
+    return { schema, tables };
+  }
+  function crossDatabaseFixture(name) {
+    const f = fixture(name), real = Array.from({ length: 10 }, (_, i) => f.add(1000 + i, { provider: i === 9 ? 'yunqiao' : 'previous', archived: i % 2 === 1 }));
+    const logs = real.map(item => ({ path: item.file, content: item.content }));
+    // 10 native sessions with repeated physical rollouts: 10 + 30 + 2 = 42
+    // files. These are private fixture counts, not copies of customer data.
+    for (const [i, item] of real.entries()) for (let copy = 0; copy < (i < 2 ? 4 : 3); copy++) {
+      const file = path.join(path.dirname(item.file), `copy-${copy}-${item.id}.jsonl`); write(file, item.content); logs.push({ path: file, content: item.content });
+    }
+    const missing = Array.from({ length: 111 }, (_, i) => f.add(1100 + i, { provider: `retained-region-${i % 3}`, archived: i % 2 === 0 }));
+    for (const item of missing) fs.unlinkSync(item.file);
+    const copies = [{ path: f.databasePath, db: f.db }];
+    const schema = f.db.prepare("SELECT sql FROM sqlite_master WHERE type='table' ORDER BY name").all().map(row => row.sql).join(';');
+    for (const [i, relative] of ['state_1.sqlite', 'state_3.sqlite', 'state_8.sqlite', 'thread_history_1.sqlite', 'sqlite/native-catalog.db', 'sqlite/session-cache.sqlite', 'sqlite/archive.sqlite3'].entries()) {
+      const file = path.join(f.home, relative); fs.mkdirSync(path.dirname(file), { recursive: true });
+      const db = new DatabaseSync(file); databases.push(db); copies.push({ path: file, db }); db.exec(schema);
+      db.exec("INSERT INTO local_thread_catalog_hosts VALUES('desktop','local'),('remote','remote');");
+      for (const item of missing.slice(0, 58)) {
+        const row = { ...f.db.prepare('SELECT * FROM threads WHERE id=?').get(item.id), model_provider: `snapshot-region-${i}`, title: `Snapshot ${i} / ${item.id}`, cwd: `snapshot-cwd-${i}` };
+        db.prepare(`INSERT INTO threads VALUES(${Object.values(row).map(() => '?').join(',')})`).run(...Object.values(row));
+        db.prepare('INSERT INTO local_thread_catalog VALUES(?,?,?)').run('desktop', item.id, row.model_provider);
+        db.prepare('INSERT INTO local_thread_catalog VALUES(?,?,?)').run('remote', item.id, `remote-snapshot-${i}`);
+      }
+    }
+    for (const [i, copy] of copies.entries()) {
+      copy.db.exec('CREATE TABLE private_payload(id INTEGER PRIMARY KEY,opaque TEXT,amount REAL);');
+      copy.db.prepare('INSERT INTO private_payload VALUES(?,?,?)').run(i, `opaque snapshot ${i}`, i + 0.125);
+    }
+    return { ...f, real, logs, missing, copies };
+  }
+  function assertCopies(f, expected) {
+    for (const [i, copy] of f.copies.entries()) assert.deepEqual(databaseContents(copy.db), expected[i], copy.path);
+  }
   await check('Native POSIX absolute logs stay in scope on macOS/Linux while Windows drives UNC paths and all outside roots remain unprobed on every platform', async () => {
     for (const platform of ['darwin', 'linux']) {
       const home = platform === 'darwin' ? '/Users/fixture/.codex' : '/home/fixture/.codex';
@@ -273,6 +311,75 @@ try {
     f.db.prepare('UPDATE threads SET title=? WHERE id=?').run('later external title', first.id);
     const after = f.db.prepare('SELECT * FROM threads ORDER BY id').all(); await restore(f.service(), result);
     assert.deepEqual(f.db.prepare('SELECT * FROM threads ORDER BY id').all(), after); assert(!fs.existsSync(first.file)); assert(!fs.existsSync(second.file));
+  });
+  await check('121 sessions across 42 logs and 8 databases preserve 58 cross-database and 53 single-database missing sources through apply reapply and restore', async () => {
+    const f = crossDatabaseFixture('121-sessions-42-logs-8-databases'), before = f.copies.map(copy => databaseContents(copy.db));
+    const { preview, result } = await apply(f.service());
+    assert.deepEqual({ scanned: preview.summary.scanned, repairable: preview.summary.repairable, unchanged: preview.summary.unchanged, preserved: preview.summary.preserved, blocked: preview.summary.blocked, files: preview.summary.filesToBackUp, databases: preview.summary.indexDatabasesToBackUp },
+      { scanned: 121, repairable: 9, unchanged: 1, preserved: 111, blocked: 0, files: 42, databases: 8 });
+    assert(result.ok, result.message); assert.equal(result.updated, 9); assert.equal(result.backedUp, 42); assert.equal(result.indexBackedUp, 8); assert.equal(result.preserved, 111);
+    const journal = JSON.parse(read(path.join(result.backup, 'manifest.json')));
+    assert.equal(journal.files.length, 42); assert.equal(journal.databases.length, 8); assert.equal(journal.rows.length, 18);
+    assert(journal.rows.every(row => f.real.slice(0, 9).some(item => item.id === row.sessionId)));
+    for (const [i, copy] of f.copies.entries()) {
+      const snapshot = new DatabaseSync(journal.databases.find(entry => entry.path === copy.path).backup, { readOnly: true });
+      try { assert.deepEqual(databaseContents(snapshot), before[i], `Every column and table backed up: ${copy.path}`); } finally { snapshot.close(); }
+      if (i > 0) assert.deepEqual(databaseContents(copy.db), before[i], 'Cross-database missing-source copies are never rewritten');
+    }
+    const missingIds = new Set(f.missing.map(item => item.id));
+    for (const table of ['threads', 'local_thread_catalog']) {
+      const original = before[0].tables.find(([name]) => name === table)[1].filter(row => missingIds.has(row.id || row.thread_id));
+      const actual = databaseContents(f.db).tables.find(([name]) => name === table)[1].filter(row => missingIds.has(row.id || row.thread_id));
+      assert.deepEqual(actual, original);
+    }
+    for (const file of f.logs) { const backedUp = journal.files.find(entry => entry.path === file.path); assert(backedUp); assert.equal(read(backedUp.original), file.content); }
+    const applied = f.copies.map(copy => databaseContents(copy.db)), repeated = await apply(f.service());
+    assert(repeated.result.ok, repeated.result.message); assert.equal(repeated.preview.summary.unchanged, 10); assert.equal(repeated.preview.summary.preserved, 111);
+    assert.equal(repeated.result.updated, 0); assert.equal(repeated.result.backedUp, 42); assert.equal(repeated.result.indexBackedUp, 8); assertCopies(f, applied);
+    await restore(f.service(), repeated.result); assertCopies(f, applied);
+    await restore(f.service(), result); assertCopies(f, before);
+    for (const file of f.logs) assert.equal(read(file.path), file.content);
+    for (const item of f.missing) assert.equal(fs.existsSync(item.file), false);
+  });
+  await check('Changing one retained database copy invalidates the full plan before any backup or migration', async () => {
+    const f = crossDatabaseFixture('copied-index-revision'), preview = await f.service().preview(); assert(preview.ok); assert.equal(preview.summary.blocked, 0);
+    const copy = f.copies[7].db, threadId = f.missing[0].id;
+    copy.prepare('UPDATE threads SET model_provider=?,title=? WHERE id=?').run('later-copy-region', 'later copied title', threadId);
+    copy.prepare('UPDATE local_thread_catalog SET model_provider=? WHERE host_id=? AND thread_id=?').run('later-copy-region', 'desktop', threadId);
+    const before = f.copies.map(item => databaseContents(item.db)), result = await f.service().apply({ revision: preview.revision });
+    assert.equal(result.ok, false); assert.equal(result.backupId, undefined); assertCopies(f, before);
+    for (const file of f.logs) assert.equal(read(file.path), file.content);
+  });
+  await check('Failure of the eighth full database backup leaves all 42 logs and all database copies untouched', async () => {
+    const f = crossDatabaseFixture('eighth-database-backup-failure'), before = f.copies.map(copy => databaseContents(copy.db));
+    const prepare = DatabaseSync.prototype.prepare; let snapshots = 0, result;
+    DatabaseSync.prototype.prepare = function(sql) { if (sql === 'VACUUM INTO ?' && ++snapshots === 8) throw new Error('private eighth database backup failure'); return prepare.call(this, sql); };
+    try { ({ result } = await apply(f.service())); } finally { DatabaseSync.prototype.prepare = prepare; }
+    assert.equal(snapshots, 8); assert.equal(result.ok, false); assert.equal(result.rolledBack, true); assertCopies(f, before);
+    for (const file of f.logs) assert.equal(read(file.path), file.content);
+  });
+  await check('A native update trigger rolls back valid logs and rows without changing retained cross-database copies', async () => {
+    const f = crossDatabaseFixture('multi-database-trigger-rollback');
+    f.db.exec(`CREATE TRIGGER reject_migration BEFORE UPDATE OF model_provider ON threads WHEN OLD.id='${f.real[1].id}' BEGIN SELECT RAISE(ABORT,'private native update rejected'); END;`);
+    const before = f.copies.map(copy => databaseContents(copy.db)), { result } = await apply(f.service());
+    assert.equal(result.ok, false); assert.equal(result.rolledBack, true); assertCopies(f, before);
+    for (const file of f.logs) assert.equal(read(file.path), file.content);
+    const journal = JSON.parse(read(path.join(result.backup, 'manifest.json'))); assert.equal(journal.files.length, 42); assert.equal(journal.databases.length, 8);
+  });
+  await check('Cross-database preservation never bypasses same-database duplicates ownership conflicts wrong-ID files or real-source ambiguity', async () => {
+    for (const kind of ['duplicate-native', 'duplicate-catalog', 'provider-conflict', 'existing-wrong-id', 'real-source']) {
+      const f = crossDatabaseFixture(`copied-index-guard-${kind}`), copy = f.copies[7].db, item = f.missing[0];
+      if (kind === 'duplicate-native') copy.exec('CREATE TABLE copied_threads AS SELECT * FROM threads; INSERT INTO copied_threads SELECT * FROM threads LIMIT 1; DROP TABLE threads; ALTER TABLE copied_threads RENAME TO threads;');
+      else if (kind === 'duplicate-catalog') copy.exec("CREATE TABLE copied_catalog AS SELECT * FROM local_thread_catalog; INSERT INTO copied_catalog SELECT * FROM local_thread_catalog WHERE host_id='desktop' LIMIT 1; DROP TABLE local_thread_catalog; ALTER TABLE copied_catalog RENAME TO local_thread_catalog;");
+      else if (kind === 'provider-conflict') copy.prepare('UPDATE local_thread_catalog SET model_provider=? WHERE host_id=? AND thread_id=?').run('conflicting-copy-region', 'desktop', item.id);
+      else if (kind === 'existing-wrong-id') copy.prepare('UPDATE threads SET rollout_path=? WHERE id=?').run(f.real[0].file, item.id);
+      else write(item.file, item.content);
+      const before = f.copies.map(entry => databaseContents(entry.db)), { preview, result } = await apply(f.service());
+      assert.equal(preview.summary.blocked, 1, kind); assert.equal(preview.summary.preserved, 110, kind); assert.equal(result.ok, false, kind); assert.equal(result.backupId, undefined, kind); assertCopies(f, before);
+      const blocked = preview.items.find(row => row.status === 'blocked');
+      assert.match(blocked.reason, kind.startsWith('duplicate') ? /重复原生索引行/ : kind === 'provider-conflict' ? /归属冲突/ : kind === 'existing-wrong-id' ? /无法匹配同一原生 ID/ : /多个原生 threads 行/);
+      for (const file of f.logs) assert.equal(read(file.path), file.content);
+    }
   });
   await check('Catalog-only missing sources can be preserved but duplicate native rows, duplicate catalog keys and conflicting provider ownership still block', async () => {
     const catalogOnly = fixture('catalog-only-missing'), item = catalogOnly.add(430); fs.unlinkSync(item.file); catalogOnly.db.prepare('DELETE FROM threads WHERE id=?').run(item.id);

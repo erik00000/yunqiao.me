@@ -4,6 +4,7 @@ Run after packaging: python scripts/test-packaged.py
 Requires Python Playwright. Refuses an old/missing app.asar before launching an EXE.
 """
 import argparse
+from contextlib import closing
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -11,6 +12,7 @@ import os
 from pathlib import Path
 import re
 import socket
+import sqlite3
 import struct
 import subprocess
 import sys
@@ -36,6 +38,99 @@ def free_port():
 def sha256(file):
     with Path(file).open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
+
+
+def history_rows(file):
+    with closing(sqlite3.connect(Path(file).resolve().as_uri() + '?mode=ro', uri=True)) as db:
+        db.row_factory = sqlite3.Row
+        return {table: [dict(row) for row in db.execute(f'SELECT * FROM {table} ORDER BY rowid')]
+                for table in ['threads', 'local_thread_catalog_hosts', 'local_thread_catalog', 'private_payload']}
+
+
+def packaged_history_fixture(home):
+    """Real SQLite fixtures; no client-process bypass or host-profile access."""
+    existing_id = '60000000-0000-4000-8000-000000000001'
+    missing_id = '60000000-0000-4000-8000-000000000002'
+    rollout = home / 'sessions' / f'rollout-{existing_id}.jsonl'
+    missing = home / 'sessions' / f'rollout-{missing_id}.jsonl'
+    rollout.parent.mkdir(parents=True, exist_ok=True)
+    records = [json.dumps({'type': 'session_meta', 'payload': {'id': existing_id, 'model_provider': 'openai', 'source': 'cli', 'cwd': str(home)}}, separators=(',', ':')),
+               ' {"type":"event_msg","payload":{"type":"user_message","message":"keep conversation bytes"}} ',
+               '{"type":"response_item","payload":{"encrypted_content":"fixture-opaque-history"}}']
+    rollout.write_bytes(('\r\n'.join(records) + '\r\n').encode('utf-8'))
+    databases = [home / 'state_5.sqlite', home / 'state_6.sqlite']
+    for index, database in enumerate(databases):
+        # DELETE mode and closed connections keep the busy-client zero-write
+        # assertion independent of SQLite reader-created WAL sidecars.
+        with closing(sqlite3.connect(database)) as db:
+            db.executescript("""PRAGMA journal_mode=DELETE;
+CREATE TABLE threads(id TEXT PRIMARY KEY,model_provider TEXT,rollout_path TEXT,title TEXT,archived INTEGER,untouched TEXT);
+CREATE TABLE local_thread_catalog_hosts(host_id TEXT PRIMARY KEY,host_kind TEXT);
+INSERT INTO local_thread_catalog_hosts VALUES('desktop','local'),('remote','remote');
+CREATE TABLE local_thread_catalog(host_id TEXT,thread_id TEXT,model_provider TEXT,PRIMARY KEY(host_id,thread_id));
+CREATE TABLE private_payload(id INTEGER PRIMARY KEY,opaque TEXT);
+INSERT INTO private_payload VALUES(1,'keep unrelated database content');""")
+            rows = [(missing_id, f'missing-region-{index}', missing)]
+            if index == 0:
+                rows.append((existing_id, 'openai', rollout))
+            for session_id, provider, file in rows:
+                db.execute('INSERT INTO threads VALUES(?,?,?,?,?,?)', (session_id, provider, str(file), 'Fixture history', 0, 'keep native metadata'))
+                db.execute('INSERT INTO local_thread_catalog VALUES(?,?,?)', ('desktop', session_id, provider))
+                db.execute('INSERT INTO local_thread_catalog VALUES(?,?,?)', ('remote', session_id, 'remote-original'))
+            db.commit()
+    before_rows = {database: history_rows(database) for database in databases}
+    before_log = rollout.read_bytes()
+
+    def assert_provider(provider):
+        assert not missing.exists(), 'Missing-source history must not be fabricated'
+        before_lines, lines = before_log.splitlines(keepends=True), rollout.read_bytes().splitlines(keepends=True)
+        assert lines[1:] == before_lines[1:], 'Conversation body or opaque history bytes changed'
+        expected_metadata = json.loads(before_lines[0])
+        expected_metadata['payload']['model_provider'] = provider
+        assert json.loads(lines[0]) == expected_metadata, 'History metadata differs beyond the provider'
+        for database in databases:
+            expected = json.loads(json.dumps(before_rows[database]))
+            for row in expected['threads']:
+                if row['id'] == existing_id:
+                    row['model_provider'] = provider
+            for row in expected['local_thread_catalog']:
+                if row['host_id'] == 'desktop' and row['thread_id'] == existing_id:
+                    row['model_provider'] = provider
+            assert history_rows(database) == expected, 'Missing-source copies, remote rows or unrelated database content changed'
+
+    def snapshot():
+        return {'log': rollout.read_bytes(), 'databases': {database: history_rows(database) for database in databases}}
+
+    def assert_backup(backup_path, before, repaired):
+        journal = json.loads((Path(backup_path) / 'manifest.json').read_text(encoding='utf-8'))
+        assert journal['status'] == 'complete' and journal['sessions'] == repaired, journal
+        assert len(journal['files']) == 1 and len(journal['databases']) == 2, 'Every source and index database needs an actual backup'
+        log = journal['files'][0]
+        assert Path(log['path']).resolve() == rollout.resolve()
+        assert Path(log['original']).read_bytes() == before['log'], 'Backup did not retain the original conversation'
+        entries = {Path(entry['path']).resolve(): entry for entry in journal['databases']}
+        assert set(entries) == {database.resolve() for database in databases}
+        for database in databases:
+            assert history_rows(entries[database.resolve()]['backup']) == before['databases'][database], 'Database backup lost cross-database history or unrelated content'
+
+    return {'databases': databases, 'rollout': rollout, 'assert_provider': assert_provider, 'snapshot': snapshot, 'assert_backup': assert_backup}
+
+
+def assert_history_preview(preview, repairable, unchanged):
+    assert preview['ok'] and preview['revision'], preview
+    history = preview['history']
+    expected = {'total': 2, 'repairable': repairable, 'unchanged': unchanged, 'preserved': 1, 'blocked': 0,
+                'filesToBackUp': 1, 'indexDatabasesToBackUp': 2, 'backupRequired': True}
+    assert {key: history[key] for key in expected} == expected, history
+    assert not history['blockedReasons'], history
+
+
+def assert_history_result(result, repaired, unchanged):
+    assert result['ok'], result
+    history = result['history']
+    expected = {'backedUp': 1, 'indexBackedUp': 2, 'repaired': repaired, 'unchanged': unchanged, 'preserved': 1}
+    assert {key: history[key] for key in expected} == expected, history
+    assert history['backupId'] and history['backupPath'], history
 
 
 def release_resource_manifest():
@@ -148,7 +243,7 @@ def main():
     bundled = resources / 'codexplusplus'
     manifest = verify_packaged_resources(bundled)
 
-    profile = Path(tempfile.mkdtemp(prefix='yunqiao-packaged-'))
+    profile = Path(tempfile.mkdtemp(prefix='yunqiao-packaged-')).resolve()
     data, clients, chromium = profile / 'data', profile / 'clients', profile / 'chromium'
     for folder in [data, clients / '.claude', clients / '.codex', chromium, profile / 'appdata', profile / 'localappdata']:
         folder.mkdir(parents=True, exist_ok=True)
@@ -160,6 +255,8 @@ def main():
     for file, value in fixture_files.items():
         file.write_text(value, encoding='utf-8')
     original = {file: file.read_bytes() for file in fixture_files}
+    history_fixture = packaged_history_fixture(clients / '.codex')
+    history_original = history_fixture['snapshot']()
     catalog = ThreadingHTTPServer(('127.0.0.1', 0), CatalogHandler)
     threading.Thread(target=catalog.serve_forever, daemon=True).start()
     port, debug_port = free_port(), free_port()
@@ -309,6 +406,7 @@ def main():
             checks.append('Packaged client cards expose restart and terminal actions; native IPC rejects API services and process overrides without launching any client')
             assert not errors, errors
             assert all(file.read_bytes() == before for file, before in original.items()), 'A read-only check changed a client config'
+            assert history_fixture['snapshot']() == history_original, 'A read-only view changed isolated history'
             checks.append('Read-only views leave isolated client configurations unchanged')
 
             supplier = page.evaluate("""() => window.aurora.invoke('provider.save', {
@@ -331,7 +429,14 @@ def main():
             wizard.get_by_role('button', name='下一步：选择模型 →', exact=True).click()
             expect(wizard.get_by_role('region', name='共享编程配置')).to_be_visible()
             wizard.get_by_role('button', name='预览配置 →', exact=True).click()
-            expect(wizard.get_by_role('button', name='备份并应用配置', exact=True)).to_be_visible()
+            expect(wizard.get_by_role('button', name='备份历史并应用配置', exact=True)).to_be_enabled()
+            history_summary = wizard.get_by_role('region', name='历史会话自动处理', exact=True)
+            expect(history_summary).to_contain_text('共 2 个会话记录 · 1 个需要修复 · 0 个无需修改 · 1 条索引原样保留')
+            expect(history_summary).to_contain_text('将备份 1 个会话文件和 2 个索引数据库')
+            selection = {'agentId': 'chatgpt-desktop', 'providerId': supplier['id'], 'model': 'gpt-6.1-sol', 'authMode': 'api', 'mode': 'gateway'}
+            initial_preview = page.evaluate("p => window.aurora.invoke('agent.preview', p)", selection)
+            assert_history_preview(initial_preview, 1, 0)
+            assert history_fixture['snapshot']() == history_original, 'Configuration preview wrote isolated history'
             assert (clients / '.codex/config.toml').read_bytes() == original[clients / '.codex/config.toml']
             if args.expect_client_busy:
                 # This mode does not bypass or mock process detection. A real
@@ -355,7 +460,7 @@ def main():
                     expect(wizard.get_by_role('heading', name='配置已应用', exact=True)).to_have_count(0)
                     expect(wizard.get_by_role('status', name='历史会话处理结果', exact=True)).to_have_count(0)
 
-                wizard.get_by_role('button', name='备份并应用配置', exact=True).click()
+                wizard.get_by_role('button', name='备份历史并应用配置', exact=True).click()
                 retry = wizard.get_by_role('button', name='已退出，重新应用', exact=True)
                 expect(retry).to_be_enabled()
                 expect(wizard.get_by_role('alert')).to_contain_text('请先完全退出')
@@ -364,9 +469,8 @@ def main():
                 retry.click()
                 expect(retry).to_be_enabled()
                 expect(wizard.get_by_role('alert')).to_contain_text('请先完全退出')
-                selection = {'agentId': 'chatgpt-desktop', 'providerId': supplier['id'], 'model': 'gpt-6.1-sol', 'authMode': 'api', 'mode': 'gateway'}
                 busy_preview = page.evaluate("p => window.aurora.invoke('agent.preview', p)", selection)
-                assert busy_preview['ok'] and busy_preview['revision'], busy_preview
+                assert_history_preview(busy_preview, 1, 0)
                 selection['revision'] = busy_preview['revision']
                 for _ in range(2):
                     refused = page.evaluate("p => window.aurora.invoke('agent.connect', p)", selection)
@@ -376,10 +480,19 @@ def main():
                 wizard.get_by_role('button', name='取消', exact=True).click()
                 expect(wizard).not_to_be_visible()
                 assert not errors, errors
-                checks.append('UI retry and repeated native IPC remain CLIENT_HISTORY_BUSY, create no configuration/history backup or transaction and allow cancellation; successful apply and restore are not covered in this mode')
+                checks.append('UI retry and repeated native IPC preview cross-database missing-source indexes without blocking, remain CLIENT_HISTORY_BUSY, create no configuration/history backup or transaction and allow cancellation; successful apply and restore are not covered in this mode')
             else:
-                wizard.get_by_role('button', name='备份并应用配置', exact=True).click()
+                wizard.get_by_role('button', name='备份历史并应用配置', exact=True).click()
                 expect(wizard.get_by_role('heading', name='配置已应用', exact=True)).to_be_visible()
+                history_outcome = wizard.get_by_role('status', name='历史会话处理结果', exact=True)
+                expect(history_outcome).to_contain_text('已备份 1 个会话文件和 2 个索引数据库')
+                expect(history_outcome).to_contain_text('已修复 1 个会话，0 个无需修改')
+                expect(history_outcome).to_contain_text('1 条未找到原文件的会话索引已随数据库备份并原样保留')
+                history_fixture['assert_provider']('yunqiao')
+                first_backups = page.evaluate("() => window.aurora.invoke('codex.repair.backups')")
+                assert first_backups['ok'] and len(first_backups['backups']) == 1, first_backups
+                first_backup = first_backups['backups'][0]
+                history_fixture['assert_backup'](first_backup['path'], history_original, 1)
                 configured = (clients / '.codex/config.toml').read_text(encoding='utf-8')
                 assert 'model_provider = "yunqiao"' in configured and supplier['id'] + '/gpt-6.1-sol' in configured
                 limits = tomllib.loads(configured)
@@ -389,24 +502,32 @@ def main():
                 assert all(shared[client]['connected'] is True for client in ['codex-cli', 'chatgpt-desktop'])
                 wizard.get_by_role('button', name='完成', exact=True).click()
                 page.evaluate("id => window.aurora.invoke('provider.save', {id,models:[{id:'gpt-6.1-sol',contextWindow:200000}]})", supplier['id'])
-                selection = {'agentId': 'chatgpt-desktop', 'providerId': supplier['id'], 'model': 'gpt-6.1-sol', 'authMode': 'api', 'mode': 'gateway'}
                 updated = page.evaluate("p => window.aurora.invoke('agent.preview', p)", selection)
-                assert updated['ok'], updated
+                assert_history_preview(updated, 0, 1)
                 selection['revision'] = updated['revision']
+                before_reapply = history_fixture['snapshot']()
                 applied = page.evaluate("p => window.aurora.invoke('agent.connect', p)", selection)
-                assert applied['ok'], applied
+                assert_history_result(applied, 0, 1)
+                assert applied['history']['backupId'] != first_backup['id'], 'Reapply must create its own full history backup'
+                history_fixture['assert_provider']('yunqiao')
+                history_fixture['assert_backup'](applied['history']['backupPath'], before_reapply, 0)
                 limits = tomllib.loads((clients / '.codex/config.toml').read_text(encoding='utf-8'))
                 assert limits['model_context_window'] == 200000 and limits['model_auto_compact_token_limit'] == 180000
                 assert (clients / '.codex/auth.json').read_bytes() == original[clients / '.codex/auth.json']
-                checks.append('Native model configuration writes 272000/244800, recalculates 200000/180000 on reapply and preserves the original restore point')
+                checks.append('Native model configuration writes 272000/244800, recalculates 200000/180000 on reapply, preserves the original restore point and backs up both native history databases while preserving cross-database missing-source copies')
+                before_restore = history_fixture['snapshot']()
                 restored = page.evaluate("() => window.aurora.invoke('agent.disconnect', {agentId:'chatgpt-desktop'})")
-                assert restored['ok'], restored
+                assert_history_result(restored, 1, 0)
+                assert restored['history']['backupId'] not in [first_backup['id'], applied['history']['backupId']]
+                history_fixture['assert_provider']('openai')
+                history_fixture['assert_backup'](restored['history']['backupPath'], before_restore, 1)
                 assert all(file.read_bytes() == before for file, before in original.items()), 'Shared configuration restore changed original bytes'
                 assert not errors, errors
-                checks.append('Native wizard previews, backs up, applies and restores shared Codex configuration without a desktop executable; auth bytes stay intact and CLI state stays synchronized')
+                checks.append('Native wizard previews, backs up, applies and restores shared Codex configuration without a desktop executable; auth and conversation body bytes stay intact, CLI state stays synchronized and missing-source indexes with different providers in two databases remain unchanged')
             report = {
                 'version': args.version, 'platform': sys.platform, 'passed': True, 'count': len(checks), 'checks': checks,
                 'configurationAcceptance': 'client-busy-guard' if args.expect_client_busy else 'native-apply-restore',
+                'crossDatabaseHistoryAcceptance': 'preview-and-busy-guard' if args.expect_client_busy else 'native-apply-restore',
                 'limitations': ['A real running client prevented native configuration writes. Successful native apply, context-limit recalculation and restore were not exercised in this acceptance run.'] if args.expect_client_busy else [],
                 **({'clientBusyCode': 'CLIENT_HISTORY_BUSY'} if args.expect_client_busy else {}),
                 'executable': str(executable.relative_to(ROOT)) if executable.is_relative_to(ROOT) else str(executable),

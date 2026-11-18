@@ -164,6 +164,34 @@ try {
     assert.equal(read(f.config), originalConfig); assert(aliases.every(id => !f.store.listAgents()[id].connected));
   });
 
+  await check('Cross-database missing-source copies survive failed state commit retry model switch coexist and disconnect with both database snapshots', async () => {
+    const f = fixture('cross-database-connection'), valid = f.add(460), missing = [f.add(461), f.add(462, { archived: true })];
+    for (const item of missing) { fs.unlinkSync(item.file); f.sessions.splice(f.sessions.indexOf(item), 1); }
+    const copyPath = path.join(f.home, 'state_9.sqlite'); f.withDb(db => db.prepare('VACUUM INTO ?').run(copyPath));
+    const withCopy = run => { const db = new DatabaseSync(copyPath); try { return run(db); } finally { db.close(); } };
+    withCopy(db => {
+      db.prepare('DELETE FROM threads WHERE id=?').run(valid.id); db.prepare('DELETE FROM local_thread_catalog WHERE thread_id=?').run(valid.id);
+      db.exec("UPDATE threads SET model_provider='retained-copy-region',title='retained copy title'; UPDATE local_thread_catalog SET model_provider='retained-copy-region' WHERE host_id='local'; CREATE TABLE opaque_copy_payload(id INTEGER,value TEXT); INSERT INTO opaque_copy_payload VALUES(1,'retain unrelated table');");
+    });
+    const copyRows = db => ({ threads: db.prepare('SELECT * FROM threads ORDER BY id').all(), catalog: db.prepare('SELECT * FROM local_thread_catalog ORDER BY host_id,thread_id').all(), opaque: db.prepare('SELECT * FROM opaque_copy_payload').all() });
+    const preservedCopy = withCopy(copyRows), original = snapshot(f), originalMissing = original.rows.threads.filter(row => row.id !== valid.id);
+    const preview = await f.preview();
+    assert.equal(preview.history.total, 3); assert.equal(preview.history.preserved, 2); assert.equal(preview.history.repairable, 1); assert.equal(preview.history.blocked, 0);
+    assert.equal(preview.history.filesToBackUp, 1); assert.equal(preview.history.indexDatabasesToBackUp, 2);
+    const failed = await failState(f, () => f.call('agent.connect', { revision: preview.revision })); assert(failed.rolledBack); assertSnapshot(f, original); assert.deepEqual(withCopy(copyRows), preservedCopy);
+    for (const operation of [() => f.connect(), () => f.connect({ model: 'model-two' }), () => f.connect({ authMode: 'coexist' }), () => f.call('agent.disconnect')]) {
+      const before = snapshot(f), result = await operation(); assert(result.ok, result.message); noSecrets(result);
+      assert.equal(result.history.backedUp, 1); assert.equal(result.history.indexBackedUp, 2); assert.equal(result.history.preserved, 2);
+      historyBackup(f, result, before.files.filter(file => file.file === valid.file), before.rows); aligned(f);
+      const manifest = json(path.join(result.history.backupPath, 'manifest.json')); assert.equal(manifest.databases.length, 2); assert(manifest.rows.every(row => row.sessionId === valid.id));
+      const backup = new DatabaseSync(manifest.databases.find(entry => entry.path === copyPath).backup, { readOnly: true });
+      try { assert.deepEqual(copyRows(backup), preservedCopy); } finally { backup.close(); }
+      assert.deepEqual(withCopy(copyRows), preservedCopy); assert.deepEqual(f.rows().threads.filter(row => row.id !== valid.id), originalMissing);
+      assert.equal(read(f.auth), f.authBytes); for (const item of missing) assert(!fs.existsSync(item.file));
+    }
+    assert.equal(read(f.config), originalConfig); assert(aliases.every(id => !f.store.listAgents()[id].connected));
+  });
+
   await check('State failure with preserved indexes rolls back the valid log and configuration without rewriting orphan rows, then explicit retry succeeds once', async () => {
     const f = fixture('preserved-state-failure'), valid = f.add(430), missing = f.add(431); fs.unlinkSync(missing.file); f.sessions.splice(f.sessions.indexOf(missing), 1);
     const before = snapshot(f), result = await failState(f, () => f.connect()); assert(result.rolledBack); assertSnapshot(f, before); assert.equal(read(valid.file), valid.content);
