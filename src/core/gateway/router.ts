@@ -66,6 +66,17 @@ export class Router {
     return keys.map((key) => ({ provider: p, providerModel: pm, key, model }));
   }
 
+  /** History aliases must not resolve through names, groups or unknown-model fallbacks. */
+  resolveProviderModel(providerId: string, model: string): ResolveResult {
+    const provider = this.store.getProvider(providerId), requested = `${providerId}/${model}`;
+    if (!provider) return { requested, candidates: [], reason: '历史兼容连接指定的供应商已删除' };
+    if (!provider.enabled) return { requested, candidates: [], reason: '历史兼容连接指定的供应商已停用' };
+    const metadata = provider.models.find(entry => entry.id === model) ?? { id: model, capabilities: { tools: true } };
+    const candidates = this.candidatesFor(provider, metadata, model);
+    return { requested, candidates, reason: candidates.length ? `历史会话使用指定供应商「${provider.name}」`
+      : '历史兼容连接指定的供应商没有可用密钥，或密钥正在冷却' };
+  }
+
   resolveModel(requested: string): ResolveResult {
     const providers = this.store.listProviders().filter((p) => p.enabled);
     const groups = this.store.listGroups().filter((g) => g.enabled);

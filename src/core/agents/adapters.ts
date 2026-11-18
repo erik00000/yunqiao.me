@@ -9,7 +9,9 @@ import { detectCodingDesktop, clearDesktopDetectionCache, type CodingDesktopDete
 import { cliCandidates, desktopCandidates, type ClientPathContext } from '../clientPaths.js';
 import { CLAUDE_DESKTOP_PROFILE, claudeDesktopConfigFiles, claudeDesktopRestorePaths, resolveClaudeDesktopConfig } from '../claudeDesktopPaths.js';
 import { readOfficialCodexIdentity, codexCoexistBaseUrl, CODEX_COEXIST_BASE_PATH } from '../gateway/coexist.js';
+import { codexHistoryBasePath } from '../gateway/historyRoute.js';
 import { nativeDirectParameters } from './directConnection.js';
+import { discoverHistoryProviderIds, detachManagedHistoryProviders, withHistoryProviderAliases } from './historyProviders.js';
 import { applyPlan, restorePlan, backupPlanFiles, jsonObject, planned, plannedJson, readText, patchToml, patchEnv, redactConfig, digest, type PlannedFile } from './configFiles.js';
 
 export interface ConnectContext {
@@ -28,6 +30,8 @@ export interface ConnectContext {
   modelCatalogPath?: string;
   /** Trusted read-only worker result supplied by the action layer, never copied from renderer payload. */
   desktopDetection?: CodingDesktopDetection;
+  /** Trusted main-process preview snapshot, never copied from renderer fields. */
+  historyProviderIds?: readonly string[];
 }
 export interface ConnectResult { ok: boolean; path?: string; backup?: string; message: string; restartRequired?: boolean; extraFiles?: string[] }
 export interface ConnectPreview { ok: boolean; message: string; files: PlannedFile[]; warnings: string[]; requiresRestart: boolean; revision?: string; manual?: { baseUrl: string; apiKey: string; model: string } }
@@ -244,7 +248,8 @@ export function codexPlan(ctx: ConnectContext): PlannedFile[] {
     if (ownEndpoint(current.openai_base_url)) routing.openai_base_url = null;
     if (current.model_catalog_json === ctx.modelCatalogPath) routing.model_catalog_json = null;
   }
-  let text = patchToml(before, '', routing);
+  const detached = detachManagedHistoryProviders(before);
+  let text = patchToml(detached.text, '', routing);
   if (typeof current.profile === 'string') {
     if (!current.profiles?.[current.profile] || typeof current.profiles[current.profile] !== 'object') throw new Error('当前 Codex profile 不存在，请先检查原客户端配置');
     const profile = current.profiles[current.profile];
@@ -271,10 +276,24 @@ export function codexPlan(ctx: ConnectContext): PlannedFile[] {
       text = patchToml(text, `profiles.${JSON.stringify(current.profile)}.model_providers.yunqiao`, transport);
     }
   }
+  // Reattach the original owned blocks before optional alias work so a failed
+  // discovery or generation also preserves previously working history routes.
+  if (detached.blocks.length) text = text.trimEnd() + '\n\n' + detached.blocks.join('\n');
+  // Alias discovery is optional evidence; it can never fail the user's chosen
+  // configuration or rewrite native history while another client is running.
+  try {
+    const ids = ctx.historyProviderIds ?? discoverHistoryProviderIds(before, path.dirname(file), process.env.AURORA_CLIENT_HOME ? path.dirname(file) : process.env.CODEX_SQLITE_HOME || path.dirname(file));
+    const aliasBaseUrl = ctx.mode === 'direct' ? ep.baseUrl : coexist
+      ? new URL(endpoint).origin + codexHistoryBasePath(`${ctx.provider.id}/${ctx.model}`, 'coexist')
+      : ctx.gatewayUrl.replace(/\/+$/, '') + codexHistoryBasePath(`${ctx.provider.id}/${ctx.model}`);
+    const aliasTransport: Record<string, string | number | boolean> = coexist ? { name: '云桥历史兼容', base_url: aliasBaseUrl, wire_api: 'responses', requires_openai_auth: true, stream_idle_timeout_ms: 300000 }
+      : { name: '云桥历史兼容', base_url: aliasBaseUrl, wire_api: 'responses', experimental_bearer_token: ep.apiKey, requires_openai_auth: false, stream_idle_timeout_ms: 300000 };
+    text = withHistoryProviderAliases(text, [...detached.ids, ...ids], aliasTransport);
+  } catch { /* Keep a valid primary configuration if optional evidence cannot be read. */ }
   return [{ ...planned(file, text), ...(ctx.permissionMode === 'full-access' ? { permissionScope: { kind: 'codex-execution-v1' as const, ...(typeof current.profile === 'string' ? { profile: current.profile } : {}) } } : {}) }];
 }
 const CODEX_CONTEXT_WARNING = '应用上下文窗口时，自动压缩阈值同步设为其 90%（向下取整，至少 1 Token），修改后需重启客户端。共存模式按模型目录分别设置，并清除旧的全局窗口和阈值覆盖，让切换模型时使用各自的设置。';
-const CODEX_PROVIDER_WARNING = '应用连接时会自动备份本机历史，并同步活动、归档会话及索引的供应商归属。请先保存工作并退出使用同一会话库的客户端；全部处理成功后再重新打开。';
+const CODEX_PROVIDER_WARNING = '先保存客户端配置，并为可确认的旧会话供应商补充兼容配置；历史备份与整理随后尝试，客户端运行中或个别历史异常都不影响保存。保存工作后重启客户端加载新配置。';
 function codexProviderWarnings(): string[] {
   return [CODEX_PROVIDER_WARNING];
 }

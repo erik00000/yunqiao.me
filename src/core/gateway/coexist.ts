@@ -7,6 +7,7 @@ import { parse } from 'smol-toml';
 import { codexHome } from '../codex.js';
 import { applyContextDefaults, defaultAutoCompactTokenLimit, isValidContextWindow } from '../modelContext.js';
 import type { AuroraStore } from '../store/index.js';
+import { parseCodexHistoryRoute, type CodexHistoryTarget } from './historyRoute.js';
 
 /** Official identity and inference routing are separate. This module never writes or refreshes OAuth. */
 export const CODEX_COEXIST_BASE_PATH = '/codex-coexist/v1';
@@ -41,6 +42,7 @@ export type CodexCoexistPlan = {
   kind: 'official'; method: 'POST'; url: string; headers: Record<string, string>; body: string; model: string;
 } | {
   kind: 'gateway'; path: '/v1/responses'; headers: Record<string, string>; body: Record<string, any>; model: string;
+  historyTarget?: CodexHistoryTarget;
 };
 export class CodexCoexistError extends Error {
   constructor(public readonly status: number, message: string) { super(message); this.name = 'CodexCoexistError'; }
@@ -111,6 +113,8 @@ export function readOfficialCodexIdentity(): OfficialCodexIdentity {
 export const officialCodexStatus = readOfficialCodexIdentity;
 
 export function codexCoexistEndpoint(pathname: string): CoexistEndpoint | null {
+  const history = parseCodexHistoryRoute(pathname);
+  if (history?.mode === 'coexist') return history.endpoint;
   const pathOnly = pathname.split('?')[0];
   if (pathOnly === `${CODEX_COEXIST_BASE_PATH}/models`) return 'models';
   if (pathOnly === `${CODEX_COEXIST_BASE_PATH}/responses`) return 'responses';
@@ -286,11 +290,21 @@ export function prepareCodexCoexistRequest(authorization: CodexCoexistAuthorizat
   if (!current || current.generation !== authenticated.generation) throw new CodexCoexistError(409, '官方登录刚刚更新，请重新发送请求');
   if (current.expiresAt !== undefined && current.expiresAt <= Date.now()) throw new CodexCoexistError(401, '官方登录已过期，请让官方客户端刷新或重新登录');
   if (endpoint !== 'responses' && endpoint !== 'compact') throw new CodexCoexistError(404, '此接口不接受模型生成请求');
-  if (!body || typeof body !== 'object' || Array.isArray(body) || typeof (body as any).model !== 'string') throw new CodexCoexistError(400, 'Responses 请求缺少模型');
-  const value = body as Record<string, any>, catalog = getCoexistCatalog(store);
+  const history = parseCodexHistoryRoute(pathname);
+  if (!body || typeof body !== 'object' || Array.isArray(body) || (!history && typeof (body as any).model !== 'string')) throw new CodexCoexistError(400, 'Responses 请求缺少模型');
+  const value = history ? { ...(body as Record<string, any>), model: history.target } : body as Record<string, any>, catalog = getCoexistCatalog(store);
+  if (history && history.providerId !== 'official') {
+    const provider = store.getProvider(history.providerId);
+    if (!provider) throw new CodexCoexistError(404, '历史兼容连接指定的供应商已删除，请重新应用配置');
+    if (!provider.enabled) throw new CodexCoexistError(409, '历史兼容连接指定的供应商已停用，请启用或重新应用配置');
+  }
   const entry = catalog.models.find(model => model.id === value.model)
-    || catalog.models.find(model => model.official && model.upstreamModel === value.model);
-  if (!entry) throw new CodexCoexistError(400, '模型不在当前共存目录中，请重新选择模型并应用配置');
+    || (!history ? catalog.models.find(model => model.official && model.upstreamModel === value.model) : undefined);
+  if (!entry) {
+    if (history && history.providerId !== 'official' && store.getProvider(history.providerId)?.models.some(model => model.id === history.model))
+      throw new CodexCoexistError(503, '历史兼容连接指定的供应商没有可用密钥，请检查供应商设置');
+    throw new CodexCoexistError(400, '模型不在当前共存目录中，请重新选择模型并应用配置');
+  }
   const headers = coexistSessionHeaders(incomingHeaders);
   if (entry.official) {
     headers.authorization = `Bearer ${authenticated.accessToken}`;
@@ -303,5 +317,6 @@ export function prepareCodexCoexistRequest(authorization: CodexCoexistAuthorizat
   }
   if (endpoint === 'compact') throw new CodexCoexistError(501, '该中转尚未适配 Responses compact；未调用供应商或伪造压缩结果');
   // Explicit provider-qualified model prevents same-name fallback to the official account or another supplier.
-  return { kind: 'gateway', path: '/v1/responses', headers, body: { ...value, model: entry.id }, model: entry.id };
+  return { kind: 'gateway', path: '/v1/responses', headers, body: { ...value, model: entry.id }, model: entry.id,
+    ...(history ? { historyTarget: { target: history.target, providerId: history.providerId, model: history.model } } : {}) };
 }

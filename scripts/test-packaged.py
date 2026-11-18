@@ -4,6 +4,7 @@ Run after packaging: python scripts/test-packaged.py
 Requires Python Playwright. Refuses an old/missing app.asar before launching an EXE.
 """
 import argparse
+import base64
 from contextlib import closing
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -56,7 +57,7 @@ def packaged_history_fixture(home):
     rollout = home / 'sessions' / f'rollout-{existing_id}.jsonl'
     missing = home / 'sessions' / f'rollout-{missing_id}.jsonl'
     rollout.parent.mkdir(parents=True, exist_ok=True)
-    records = [json.dumps({'type': 'session_meta', 'payload': {'id': existing_id, 'model_provider': 'openai', 'source': 'cli', 'cwd': str(home)}}, separators=(',', ':')),
+    records = [json.dumps({'type': 'session_meta', 'payload': {'id': existing_id, 'model_provider': 'retired-provider', 'source': 'cli', 'cwd': str(home)}}, separators=(',', ':')),
                ' {"type":"event_msg","payload":{"type":"user_message","message":"keep conversation bytes"}} ',
                '{"type":"response_item","payload":{"encrypted_content":"fixture-opaque-history"}}']
     rollout.write_bytes(('\r\n'.join(records) + '\r\n').encode('utf-8'))
@@ -83,9 +84,9 @@ INSERT INTO local_thread_catalog_hosts VALUES('desktop','local'),('remote','remo
 CREATE TABLE local_thread_catalog(host_id TEXT,thread_id TEXT,model_provider TEXT,PRIMARY KEY(host_id,thread_id));
 CREATE TABLE private_payload(id INTEGER PRIMARY KEY,opaque TEXT);
 INSERT INTO private_payload VALUES(1,'keep unrelated database content');""")
-            rows = [(missing_id, f'missing-region-{index}', missing), (duplicate_id, 'openai', duplicate)]
+            rows = [(missing_id, f'missing-region-{index}', missing), (duplicate_id, 'retired-provider', duplicate)]
             if index == 0:
-                rows.extend([(existing_id, 'openai', rollout), (ambiguous_id, 'openai', ambiguous)])
+                rows.extend([(existing_id, 'retired-provider', rollout), (ambiguous_id, 'retired-provider', ambiguous)])
             for session_id, provider, file in rows:
                 db.execute('INSERT INTO threads VALUES(?,?,?,?,?,?)', (session_id, provider, str(file), 'Fixture history', 0, 'keep native metadata'))
                 db.execute('INSERT INTO local_thread_catalog VALUES(?,?,?)', ('desktop', session_id, provider))
@@ -502,6 +503,18 @@ def main():
             assert 'model_provider = "yunqiao"' in configured and supplier['id'] + '/gpt-6.1-sol' in configured
             limits = tomllib.loads(configured)
             assert limits['model_context_window'] == 272000 and limits['model_auto_compact_token_limit'] == 244800
+            def assert_legacy_provider_routes(configuration):
+                providers = configuration.get('model_providers', {})
+                for legacy_id in ['retired-provider', 'missing-region-0', 'missing-region-1']:
+                    alias = providers[legacy_id]
+                    route = urllib.parse.urlparse(alias['base_url'])
+                    assert route.hostname == '127.0.0.1' and route.path.startswith('/codex-history/')
+                    encoded = route.path.split('/')[2]
+                    target = base64.urlsafe_b64decode(encoded + '=' * (-len(encoded) % 4)).decode('utf-8')
+                    assert target == supplier['id'] + '/gpt-6.1-sol', 'Historical provider must bind the selected supplier and model'
+                    assert alias['requires_openai_auth'] is False and alias['experimental_bearer_token']
+                assert 'openai' not in providers, 'Historical compatibility must not redefine the built-in official provider'
+            assert_legacy_provider_routes(limits)
             assert (clients / '.codex/auth.json').read_bytes() == original[clients / '.codex/auth.json']
             shared = page.evaluate("async () => (await window.aurora.invoke('state.get')).agents")
             assert all(shared[client]['connected'] is True for client in ['codex-cli', 'chatgpt-desktop'])
@@ -525,6 +538,7 @@ def main():
                 history_fixture['assert_backup'](applied['history']['backupPath'], before_reapply, 0)
             limits = tomllib.loads((clients / '.codex/config.toml').read_text(encoding='utf-8'))
             assert limits['model_context_window'] == 200000 and limits['model_auto_compact_token_limit'] == 180000
+            assert_legacy_provider_routes(limits)
             assert (clients / '.codex/auth.json').read_bytes() == original[clients / '.codex/auth.json']
             checks.append('Native configuration apply and reapply write 272000/244800 then 200000/180000, preserve official auth and shared CLI state; history defers without writes for a running client or completes verified raw-file/database backups for an idle client')
             before_restore = history_fixture['snapshot']()
@@ -544,6 +558,7 @@ def main():
             report = {
                 'version': args.version, 'platform': sys.platform, 'passed': True, 'count': len(checks), 'checks': checks,
                 'configurationAcceptance': 'native-apply-restore',
+                'legacyProviderAcceptance': 'missing-history-providers-bound-to-selected-route',
                 'historyAcceptance': 'deferred-running-client' if args.expect_history_deferred else 'native-backup-repair-restore',
                 'crossDatabaseHistoryAcceptance': 'preserved-while-deferred' if args.expect_history_deferred else 'native-apply-restore',
                 'skippedHistoryAcceptance': 'preserved-while-deferred' if args.expect_history_deferred else 'native-apply-restore',

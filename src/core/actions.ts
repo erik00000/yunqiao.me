@@ -35,6 +35,7 @@ import { diagnoseClient } from './clientDiagnostics.js';
 import { testClientConnection, cancelClientConnectionTest } from './clientConnectionTest.js';
 import { prepareClientHistory, recoverClientHistory, applyClientHistory, historyPreviewRevision, clientConnectionRevision, CODEX_STATE_IDS, type PreparedClientHistory } from './agentHistory.js';
 import type { HistoryContext } from './historyRepairIO.js';
+import { discoverHistoryProviderIds } from './agents/historyProviders.js';
 
 /**
  * 与 Electron 无关的动作层：桌面端的 IPC 和网关的 /api/rpc 共用同一份实现，
@@ -57,6 +58,15 @@ export interface ActionDeps {
 
 interface ClientFileSnapshot { path: string; existed: boolean; content: string }
 interface ClientFileExpected { existed: boolean; hash: string }
+// A preview open in this process must not expire while the customer decides.
+// Bound the cache by recent usage, never by elapsed time.
+const historyProviderSnapshots = new Map<string, readonly string[]>();
+const historyProviderSnapshotKey = (deps: ActionDeps, configPath: string, revision: string) => JSON.stringify([path.resolve(deps.store.dir), path.resolve(configPath), revision]);
+function rememberHistoryProviders(deps: ActionDeps, configPath: string, revision: string, ids: readonly string[]) {
+  const key = historyProviderSnapshotKey(deps, configPath, revision); historyProviderSnapshots.delete(key);
+  while (historyProviderSnapshots.size >= 128) historyProviderSnapshots.delete(historyProviderSnapshots.keys().next().value!);
+  historyProviderSnapshots.set(key, Object.freeze([...ids]));
+}
 function snapshotClientFiles(paths: string[]): ClientFileSnapshot[] {
   return paths.map(file => ({ path: file, content: readText(file), existed: fs.existsSync(file) }));
 }
@@ -535,6 +545,16 @@ export async function runAction(deps: ActionDeps, action: string, payload: any):
       if (payload.mode && !['gateway', 'direct'].includes(payload.mode)) return { ok: false, message: '不支持的接入模式' };
       const states = store.listAgents();
       const prior = states[adapter.id] || (sharedCodex ? states['codex-cli'] || states['chatgpt-desktop'] || states['codex-desktop'] : undefined);
+      const configPath = sharedCodex ? adapter.configPaths()[0] : '';
+      let historyProviderIds: readonly string[] | undefined;
+      if (sharedCodex) {
+        const snapshot = typeof payload.revision === 'string' ? historyProviderSnapshots.get(historyProviderSnapshotKey(deps, configPath, payload.revision)) : undefined;
+        if (snapshot) { historyProviderIds = snapshot; rememberHistoryProviders(deps, configPath, payload.revision, snapshot); }
+        else {
+          try { const home = path.dirname(configPath); historyProviderIds = discoverHistoryProviderIds(readText(configPath), home, deps.historyContext?.sqliteHome || (process.env.AURORA_CLIENT_HOME ? home : process.env.CODEX_SQLITE_HOME || home)); }
+          catch { historyProviderIds = []; }
+        }
+      }
       const context: ConnectContext = {
         provider, model: String(payload.model || provider.models[0]?.id || ''), modelMap: payload.modelMap,
         mode: payload.mode || 'gateway', gatewayUrl: deps.gatewayUrl(), token: store.getSettings().gatewayToken, globalProxy: store.getSettings().proxy,
@@ -543,6 +563,7 @@ export async function runAction(deps: ActionDeps, action: string, payload: any):
         authMode, permissionMode: payload.permissionMode ?? 'preserve', skipOnboarding: payload.skipOnboarding ?? false,
         modelCatalogPath: path.join(store.dir, 'codex-model-catalog.json'),
         desktopDetection,
+        historyProviderIds,
       };
       const reviewedConnectionRevision = sharedCodex ? clientConnectionRevision(deps) : '';
       const preview: ReturnType<typeof adapter.preview> & { history?: PreparedClientHistory['history'] } = adapter.preview(context);
@@ -557,6 +578,7 @@ export async function runAction(deps: ActionDeps, action: string, payload: any):
         if (clientConnectionRevision(deps) !== reviewedConnectionRevision) return { ...preview, ok: false, message: '供应商或连接状态在检查期间已变化，请重新预览' };
         preview.revision = historyPreviewRevision(preview.revision, history, reviewedConnectionRevision);
       }
+      if (action === 'agent.preview' && sharedCodex && preview.ok && preview.revision) rememberHistoryProviders(deps, configPath, preview.revision, context.historyProviderIds || []);
       if (action === 'agent.preview' || !preview.ok) return preview;
       if (action === 'agent.parameters') return { ok: true, ...connectionParameters(context, adapter.protocol), script: exportEnvScript(context, adapter.protocol), note: adapter.supportNote };
       if (context.mode === 'gateway' && !deps.gatewayStatus().running) return { ok: false, message: '本地网关未运行，请先启动网关后再应用配置' };

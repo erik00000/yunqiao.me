@@ -36,7 +36,7 @@ write(configFile, 'model_provider = "openai"\n');
 let passed = 0;
 const check = (label, fn) => { fn(); passed++; console.log(`PASS ${label}`); };
 const parseToml = file => {
-  const result = spawnSync('python', ['-c', 'import sys,tomllib,json; print(json.dumps(tomllib.loads(sys.stdin.read())))'], { input: read(file), encoding: 'utf8' });
+  const result = spawnSync('python', ['-X', 'utf8', '-c', 'import sys,tomllib,json; print(json.dumps(tomllib.loads(sys.stdin.read())))'], { input: read(file), encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
   return JSON.parse(result.stdout);
 };
@@ -80,7 +80,12 @@ try {
     assert.equal(parsed.model_provider, 'openai'); assert.equal(parsed.model, `${supplier.id}/relay-model`); assert.equal(parsed.openai_base_url, 'http://127.0.0.1:3425/codex-coexist/v1'); assert.equal(parsed.model_catalog_json, path.join(store.dir, 'codex-model-catalog.json'));
     assert.equal(parsed.profiles['work.v2'].model_provider, 'openai'); assert.deepEqual(parsed.profiles['work.v2'].permissions, ['read', 'write']); assert.equal(parsed.mcp_servers.keep.command, 'fixture');
     assert.equal(parsed.forced_login_method, undefined); assert.equal(parsed.profiles['work.v2'].openai_base_url, undefined); assert.equal(parsed.profiles['work.v2'].model_catalog_json, undefined);
-    assert.equal(parsed.notes, '\n[model_providers.aurora]\nbase_url = "fake-table-value"\n'.slice(1)); assert.equal(parsed.authorization, 'multiline-private-first\nmultiline-private-second\n'); assert.equal(parsed.model_providers, undefined); assert(read(configFile).includes('# keep this comment'));
+    assert.equal(parsed.notes, '\n[model_providers.aurora]\nbase_url = "fake-table-value"\n'.slice(1)); assert.equal(parsed.authorization, 'multiline-private-first\nmultiline-private-second\n'); assert(read(configFile).includes('# keep this comment'));
+    assert.deepEqual(Object.keys(parsed.model_providers).sort(), ['old-provider', 'profile-old']);
+    for (const alias of Object.values(parsed.model_providers)) {
+      assert.equal(alias.base_url, 'http://127.0.0.1:3425/codex-coexist/history/' + Buffer.from(supplier.id + '/relay-model').toString('base64url') + '/v1');
+      assert.equal(alias.name, '云桥历史兼容'); assert.equal(alias.requires_openai_auth, true); assert.equal(alias.experimental_bearer_token, undefined); assert.equal(alias.env_key, undefined);
+    }
     assert.equal(read(authFile), authBefore); assert.equal(json(path.join(store.dir, 'codex-model-catalog.json')).models.length, 2);
     assert(store.listAgents()['codex-cli'].connected); assert(store.listAgents()['chatgpt-desktop'].connected); assert.equal(store.listAgents()['codex-cli'].authMode, 'coexist');
   });
@@ -220,7 +225,7 @@ try {
     const context = { provider: supplier, model: 'relay-model', mode, gatewayUrl: deps.gatewayUrl(), token: store.getSettings().gatewayToken, authMode: 'api' };
     const preview = adapter.preview(context);
     assert(preview.ok, preview.message); assert.equal(read(configFile), legacyConfig);
-    assert(preview.warnings.some(message => message.includes('自动备份本机历史') && message.includes('活动、归档会话及索引')));
+    assert(preview.warnings.some(message => message.includes('先保存客户端配置') && message.includes('历史备份与整理随后尝试') && message.includes('不影响保存')));
     for (const secret of ['fixture-legacy-auth-secret', 'fixture-legacy-aws-secret']) assert(!JSON.stringify(preview).includes(secret));
     const applied = adapter.connect({ ...context, expectedRevision: preview.revision });
     check(`${mode} API moves the active aurora selection to yunqiao while preserving legacy tables and exact restore`, () => {
@@ -243,7 +248,7 @@ try {
   check('automatic history protection is explained for both API and coexistence configuration', () => {
     const adapter = api.getAdapter('codex-cli');
     const apiContext = { provider: supplier, model: 'relay-model', mode: 'gateway', gatewayUrl: deps.gatewayUrl(), token: store.getSettings().gatewayToken, authMode: 'api' };
-    const notice = preview => preview.warnings.some(message => message.includes('自动备份本机历史'));
+    const notice = preview => preview.warnings.some(message => message.includes('先保存客户端配置') && message.includes('历史备份与整理随后尝试'));
     for (const before of [
       originalConfig.replace('model_provider = "old-provider"', 'model_provider = "aurora"'),
       originalConfig.replace('"model_provider" = "profile-old"', '"model_provider" = "aurora"'),

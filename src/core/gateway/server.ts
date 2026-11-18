@@ -27,6 +27,7 @@ import type { UsageRecord } from '../store/types.js';
 import { allowedHost, allowedOrigin, validGatewayToken, REMOTE_ACTIONS, redactRemoteResult } from './security.js';
 import { CODEX_COEXIST_BASE_PATH, authorizeCodexCoexistRequest, codexCoexistEndpoint, getCoexistCatalog,
   prepareCodexCoexistRequest, readCodexCoexistBody, CodexCoexistError, type CodexCoexistPlan } from './coexist.js';
+import { CODEX_HISTORY_PREFIX, CODEX_COEXIST_HISTORY_PREFIX, parseCodexHistoryRoute, type CodexHistoryTarget } from './historyRoute.js';
 
 export interface GatewayStatus {
   running: boolean;
@@ -133,6 +134,7 @@ export class GatewayServer {
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? '/', 'http://localhost');
     const path = url.pathname;
+    const rawPath = (req.url ?? '/').split('?')[0];
 
     if (!allowedHost(req, this.status.host) || !allowedOrigin(req)) {
       res.writeHead(403, { 'content-type': 'application/json' });
@@ -145,8 +147,13 @@ export class GatewayServer {
     }
     res.setHeader('cache-control', 'no-store');
 
-    if (path === CODEX_COEXIST_BASE_PATH || path.startsWith(CODEX_COEXIST_BASE_PATH + '/')) {
-      await this.handleCodexCoexist(req, res, path);
+    if (path === CODEX_COEXIST_BASE_PATH || path.startsWith(CODEX_COEXIST_BASE_PATH + '/')
+      || [path, rawPath].some(value => value === CODEX_COEXIST_HISTORY_PREFIX || value.startsWith(CODEX_COEXIST_HISTORY_PREFIX + '/'))) {
+      await this.handleCodexCoexist(req, res, rawPath);
+      return;
+    }
+    if ([path, rawPath].some(value => value === CODEX_HISTORY_PREFIX || value.startsWith(CODEX_HISTORY_PREFIX + '/'))) {
+      await this.handleCodexHistory(req, res, rawPath);
       return;
     }
 
@@ -328,6 +335,35 @@ export class GatewayServer {
     }
   }
 
+  private async handleCodexHistory(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
+    const fail = (status: number, message: string) => {
+      if (res.headersSent || res.destroyed) return;
+      res.writeHead(status, { 'content-type': 'application/json', ...CORS });
+      res.end(JSON.stringify({ error: { type: 'codex_history_error', message } }));
+    };
+    if (!validGatewayToken(req, this.deps.store.getSettings().gatewayToken)) { fail(401, '请提供正确的网关访问令牌'); return; }
+    const route = parseCodexHistoryRoute(path);
+    if (!route || route.mode !== 'api') { fail(400, '历史兼容连接地址无效，请重新应用配置'); return; }
+    if (route.endpoint === 'models' && req.method === 'GET') {
+      const provider = this.deps.store.getProvider(route.providerId), resolved = this.router.resolveProviderModel(route.providerId, route.model);
+      if (!resolved.candidates.length) { fail(!provider ? 404 : !provider.enabled ? 409 : 503, resolved.reason); return; }
+      res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+      res.end(JSON.stringify({ object: 'list', data: [{ id: route.target, object: 'model', owned_by: provider!.name }] }));
+      return;
+    }
+    if (route.endpoint === 'compact') { fail(501, '该中转尚未适配 Responses compact；未调用供应商或伪造压缩结果'); return; }
+    if (route.endpoint === 'responses' && req.method === 'GET') { fail(426, '历史兼容连接使用 HTTP Responses；请让客户端回退到 HTTP'); return; }
+    if (route.endpoint !== 'responses' || req.method !== 'POST') { fail(405, '此历史兼容接口不支持该请求方法'); return; }
+    try {
+      const body = await readCodexCoexistBody(req);
+      if (!body || typeof body !== 'object' || Array.isArray(body)) { fail(400, 'Responses 请求必须是 JSON 对象'); return; }
+      await this.proxy('openai-responses', { ...body, model: route.target }, req, res, '/v1/responses', route);
+    } catch (error) {
+      fail(error instanceof CodexCoexistError ? error.status : 502,
+        error instanceof CodexCoexistError ? error.message : '历史兼容请求未能完成，请检查所选供应商及本地网关');
+    }
+  }
+
   private async handleCodexCoexist(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
     const fail = (status: number, message: string) => {
       if (res.headersSent || res.destroyed) return;
@@ -337,10 +373,14 @@ export class GatewayServer {
     const auth = authorizeCodexCoexistRequest(req, this.deps.store);
     if (!auth.ok) { fail(auth.status, auth.message); return; }
     const endpoint = codexCoexistEndpoint(path);
+    const history = parseCodexHistoryRoute(path);
     if (endpoint === 'models' && req.method === 'GET') {
       const catalog = getCoexistCatalog(this.deps.store);
+      if (history && !catalog.models.some(model => model.id === history.target)) { fail(400, '历史兼容模型已不可用，请重新选择模型并应用配置'); return; }
+      const models = history ? catalog.models.filter(model => model.id === history.target) : catalog.models;
+      const nativeCatalog = history ? { models: catalog.nativeCatalog.models.filter(model => model.slug === history.target) } : catalog.nativeCatalog;
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ ...catalog.nativeCatalog, object: 'list', data: catalog.models.map(model => ({
+      res.end(JSON.stringify({ ...nativeCatalog, object: 'list', data: models.map(model => ({
         id: model.id, object: 'model', owned_by: model.providerName, display_name: model.displayName,
       })) }));
       return;
@@ -354,9 +394,9 @@ export class GatewayServer {
         // The generic proxy must never see the native OAuth/account/cookie headers.
         req.headers = { ...plan.headers, 'x-aurora-agent': 'Codex / ChatGPT 桌面版' };
         req.rawHeaders = Object.entries(req.headers).flatMap(([key, value]) => [key, String(value)]);
-        await this.proxy('openai-responses', plan.body, req, res, plan.path);
+        await this.proxy('openai-responses', plan.body, req, res, plan.path, plan.historyTarget);
       } else {
-        await this.proxyOfficialCodex(plan, body as Record<string, any>, req, res);
+        await this.proxyOfficialCodex(plan, history ? { ...(body as Record<string, any>), model: history.target } : body as Record<string, any>, req, res);
       }
     } catch (error) {
       fail(error instanceof CodexCoexistError ? error.status : 502,
@@ -472,6 +512,7 @@ export class GatewayServer {
     req: IncomingMessage,
     res: ServerResponse,
     path: string,
+    historyTarget?: CodexHistoryTarget,
   ): Promise<void> {
     const startedAt = Date.now();
     const requestId = newId(proto === 'anthropic' ? 'msg_' : proto === 'openai-responses' ? 'resp_' : 'chatcmpl-', 24);
@@ -504,6 +545,8 @@ export class GatewayServer {
       return;
     }
     ir = middleware.ir;
+    // Plugins may change the body, but cannot redirect a fixed historical connection.
+    if (historyTarget) ir.model = historyTarget.target;
     if (!ir.model || typeof ir.model !== 'string') {
       res.writeHead(400, { 'content-type': 'application/json', ...CORS });
       res.end(JSON.stringify({ error: { type: 'invalid_request_error', message: '请选择模型' } }));
@@ -527,13 +570,14 @@ export class GatewayServer {
       }
       routeModel = selected.startsWith(`${state.providerId}/`) ? selected : `${state.providerId}/${selected}`;
     }
-    const resolved = this.router.resolveModel(routeModel);
+    const resolved = historyTarget ? this.router.resolveProviderModel(historyTarget.providerId, historyTarget.model) : this.router.resolveModel(routeModel);
     if (!resolved.candidates.length) {
-      res.writeHead(400, { 'content-type': 'application/json', ...CORS });
+      const boundProvider = historyTarget ? store.getProvider(historyTarget.providerId) : undefined;
+      res.writeHead(historyTarget ? !boundProvider ? 404 : !boundProvider.enabled ? 409 : 503 : 400, { 'content-type': 'application/json', ...CORS });
       res.end(
         JSON.stringify({
           error: {
-            message: `没有可用的供应商能处理模型「${ir.model}」。请到「供应商」页添加并启用至少一家（或检查 Key 是否都在冷却）。`,
+            message: historyTarget ? resolved.reason : `没有可用的供应商能处理模型「${ir.model}」。请到「供应商」页添加并启用至少一家（或检查 Key 是否都在冷却）。`,
             type: 'no_provider',
           },
         }),
