@@ -636,6 +636,7 @@ export function createHistoryRepairService(ctx: HistoryContext = historyContext(
         for (const source of journal.files) { if (await fileHash(source.path) !== source.beforeHash) throw new Error('会话文件正在被其他程序修改'); if (source.beforeHash !== source.afterHash) await replaceFile(ctx, source.staged, source.path, source.mode, source.mtimeMs, source.beforeHash, source.afterHash); }
         for (const row of journal.rows) writeRow(dbs.get(row.dbPath)!, row, row.after);
         for (const source of journal.files) if (await fileHash(source.path) !== source.afterHash) throw new Error('提交前检测到会话文件被外部修改');
+        if (readProvider(ctx, trusted).hash !== plan.configHash) throw new Error('历史处理期间客户端配置已变化，已停止旧配置对应的历史迁移');
         for (const db of dbs.values()) db.prepare('COMMIT').run();
         journal.status = 'complete'; saveJournal(journalFile(ctx, id), journal);
         return { ok: true, updated: journal.sessions, backedUp: journal.files.length, indexBackedUp: journal.databases.length, preserved: summary.preserved, skipped: summary.skipped,

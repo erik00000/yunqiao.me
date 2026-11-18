@@ -101,15 +101,15 @@ window.renderPage=(page=window.page||'agents')=>{window.page=page;const Page=pag
             page.keyboard.press('Escape')
             expect(dialog).to_be_visible()
             page.evaluate("window.finishPreview();window.holdPreview=false;window.connectFailure='配置已被其他程序修改，请重新预览'")
-            dialog.get_by_role('button', name='备份并应用配置', exact=True).click()
+            dialog.get_by_role('button', name='保存配置', exact=True).click()
             expect(dialog.get_by_role('alert')).to_contain_text('配置已被其他程序修改，请重新预览')
-            expect(dialog.get_by_role('button', name='备份并应用配置', exact=True)).to_have_count(0)
+            expect(dialog.get_by_role('button', name='保存配置', exact=True)).to_have_count(0)
             expect(dialog.get_by_label('选择模型', exact=True)).to_be_enabled()
             dialog.get_by_label('选择模型', exact=True).select_option('fresh-model')
             page.evaluate("window.connectFailure=''")
             dialog.get_by_role('button', name='预览配置 →', exact=True).click()
-            dialog.get_by_role('button', name='备份并应用配置', exact=True).click()
-            expect(dialog.get_by_role('heading', name='配置已应用', exact=True)).to_be_visible()
+            dialog.get_by_role('button', name='保存配置', exact=True).click()
+            expect(dialog.get_by_role('heading', name='配置已保存，重启客户端后生效', exact=True)).to_be_visible()
             assert page.evaluate("window.calls.filter(c=>c.action==='agent.connect').at(-1).payload.model") == 'fresh-model'
             assert page.evaluate("window.calls.filter(c=>c.action==='agent.connect').at(-1).payload.revision") == 'fixture-preview'
             checks.append('Pending client preview locks model edits; failed application requires a fresh reviewed selection and revision')
@@ -125,7 +125,7 @@ window.renderPage=(page=window.page||'agents')=>{window.page=page;const Page=pag
                 expect(dialog.get_by_role('button', name='预览配置 →', exact=True)).to_be_disabled()
                 manual.fill('not-in-preset')
                 dialog.get_by_role('button', name='预览配置 →', exact=True).click()
-                expect(dialog.get_by_role('button', name='备份并应用配置', exact=True)).to_be_visible()
+                expect(dialog.get_by_role('button', name='保存配置', exact=True)).to_be_visible()
                 assert page.evaluate('window.state.providers.length') == 1
                 calls = page.evaluate("window.calls.filter(c=>['provider.save','agent.preview'].includes(c.action))")
                 assert [c['action'] for c in calls] == ['provider.save', 'provider.save', 'agent.preview']

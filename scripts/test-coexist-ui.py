@@ -171,8 +171,8 @@ def main():
                 preview = dialog.locator('.config-preview').inner_text()
                 for secret in ['fixture-source-key-one', 'fixture-local-gateway-token', 'fixture-refresh-never-import']:
                     assert secret not in preview
-                dialog.get_by_role('button', name='备份并应用配置', exact=True).click()
-                expect(dialog.get_by_role('heading', name='配置已应用', exact=True)).to_be_visible()
+                dialog.get_by_role('button', name='保存配置', exact=True).click()
+                expect(dialog.get_by_role('heading', name='配置已保存，重启客户端后生效', exact=True)).to_be_visible()
                 assert auth_file.read_bytes() == original_auth
                 dialog.get_by_role('button', name='完成', exact=True).click()
 
@@ -290,8 +290,8 @@ def main():
             saved = next(item for item in state()['providers'] if item['id'] == empty['id'])
             assert [model['id'] for model in saved['models']] == ['manual-model-valid']
             assert 'fixture-manual-api-key' not in dialog.inner_text()
-            dialog.get_by_role('button', name='备份并应用配置', exact=True).click()
-            expect(dialog.get_by_role('heading', name='配置已应用', exact=True)).to_be_visible()
+            dialog.get_by_role('button', name='保存配置', exact=True).click()
+            expect(dialog.get_by_role('heading', name='配置已保存，重启客户端后生效', exact=True)).to_be_visible()
             dialog.get_by_role('button', name='完成', exact=True).click()
             assert tomllib.loads(config_file.read_text(encoding='utf-8'))['model'] == empty['id'] + '/manual-model-valid'
             restore()

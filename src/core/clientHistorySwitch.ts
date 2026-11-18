@@ -16,6 +16,8 @@ export type CreateClientHistoryService = (onPrepared: (backup: ClientHistoryBack
 export interface ClientHistorySwitchRecoveryOptions {
   ctx: HistoryContext;
   dataDir: string;
+  /** Main-process configuration transaction; never accepted from renderer input. */
+  configurationOnly?: boolean;
   /** Called while the shared history lock is held. The service must use lockHeld:true. */
   createHistoryService: CreateClientHistoryService;
   /** Read-only CAS guard for managed store state; runs before any rollback write. */
@@ -43,7 +45,7 @@ interface Journal {
   historyRevision: string; history?: ClientHistoryBackup; historyReserved?: ClientHistoryBackup; historyAbsent?: boolean; historyRestored?: boolean; historyUntracked?: boolean;
 }
 interface OwnedJournal { value: Journal; file: string; text: string }
-interface Context { ctx: HistoryContext; dataDir: string; root: string }
+interface Context { ctx: HistoryContext; dataDir: string; root: string; configurationOnly?: boolean }
 const MAX_BYTES = 40 * 1024 * 1024;
 const statuses: Status[] = ['prepared', 'history-prepared', 'history-applied', 'committing', 'complete', 'rolling-back', 'rolled-back', 'needs-recovery'];
 const complete = (status: Status) => status === 'complete' || status === 'rolled-back';
@@ -91,11 +93,11 @@ function directory(file: string): void {
   if (!stat.isDirectory() || stat.isSymbolicLink()) throw conflict();
 }
 function context(options: ClientHistorySwitchRecoveryOptions, requireExisting = true): Context {
-  const ctx = normalizeHistoryContext(options.ctx), dataDir = historyLocation(options.dataDir);
+  const ctx = normalizeHistoryContext(options.configurationOnly ? { ...options.ctx, sqliteHome: options.ctx.home } : options.ctx), dataDir = historyLocation(options.dataDir);
   if (requireExisting && (!fs.statSync(ctx.home).isDirectory() || !fs.statSync(dataDir).isDirectory())) throw conflict();
-  const base = path.join(dataDir, 'client-history-switches');
+  const base = path.join(dataDir, options.configurationOnly ? 'client-configuration-switches' : 'client-history-switches');
   safePath(dataDir, base);
-  return { ctx, dataDir, root: path.join(base, hash([key(ctx.home), key(ctx.sqliteHome)]).slice(0, 32)) };
+  return { ctx, dataDir, root: path.join(base, hash([key(ctx.home), key(ctx.sqliteHome)]).slice(0, 32)), configurationOnly: options.configurationOnly };
 }
 function prepareDirectories(c: Context): void {
   directory(path.dirname(c.root)); directory(c.root);
@@ -176,6 +178,7 @@ function load(c: Context): OwnedJournal[] {
     if (value.format !== 'yunqiao-client-history-switch-v1' || value.id + '.json' !== entry.name || !statuses.includes(value.status)
       || key(value.home) !== key(c.ctx.home) || key(value.sqliteHome) !== key(c.ctx.sqliteHome) || key(value.dataDir) !== key(c.dataDir)
       || hash(value.snapshot) !== value.snapshotHash || typeof value.historyRevision !== 'string') throw conflict();
+    if (c.configurationOnly && (value.history || value.historyReserved || value.historyUntracked || value.historyAbsent !== true)) throw conflict();
     const snapshot = canonicalSnapshot(c, value.snapshot);
     if (hash(snapshot) !== value.snapshotHash) throw conflict();
     if (value.historyReserved) validateBackupPath(c, value.historyReserved);
@@ -217,10 +220,17 @@ function removeUnstartedReservation(c: Context, reserved: ClientHistoryBackup): 
   fs.rmdirSync(reserved.backup);
 }
 async function stopped(c: Context): Promise<void> {
+  if (c.configurationOnly) return;
   try { await assertClientsStopped(c.ctx); }
   catch { throw new SwitchError('CLIENT_HISTORY_BUSY', '请先完全退出 ChatGPT / Codex 桌面客户端和 CLI，再切换配置或恢复历史。'); }
 }
 function lock(c: Context): () => void {
+  if (c.configurationOnly) {
+    // Configuration ownership is independent from native session maintenance.
+    // Reuse the proven PID lock implementation in a separate private directory.
+    const lockHome = path.join(c.dataDir, 'client-configuration-locks'); directory(lockHome);
+    return acquireHistoryLock({ home: lockHome, sqliteHome: lockHome });
+  }
   safePath(c.ctx.home, repairRoot(c.ctx));
   try { return acquireHistoryLock(c.ctx); }
   catch (error) { if (historyStorageFailure(error)) throw error; throw new SwitchError('CLIENT_HISTORY_BUSY', '已有历史修复、恢复或配置切换正在执行，请稍后重试。'); }
@@ -268,8 +278,8 @@ async function recoverOne(c: Context, options: ClientHistorySwitchRecoveryOption
     return false;
   }
 }
-function failure(error: unknown): ClientHistorySwitchResult {
-  const storage = historyStorageFailure(error); if (storage) return { ok: false, code: storage, message: historyStorageMessages[storage] };
+function failure(error: unknown, configurationOnly = false): ClientHistorySwitchResult {
+  const storage = historyStorageFailure(error); if (storage) return { ok: false, code: storage, message: configurationOnly ? historyStorageMessages[storage].replaceAll('历史', '配置').replace('请完全退出客户端后重试', '请检查配置文件占用后重试') : historyStorageMessages[storage] };
   return { ok: false, code: error instanceof SwitchError ? error.code : 'CLIENT_HISTORY_FAILED',
     message: error instanceof SwitchError ? error.message : '客户端配置切换未完成，已保留当前配置和备份，请检查后重试。' };
 }
@@ -289,12 +299,12 @@ export async function runClientHistorySwitch<T extends { ok: boolean }>(options:
     const id = `switch-${Date.now()}-${randomBytes(8).toString('hex')}`, at = new Date().toISOString();
     const historyId = `provider-${Date.now()}-${randomBytes(6).toString('hex')}`;
     const reservation = { backupId: historyId, backup: path.join(repairRoot(c.ctx), 'provider-backups', historyId) };
-    validateBackupPath(c, reservation);
-    if (fs.existsSync(reservation.backup)) throw conflict();
+    if (!c.configurationOnly) { validateBackupPath(c, reservation); if (fs.existsSync(reservation.backup)) throw conflict(); }
     owned = { file: path.join(c.root, id + '.json'), text: '', value: { format: 'yunqiao-client-history-switch-v1', id,
       home: c.ctx.home, sqliteHome: c.ctx.sqliteHome, dataDir: c.dataDir, createdAt: at, updatedAt: at,
-      status: 'prepared', snapshot, snapshotHash: hash(snapshot), historyRevision: options.historyRevision, historyReserved: reservation } };
+      status: 'prepared', snapshot, snapshotHash: hash(snapshot), historyRevision: options.historyRevision, ...(c.configurationOnly ? { historyAbsent: true } : { historyReserved: reservation }) } };
     save(c, owned);
+    if (!c.configurationOnly) {
     const service = options.createHistoryService(async backup => {
       validateBackup(c!, backup);
       if (backup.backupId !== reservation.backupId || key(backup.backup) !== key(reservation.backup)) throw conflict();
@@ -316,6 +326,7 @@ export async function runClientHistorySwitch<T extends { ok: boolean }>(options:
     }
     if ((history.updated || 0) > 0 && !owned.value.history) { owned.value.historyUntracked = true; save(c, owned); throw conflict(); }
     if (!owned.value.history) { owned.value.historyAbsent = true; save(c, owned); }
+    }
     owned.value.status = 'history-applied'; save(c, owned);
     await stopped(c); checkFiles(c, snapshot, true); await options.revalidate();
     owned.value.status = 'committing'; save(c, owned);
@@ -328,13 +339,13 @@ export async function runClientHistorySwitch<T extends { ok: boolean }>(options:
     checkFiles(c, owned.value.snapshot, false, true);
     owned.value.status = 'complete'; save(c, owned);
     return { ok: true, result, transactionId: id, journalPath: owned.file, history,
-      message: '客户端配置和历史迁移已完成，原始历史与配置备份已保存。' };
+      message: c.configurationOnly ? '客户端配置已保存，重新启动客户端后生效。' : '客户端配置和历史迁移已完成，原始历史与配置备份已保存。' };
   } catch (error) {
-    const outcome = failure(error) as ClientHistorySwitchResult<T>;
+    const outcome = failure(error, options.configurationOnly) as ClientHistorySwitchResult<T>;
     if (!c || !owned || !owned.text) return outcome;
     const rolledBack = await recoverOne(c, options, owned);
     return { ...outcome, transactionId: owned.value.id, journalPath: owned.file, history, rolledBack, recoveryRequired: !rolledBack,
-      ...(!rolledBack ? { code: 'CLIENT_HISTORY_RECOVERY_REQUIRED' as const, message: '本次配置或历史切换未完成，存在冲突或客户端仍在运行。备份和事务记录已保留，请退出客户端后重试恢复。' } : {}) };
+      ...(!rolledBack ? { code: 'CLIENT_HISTORY_RECOVERY_REQUIRED' as const, message: options.configurationOnly ? '配置保存遇到外部修改或读写故障，原始备份已保留。请检查配置文件与目录权限后重试。' : '本次配置或历史切换未完成，存在冲突或客户端仍在运行。备份和事务记录已保留，请退出客户端后重试恢复。' } : {}) };
   } finally { release?.(); }
 }
 
@@ -354,6 +365,6 @@ export async function recoverClientHistorySwitches(options: ClientHistorySwitchR
       recovered++; pending--;
     }
     return { ok: true, recovered, pending, message: recovered ? '已恢复上次中断的配置和历史切换，可以继续配置。' : '没有需要恢复的配置切换。' };
-  } catch (error) { return { ...failure(error), recovered, pending, recoveryRequired: true }; }
+  } catch (error) { return { ...failure(error, options.configurationOnly), recovered, pending, recoveryRequired: true }; }
   finally { release?.(); }
 }

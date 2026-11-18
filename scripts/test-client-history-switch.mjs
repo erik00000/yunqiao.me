@@ -110,7 +110,8 @@ function fixture(root, api, hooks = {}, initialize = true) {
 if (process.argv[2] === '--crash-worker') {
   const api = createRequire(import.meta.url)(process.argv[3]);
   const mode = process.argv[5];
-  const f = fixture(process.argv[4], api, { crash: mode, dynamicState: mode === 'committing', failCommit: mode === 'restored' }, false);
+  const f = fixture(process.argv[4], api, { crash: mode === 'configuration-commit' ? 'committing' : mode, noHistory: mode === 'configuration-commit', dynamicState: mode === 'committing' || mode === 'configuration-commit', failCommit: mode === 'restored' }, false);
+  if (mode === 'configuration-commit') f.options.configurationOnly = true;
   await api.runClientHistorySwitch(f.options);
   throw new Error('Crash fixture unexpectedly returned');
 }
@@ -135,6 +136,17 @@ try {
     assert.equal(read(f.config), afterConfig);
     assert(!fs.existsSync(path.join(f.home, '.aurora-history-repair', 'repair.lock')));
     if (process.platform !== 'win32') assert.equal(fs.statSync(result.journalPath).mode & 0o777, 0o600);
+  });
+  await check('Configuration-only transactions bypass running-client checks and history locks without invoking history services', async () => {
+    const f = make({ noHistory: true, running: () => ['private-running-client'] });
+    write(path.join(f.home, '.aurora-history-repair', 'repair.lock'), json({ pid: process.pid, nonce: 'unrelated-history-writer', at: new Date().toISOString() }));
+    const result = await api.runClientHistorySwitch({ ...f.options, configurationOnly: true }); assert(result.ok, result.message); assert.equal(read(f.config), afterConfig); assert.equal(read(f.historyFile), 'private history before\n'); assert(!f.events.includes('history-apply')); assert(result.journalPath.includes('client-configuration-switches')); assert.equal(decode(result.journalPath).historyAbsent, true);
+  });
+  await check('A configuration-only worker crash recovers config catalog and shared state while a client runs and history is locked', async () => {
+    const f = make({ noHistory: true, running: () => ['private-running-client'] });
+    write(path.join(f.home, '.aurora-history-repair', 'repair.lock'), json({ pid: process.pid, nonce: 'unrelated-history-writer', at: new Date().toISOString() }));
+    const child = spawnSync(process.execPath, [import.meta.filename, '--crash-worker', bundle, f.root, 'configuration-commit'], { windowsHide: true, timeout: 10000, encoding: 'utf8' }); assert.equal(child.status, 74, child.stderr);
+    assert.equal(read(f.config), afterConfig); const recovered = await api.recoverClientHistorySwitches({ ...f.recovery, configurationOnly: true }); assert(recovered.ok, recovered.message); assert.equal(recovered.recovered, 1); f.original(); assert(!f.events.includes('history-restore')); assert.equal(decode(path.join(f.home, '.aurora-history-repair', 'repair.lock')).nonce, 'unrelated-history-writer');
   });
   await check('Commit failure restores history before config and never exposes secrets from callbacks or snapshots', async () => {
     const f = make({ failCommit: true }), result = await api.runClientHistorySwitch(f.options);

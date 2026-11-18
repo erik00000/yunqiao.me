@@ -105,11 +105,11 @@ def main():
             modal.get_by_text('当前配置', exact=True).first.wait_for()
             assert 'test-only-no-real-key' not in modal.inner_text()
             page.screenshot(animations="disabled", path=str(ROOT / 'docs/images/connect-v0.6.png'))
-            modal.get_by_role('button', name='备份并应用配置').click()
+            modal.get_by_role('button', name='保存配置').click()
             page.wait_for_timeout(600)
             if modal.locator('.notice.warning').count() > len(modal.locator('.config-preview').all()):
                 print('Wizard notices:', modal.locator('.notice.warning').all_inner_texts(), flush=True)
-            modal.get_by_role('heading', name='配置已应用', exact=True).wait_for()
+            modal.get_by_role('heading', name='配置已保存，重启客户端后生效', exact=True).wait_for()
             updated = json.loads(config.read_text(encoding='utf-8'))
             assert updated['permissions']['allow'] == ['Read']
             assert updated['permissions']['defaultMode'] == 'bypassPermissions'
@@ -153,7 +153,7 @@ def main():
             guide.get_by_label('手动指南版本', exact=True).select_option('codebuddy-cli')
             expect(guide).to_contain_text('.codebuddy\\models.json')
             expect(guide.locator('.manual-guide-document')).to_contain_text('YOUR_YUNQIAO_GATEWAY_TOKEN')
-            expect(manual_modal.get_by_role('button', name='备份并应用配置', exact=True)).to_have_count(0)
+            expect(manual_modal.get_by_role('button', name='保存配置', exact=True)).to_have_count(0)
             manual_modal.get_by_role('button', name='取消', exact=True).click()
             assert not (clients / '.codebuddy').exists()
             passed('Dedicated manual wizard uses real reviewed gateway parameters, explicit client variants and placeholder-only previews without modifying client files')

@@ -198,7 +198,7 @@ try {
     const retried = await f.connect(); assert(retried.ok, retried.message); assert.equal(retried.history.preserved, 1); assert.equal(retried.history.backedUp, 1); assert.equal(retried.history.repaired, 1); aligned(f);
     const missingBefore = before.rows.threads.find(row => row.id === missing.id); assert.deepEqual(f.rows().threads.find(row => row.id === missing.id), missingBefore); assert(!fs.existsSync(missing.file));
     const manifests = fs.readdirSync(path.dirname(retried.history.backupPath), { withFileTypes: true });
-    assert.equal(manifests.length, 2, 'One rolled-back batch plus one explicit retry');
+    assert.equal(manifests.length, 1, 'Failed configuration never starts history; only the successful retry creates its backup');
   });
 
   await check('Real broken logs are backed up and skipped while valid history and client configuration can still be applied', async () => {
@@ -211,12 +211,12 @@ try {
     historyBackup(f, result, before.files.filter(file => f.sessions.some(item => item.file === file.file)), before.rows);
   });
 
-  await check('An index-only database backup failure blocks client writes and keeps the original connection state for a safe retry', async () => {
+  await check('An index-only database backup failure does not undo saved configuration and a later retry handles history', async () => {
     const f = fixture('index-only-backup-failure'), missing = f.add(450); fs.unlinkSync(missing.file); f.sessions.splice(f.sessions.indexOf(missing), 1);
     const before = snapshot(f), preview = await f.preview(), prepare = DatabaseSync.prototype.prepare; let reached = false, result;
     DatabaseSync.prototype.prepare = function(sql) { if (sql === 'VACUUM INTO ?') { reached = true; throw new Error(fault); } return prepare.call(this, sql); };
     try { result = await f.call('agent.connect', { revision: preview.revision }); } finally { DatabaseSync.prototype.prepare = prepare; }
-    assert(reached); assert.equal(result.ok, false); assert(result.rolledBack); assertSnapshot(f, before); noSecrets(result);
+    assert(reached); assert(result.ok, result.message); assert.equal(result.history.status, 'failed'); assert.notEqual(read(f.config), originalConfig); assert.deepEqual(f.rows(), before.rows); assert.equal(read(f.auth), f.authBytes); noSecrets(result);
     const retry = await f.connect(); assert(retry.ok, retry.message); assert.equal(retry.history.backedUp, 0); assert.equal(retry.history.indexBackedUp, 1); assert.equal(retry.history.preserved, 1);
   });
 
@@ -229,13 +229,13 @@ try {
     assert.equal(json(result.backup).files[0].backup, json(first.backup).files[0].backup);
   });
 
-  await check('Concrete storage failures return safe retry instructions and never commit configuration while raw semantic history is skipped', async () => {
+  await check('History backup storage failures remain auxiliary and never undo successfully saved configuration', async () => {
     for (const [code, expected] of [['ENOSPC', 'CLIENT_HISTORY_STORAGE_FULL'], ['EACCES', 'CLIENT_HISTORY_STORAGE_DENIED'], ['EIO', 'CLIENT_HISTORY_STORAGE_IO'], ['SQLITE_BUSY', 'CLIENT_HISTORY_STORAGE_BUSY']]) {
       const f = fixture(`storage-${code}`), broken = f.add(2900); write(broken.file, broken.content + '{partial');
       const before = snapshot(f), preview = await f.preview(), copyFile = fs.promises.copyFile; let failed = false, result;
       fs.promises.copyFile = async function(from, to, ...args) { if (!failed && String(to).endsWith('.original.jsonl')) { failed = true; throw Object.assign(new Error('fixture-private-refresh secret-path'), { code }); } return copyFile.call(this, from, to, ...args); };
       try { result = await f.call('agent.connect', { revision: preview.revision }); } finally { fs.promises.copyFile = copyFile; }
-      assert(failed); assert.equal(result.ok, false); assert.equal(result.code, expected); assert.match(result.message, /重试/); noSecrets(result); assertSnapshot(f, before);
+      assert(failed); assert(result.ok, result.message); assert.equal(result.history.status, 'failed'); assert.match(result.history.message, /重试/); noSecrets(result); assert.notEqual(read(f.config), originalConfig); assert.deepEqual(f.rows(), before.rows); assert.equal(read(f.auth), f.authBytes);
       const retry = await f.connect(); assert(retry.ok, retry.message); assert.equal(retry.history.skipped, 1); assert.equal(read(broken.file), broken.content + '{partial');
     }
   });
@@ -269,12 +269,57 @@ try {
     assert.equal(restored.history.backedUp, 3); assert(aliases.every(id => !f.store.listAgents()[id].connected));
   });
 
-  await check('Running clients refuse configuration and history writes while preserving the preview for retry', async () => {
+  await check('Running clients allow configuration writes and defer all history changes until a later safe retry', async () => {
     const f = fixture('busy'); f.add(40); const preview = await f.preview(), before = snapshot(f);
     f.control.blockers = ['private-fixture-Codex'];
-    const result = await f.call('agent.connect', { revision: preview.revision }); assert.equal(result.ok, false); assert.equal(result.code, 'CLIENT_HISTORY_BUSY'); assertSnapshot(f, before);
+    const result = await f.call('agent.connect', { revision: preview.revision }); assert(result.ok, result.message); assert.equal(result.history.status, 'deferred'); assert.notEqual(read(f.config), originalConfig); assert.deepEqual(f.rows(), before.rows); assertFiles(before.files.filter(file => file.file !== f.config && file.file !== f.catalog));
     f.control.blockers = [];
-    const retry = await f.call('agent.connect', { revision: preview.revision }); assert(retry.ok, retry.message); aligned(f);
+    const retry = await f.connect(); assert(retry.ok, retry.message); aligned(f);
+  });
+  await check('A client already running at preview can apply reapply and disconnect without reading or modifying history or official auth', async () => {
+    const f = fixture('always-running'), session = f.add(3000), before = f.rows(), prepare = DatabaseSync.prototype.prepare; f.control.blockers = ['private-running-client'];
+    DatabaseSync.prototype.prepare = function(sql) { if (/sqlite_master|threads|quick_check/.test(sql)) throw new Error('Running history must never be scanned'); return prepare.call(this, sql); };
+    try {
+      for (const model of ['model-one', 'model-two']) { const preview = await f.preview({ model }); assert.equal(preview.history.status, 'deferred'); const result = await f.call('agent.connect', { model, revision: preview.revision }); assert(result.ok, result.message); assert.equal(result.history.status, 'deferred'); assert.equal(result.history.backedUp, 0); assert.equal(read(session.file), session.content); assert.equal(read(f.auth), f.authBytes); }
+      const restored = await f.call('agent.disconnect'); assert(restored.ok, restored.message); assert.equal(restored.history.status, 'deferred'); assert.equal(read(f.config), originalConfig);
+    } finally { DatabaseSync.prototype.prepare = prepare; }
+    assert.deepEqual(f.rows(), before); assert(!fs.existsSync(path.join(f.home, '.aurora-history-repair')));
+  });
+  await check('Unreadable histories and an owned history lock do not prevent configuration save and original authentication remains unchanged', async () => {
+    for (const kind of ['read-failure', 'history-lock', 'legacy-interrupted', 'sqlite-home-unavailable']) {
+      const f = fixture(`auxiliary-${kind}`), session = f.add(3010), before = f.rows();
+      const prepare = DatabaseSync.prototype.prepare;
+      if (kind === 'read-failure') DatabaseSync.prototype.prepare = function(sql) { if (/sqlite_master|quick_check/.test(sql)) throw Object.assign(new Error('fixture-private-refresh'), { code: 'EACCES' }); return prepare.call(this, sql); };
+      else if (kind === 'history-lock') write(path.join(f.home, '.aurora-history-repair', 'repair.lock'), JSON.stringify({ pid: process.pid, nonce: 'fixture-lock', at: new Date().toISOString() }));
+      else if (kind === 'legacy-interrupted') write(path.join(f.store.dir, 'client-history-switches', 'legacy', 'switch-1-aaaaaaaaaaaaaaaa.json'), JSON.stringify({ status: 'committing', privateLegacySnapshot: true }));
+      else { const unavailable = path.join(f.root, 'not-a-directory'); write(unavailable, 'fixture'); f.deps.historyContext.sqliteHome = unavailable; }
+      let first;
+      try { const preview = await f.preview(); first = await f.call('agent.connect', { revision: preview.revision }); assert(first.ok, first.message); assert(['deferred', 'failed'].includes(first.history.status), kind); assert.equal(first.history.backedUp, 0); assert.equal(effective(read(f.config)), 'yunqiao'); }
+      finally { DatabaseSync.prototype.prepare = prepare; }
+      assert.equal(read(session.file), session.content); assert.deepEqual(f.rows(), before); assert.equal(read(f.auth), f.authBytes); assert.equal(read(json(first.backup).files[0].backup), originalConfig);
+      if (kind === 'legacy-interrupted') { const saved = read(f.config), preview = await f.preview(); assert.equal(read(f.config), saved); assert(preview.ok); assert.equal(json(path.join(f.store.dir, 'client-history-switches', 'legacy', 'switch-1-aaaaaaaaaaaaaaaa.json')).status, 'committing'); }
+    }
+  });
+  await check('Concurrent appends during optional history backups fail only history and keep the saved configuration usable', async () => {
+    const f = fixture('optional-history-race'), session = f.add(3020), originalCopy = fs.promises.copyFile; let changed = false;
+    fs.promises.copyFile = async function(from, to, ...args) { const copied = await originalCopy.call(this, from, to, ...args); if (!changed && String(from) === session.file) { changed = true; fs.appendFileSync(session.file, '{"type":"event_msg","payload":{"message":"new external work"}}\n'); } return copied; };
+    let result; try { result = await f.connect(); } finally { fs.promises.copyFile = originalCopy; }
+    assert(changed); assert(result.ok, result.message); assert.equal(result.history.status, 'failed'); assert.equal(effective(read(f.config)), 'yunqiao'); assert(read(session.file).includes('new external work')); assert.equal(read(f.auth), f.authBytes);
+  });
+  await check('Actual configuration backup or write failure still reports failure without touching history or official auth', async () => {
+    for (const kind of ['backup', 'write']) {
+      const f = fixture(`config-io-${kind}`), session = f.add(3030), before = snapshot(f), writeFile = fs.writeFileSync; let failed = false;
+      fs.writeFileSync = function(file, ...args) { if (!failed && typeof file === 'string' && (kind === 'backup' ? file.endsWith('.original') : file.startsWith(f.config + '.aurora-'))) { failed = true; throw Object.assign(new Error('fixture-private-refresh'), { code: 'ENOSPC' }); } return writeFile.call(this, file, ...args); };
+      let result; try { result = await f.connect(); } finally { fs.writeFileSync = writeFile; }
+      assert(failed); assert.equal(result.ok, false); assertSnapshot(f, before); assert.equal(read(session.file), session.content); noSecrets(result);
+      const retry = await f.connect(); assert(retry.ok, retry.message);
+    }
+  });
+  await check('A newer configuration saved while optional history is being rewritten survives and the stale history migration rolls back', async () => {
+    const f = fixture('new-config-during-history'), session = f.add(3040), beforeRows = f.rows(), rename = fs.promises.rename; let newerConfig;
+    fs.promises.rename = async function(from, to) { const result = await rename.call(this, from, to); if (String(to) === session.file && !newerConfig) { newerConfig = read(f.config) + '\n# newer external configuration\n'; write(f.config, newerConfig); } return result; };
+    let result; try { result = await f.connect(); } finally { fs.promises.rename = rename; }
+    assert(newerConfig); assert(result.ok, result.message); assert.equal(result.history.status, 'failed'); assert.equal(read(f.config), newerConfig); assert.equal(read(session.file), session.content); assert.deepEqual(f.rows(), beforeRows); assert.equal(read(f.auth), f.authBytes);
   });
 
   await check('Skipping a semantic conflict keeps full backups and the complete reason list while continuing the safe configuration switch', async () => {
@@ -285,12 +330,12 @@ try {
     const manifest = json(path.join(result.history.backupPath, 'manifest.json')); assert.equal(manifest.skipped[0].id, broken.id); assert.match(manifest.skipped[0].reason, /JSON/); assert.equal(read(broken.file), broken.content + '{incomplete');
   });
 
-  for (const change of ['append', 'new-session', 'index']) await check(`History ${change} after preview invalidates the reviewed connection before any configuration write`, async () => {
+  for (const change of ['append', 'new-session', 'index']) await check(`History ${change} after preview does not invalidate configuration and is freshly reviewed after saving`, async () => {
     const f = fixture('stale-' + change), session = f.add(60), preview = await f.preview();
     if (change === 'append') write(session.file, session.content + '{"type":"event_msg","payload":{"message":"new local work"}}\n');
     else if (change === 'new-session') f.add(61, { provider: 'arrived-after-preview' });
     else f.withDb(db => db.prepare('UPDATE threads SET model_provider=? WHERE id=?').run('external-index-region', session.id));
-    const before = snapshot(f), result = await f.call('agent.connect', { revision: preview.revision }); assert.equal(result.ok, false); assertSnapshot(f, before);
+    const result = await f.call('agent.connect', { revision: preview.revision }); assert(result.ok, result.message); assert.equal(result.history.status, 'completed'); assert.equal(effective(read(f.config)), 'yunqiao'); if (change === 'append') assert(read(session.file).includes('new local work'));
   });
 
   await check('A changed shared-client connection record invalidates preview without overwriting the newer selection', async () => {
@@ -300,7 +345,7 @@ try {
     assert.equal(result.ok, false); assertSnapshot(f, before);
   });
 
-  for (const change of ['provider', 'settings']) await check(`Changing ${change} during history backup rolls back the switch and preserves the newly saved settings`, async () => {
+  for (const change of ['provider', 'settings']) await check(`Changing ${change} during optional history backup preserves saved configuration and the later settings`, async () => {
     const f = fixture('during-backup-' + change), session = f.add(66), alignedPlan = await f.preview();
     // An unchanged history is still copied into the full snapshot, providing a
     // deterministic pause inside backup without replacing a production service.
@@ -321,10 +366,9 @@ try {
     let result;
     try { result = await f.call('agent.connect', { revision: preview.revision }); }
     finally { fs.promises.copyFile = originalCopy; }
-    assert(changed, 'Mutation must occur inside full history backup'); assert.equal(result.ok, false); assert.equal(result.rolledBack, true);
-    assertSnapshot(f, before); assert.equal(read(changedFile), changedBytes);
+    assert(changed, 'Mutation must occur inside full history backup'); assert(result.ok, result.message); assert.equal(effective(read(f.config)), 'yunqiao'); assert.equal(read(changedFile), changedBytes);
     assert(!JSON.stringify(result).includes('fixture-new-private-key')); assert(!JSON.stringify(result).includes('fixture-new-gateway-token'));
-    assert.equal(read(session.file), session.content);
+    assert.equal(f.rows().threads.find(row => row.id === session.id).model_provider, 'yunqiao');
   });
 
   await check('State-commit failure restores complete history, config, catalog and all shared connection records', async () => {
@@ -381,7 +425,7 @@ try {
     assert.equal(result.history.backedUp, 1); assert.equal(json(result.backup).files[0].backup, null);
   });
 
-  await check('Zero-history configuration still refuses a running client without creating config, history or transaction files', async () => {
+  await check('Zero-history configuration saves while a client is running and creates no history database', async () => {
     const f = fixture('zero-busy', originalConfig, { noDatabase: true }), preview = await f.preview();
     assert.equal(preview.history.total, 0); assert.equal(preview.history.backupRequired, false);
     const tree = directory => fs.readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
@@ -391,8 +435,8 @@ try {
     const before = tree(f.root), agents = JSON.stringify(f.store.listAgents());
     f.control.blockers = ['private-zero-history-client'];
     const result = await f.call('agent.connect', { revision: preview.revision });
-    assert.equal(result.ok, false); assert.equal(result.code, 'CLIENT_HISTORY_BUSY'); assert.deepEqual(tree(f.root), before);
-    assert.equal(JSON.stringify(f.store.listAgents()), agents); assert.equal(fs.existsSync(f.database), false); noSecrets(result);
+    assert(result.ok, result.message); assert.equal(result.history.status, 'deferred'); assert.notEqual(read(f.config), originalConfig);
+    assert.notEqual(JSON.stringify(f.store.listAgents()), agents); assert.equal(fs.existsSync(f.database), false); noSecrets(result);
   });
 
   await check('A brand-new absent home can connect, and disconnect removes the originally absent config without creating fake histories', async () => {
@@ -407,14 +451,12 @@ try {
     assert(aliases.every(id => f.store.listAgents()[id]?.connected === false)); noSecrets(disconnected);
   });
 
-  for (const arrival of ['database', 'session']) await check(`An empty-history preview becomes stale when a new ${arrival} appears before apply`, async () => {
+  for (const arrival of ['database', 'session']) await check(`A new ${arrival} after an empty preview does not block saving configuration`, async () => {
     const f = fixture('zero-arrival-' + arrival, originalConfig, { noDatabase: true }), preview = await f.preview();
     assert.equal(preview.history.backupRequired, false); f.initializeDatabase();
     if (arrival === 'session') f.add(120, { provider: 'arrived-after-empty-preview' });
     const before = snapshot(f), result = await f.call('agent.connect', { revision: preview.revision });
-    assert.equal(result.ok, false); assertSnapshot(f, before); assert.match(result.message, /预览|变化/);
-    assert.equal(fs.existsSync(path.join(f.home, '.aurora-history-repair', 'provider-backups')), false);
-    const fresh = await f.preview(); assert.notEqual(fresh.revision, preview.revision); assert.equal(fresh.history.backupRequired, true);
+    assert(result.ok, result.message); assert.equal(result.history.status, 'completed'); assert.equal(effective(read(f.config)), 'yunqiao'); assert.equal(result.history.indexBackedUp, 1);
   });
 
   for (const setting of ['provider', 'settings']) await check(`Stale cached ${setting} data is rejected after an external disk edit, and refreshed preview applies the new credentials`, async () => {

@@ -552,8 +552,7 @@ export async function runAction(deps: ActionDeps, action: string, payload: any):
       if (coexist && clientRevision) preview.revision = digest(JSON.stringify({ clientRevision, nativeCatalog: coexist.nativeCatalog }));
       let history: PreparedClientHistory | undefined;
       if (sharedCodex && preview.ok && action !== 'agent.parameters') {
-        const prepared = await prepareClientHistory(deps, codexPlan(context)[0].after);
-        if (!prepared.ok) return { ...preview, ok: false, message: prepared.message };
+        const prepared = await prepareClientHistory(deps, codexPlan(context)[0].after, action === 'agent.preview');
         history = prepared; preview.history = history.history;
         if (clientConnectionRevision(deps) !== reviewedConnectionRevision) return { ...preview, ok: false, message: '供应商或连接状态在检查期间已变化，请重新预览' };
         preview.revision = historyPreviewRevision(preview.revision, history, reviewedConnectionRevision);
@@ -566,7 +565,6 @@ export async function runAction(deps: ActionDeps, action: string, payload: any):
       context.expectedRevision = clientRevision;
       const catalogFile = context.modelCatalogPath!;
       if (history) {
-        if (history.history.blocked) return { ok: false, message: '部分历史会话尚无法安全处理，原配置保持不变。请检查预览中的原因后重新预览。' };
         const files = codexPlan(context);
         if (planRevision(files) !== clientRevision) return { ok: false, message: '配置在检查历史期间已变化，请重新预览' };
         if (coexist) files.push(planned(catalogFile, JSON.stringify(coexist.nativeCatalog, null, 2)));
@@ -629,9 +627,7 @@ export async function runAction(deps: ActionDeps, action: string, payload: any):
           const reviewedConnectionRevision = clientConnectionRevision(deps);
           const original = restorePlanSnapshot('codex-cli', current.backupPath, adapter.configPaths());
           const files = original.files;
-          const history = await prepareClientHistory(deps, files[0].after);
-          if (!history.ok) return history;
-          if (history.history.blocked) return { ok: false, message: '部分历史会话无法安全恢复归属，已保留当前连接。请先检查历史会话。' };
+          const history = await prepareClientHistory(deps, files[0].after, false);
           return await applyClientHistory(deps, {
               prepared: history, files,
               revalidate: () => {

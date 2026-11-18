@@ -141,10 +141,10 @@ window.renderAgents();"""
             expect(panel.get_by_text('由云桥使用对应供应商的 URL 与 Key 转发请求', exact=False)).to_be_visible()
             expect(dialog.get_by_role('combobox', name='接入方式', exact=True)).to_have_value('gateway')
             dialog.get_by_role('button', name='预览配置 →', exact=True).click()
-            expect(dialog.get_by_role('button', name='备份并应用配置', exact=True)).to_be_visible()
+            expect(dialog.get_by_role('button', name='保存配置', exact=True)).to_be_visible()
             assert count('agent.desktop.select') == count('agent.detect') == count('agent.connect') == 0
-            dialog.get_by_role('button', name='备份并应用配置', exact=True).click()
-            expect(dialog.get_by_role('heading', name='配置已应用', exact=True)).to_be_visible()
+            dialog.get_by_role('button', name='保存配置', exact=True).click()
+            expect(dialog.get_by_role('heading', name='配置已保存，重启客户端后生效', exact=True)).to_be_visible()
             assert count('agent.connect') == 1
             assert last_payload('agent.connect')['mode'] == 'gateway'
             passed('Existing user configuration can be previewed and applied with no executable and no confirmed programming module')
@@ -160,8 +160,8 @@ window.renderAgents();"""
             direct_selection = last_payload('agent.preview')
             assert direct_selection == {'agentId': 'chatgpt-desktop', 'providerId': 'supplier', 'model': 'gpt-5.4-codex', 'mode': 'direct', 'authMode': 'api', 'permissionMode': 'preserve', 'skipOnboarding': False}
             expected_revision = 'reviewed-revision-' + str(page.evaluate('window.calls.length'))
-            dialog.get_by_role('button', name='备份并应用配置', exact=True).click()
-            expect(dialog.get_by_role('heading', name='配置已应用', exact=True)).to_be_visible()
+            dialog.get_by_role('button', name='保存配置', exact=True).click()
+            expect(dialog.get_by_role('heading', name='配置已保存，重启客户端后生效', exact=True)).to_be_visible()
             assert last_payload('agent.connect') == {**direct_selection, 'revision': expected_revision}
             passed('Direct mode explains URL and key routing, clears prior test feedback, and applies the exact reviewed selection')
 
@@ -202,7 +202,7 @@ window.renderAgents();"""
             expect(dialog.get_by_text('沙箱外的文件', exact=False)).to_be_visible()
             dialog.get_by_role('button', name='预览配置 →', exact=True).click()
             assert last_payload('agent.preview')['permissionMode'] == 'full-access'
-            dialog.get_by_role('button', name='备份并应用配置', exact=True).click()
+            dialog.get_by_role('button', name='保存配置', exact=True).click()
             assert last_payload('agent.connect')['permissionMode'] == 'full-access'
             assert 'primary' in dialog.get_by_role('button', name='重新启动客户端', exact=True).get_attribute('class').split()
             passed('Advanced permissions are opt-in, reviewed before application, and successful setup prominently offers restart')
@@ -237,8 +237,8 @@ window.renderAgents();"""
             expect(dialog.get_by_text('将本地网关地址和令牌写入客户端配置', exact=False)).to_be_visible()
             dialog.get_by_role('button', name='预览配置 →', exact=True).click()
             expect(dialog.locator('.review-summary .chip')).to_have_text('本地网关')
-            dialog.get_by_role('button', name='备份并应用配置', exact=True).click()
-            expect(dialog.get_by_role('heading', name='配置已应用', exact=True)).to_be_visible()
+            dialog.get_by_role('button', name='保存配置', exact=True).click()
+            expect(dialog.get_by_role('heading', name='配置已保存，重启客户端后生效', exact=True)).to_be_visible()
             assert count('agent.preview') == 2
             assert last_payload('agent.connect')['mode'] == 'gateway'
             assert last_payload('agent.connect')['revision'] != first_revision
@@ -301,7 +301,7 @@ window.renderAgents();"""
             panel = panel_for(dialog)
             expect(panel.get_by_text('应用时创建', exact=True)).to_be_visible()
             dialog.get_by_role('button', name='预览配置 →', exact=True).click()
-            expect(dialog.get_by_role('button', name='备份并应用配置', exact=True)).to_be_visible()
+            expect(dialog.get_by_role('button', name='保存配置', exact=True)).to_be_visible()
             assert count('agent.connect') == 0
             passed('A missing configuration is described as ready to create and reaches a reviewable preview without installing or selecting a program')
 
@@ -342,7 +342,7 @@ window.renderAgents();"""
             page.keyboard.press('Escape')
             expect(dialog).to_be_visible()
             page.evaluate('window.pending.shift()();window.holdSelect=false')
-            expect(dialog.get_by_role('button', name='备份并应用配置', exact=True)).to_be_visible()
+            expect(dialog.get_by_role('button', name='保存配置', exact=True)).to_be_visible()
             assert count('agent.connect') == 0
             selections = page.evaluate("window.calls.filter(call=>call.action==='agent.desktop.select').map(call=>call.payload)")
             assert all(payload == {'agentId': 'chatgpt-desktop'} for payload in selections)
@@ -351,24 +351,24 @@ window.renderAgents();"""
             passed('Selecting an unconfirmed program locks editing, sends only agentId, and creates a fresh preview without applying automatically')
 
             page.evaluate("window.connectFailure='配置已在其他窗口变化，请重新预览'")
-            dialog.get_by_role('button', name='备份并应用配置', exact=True).click()
+            dialog.get_by_role('button', name='保存配置', exact=True).click()
             expect(dialog.get_by_role('alert')).to_contain_text('请重新预览')
             expect(dialog.get_by_role('combobox', name='选择模型')).to_have_value('gpt-5.4-codex')
             expect(dialog.get_by_text('测试通过，供应商 API 可用', exact=False)).to_be_visible()
             page.evaluate("window.connectFailure=''")
             dialog.get_by_role('button', name='预览配置 →', exact=True).click()
-            dialog.get_by_role('button', name='备份并应用配置', exact=True).click()
-            expect(dialog.get_by_role('heading', name='配置已应用', exact=True)).to_be_visible()
+            dialog.get_by_role('button', name='保存配置', exact=True).click()
+            expect(dialog.get_by_role('heading', name='配置已保存，重启客户端后生效', exact=True)).to_be_visible()
             passed('Application conflicts return to the same choices for a new preview and successful retry')
 
             dialog = open_wizard(setup="window.state.agentCatalog[0].support='manual';window.state.detected['chatgpt-desktop']=structuredClone(window.readyDetection)")
             dialog.get_by_role('button', name='预览配置 →', exact=True).click()
-            expect(dialog.get_by_role('button', name='备份并应用配置', exact=True)).not_to_be_visible()
+            expect(dialog.get_by_role('button', name='保存配置', exact=True)).not_to_be_visible()
             dialog.get_by_role('button', name='上一步', exact=True).click()
             panel = panel_for(dialog, expand=True)
             page.evaluate('window.selectedDetection=structuredClone(window.initialDetection)')
             panel.get_by_role('button', name='选择程序并预览', exact=True).click()
-            expect(dialog.get_by_role('button', name='备份并应用配置', exact=True)).to_be_visible()
+            expect(dialog.get_by_role('button', name='保存配置', exact=True)).to_be_visible()
             assert count('agent.connect') == 0
             passed('Apply capability follows the latest catalog, independently of detected module support and the originally selected card')
 
@@ -379,7 +379,7 @@ window.renderAgents();"""
             page.wait_for_function('window.pending.length===1')
             expect(dialog.get_by_role('combobox', name='选择模型')).to_be_disabled()
             page.evaluate('window.pending.shift()();window.holdDetect=false')
-            expect(dialog.get_by_role('button', name='备份并应用配置', exact=True)).to_be_visible()
+            expect(dialog.get_by_role('button', name='保存配置', exact=True)).to_be_visible()
             assert count('agent.desktop.select') == 0 and count('agent.connect') == 0
             dialog.get_by_role('button', name='上一步', exact=True).click()
             panel = panel_for(dialog, expand=True)

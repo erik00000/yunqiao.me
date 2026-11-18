@@ -136,6 +136,7 @@ INSERT INTO private_payload VALUES(1,'keep unrelated database content');""")
 def assert_history_preview(preview, repairable, unchanged):
     assert preview['ok'] and preview['revision'], preview
     history = preview['history']
+    assert history['status'] == 'pending', history
     expected = {'total': 6, 'repairable': repairable, 'unchanged': unchanged, 'preserved': 1, 'skipped': 4, 'blocked': 0,
                 'filesToBackUp': 6, 'indexDatabasesToBackUp': 2, 'backupRequired': True}
     assert {key: history[key] for key in expected} == expected, history
@@ -146,6 +147,7 @@ def assert_history_preview(preview, repairable, unchanged):
 def assert_history_result(result, repaired, unchanged):
     assert result['ok'], result
     history = result['history']
+    assert history['status'] == 'completed', history
     expected = {'backedUp': 6, 'indexBackedUp': 2, 'repaired': repaired, 'unchanged': unchanged, 'preserved': 1, 'skipped': 4}
     assert {key: history[key] for key in expected} == expected, history
     assert history['backupId'] and history['backupPath'], history
@@ -241,7 +243,7 @@ def main():
     parser.add_argument('--exe', type=Path, default=ROOT / 'release/win-unpacked/YunQiaoAI.exe')
     parser.add_argument('--launcher', type=Path, help='Launch a portable wrapper and verify its extracted runtime against --exe')
     parser.add_argument('--version', default=json.loads((ROOT / 'package.json').read_text(encoding='utf-8'))['version'])
-    parser.add_argument('--expect-client-busy', action='store_true', help='Require the real running-client guard; verify zero writes instead of successful native configuration and restoration')
+    parser.add_argument('--expect-history-deferred', '--expect-client-busy', dest='expect_history_deferred', action='store_true', help='Require successful isolated configuration apply/restore while a real running client defers history without history writes')
     args = parser.parse_args()
     executable = args.exe.resolve()
     assert executable.is_file(), f'Build the release first: {executable}'
@@ -447,64 +449,46 @@ def main():
             wizard.get_by_role('button', name='下一步：选择模型 →', exact=True).click()
             expect(wizard.get_by_role('region', name='共享编程配置')).to_be_visible()
             wizard.get_by_role('button', name='预览配置 →', exact=True).click()
-            expect(wizard.get_by_role('button', name='备份历史并应用配置', exact=True)).to_be_enabled()
-            history_summary = wizard.get_by_role('region', name='历史会话自动处理', exact=True)
-            expect(history_summary).to_contain_text('共 6 个会话记录 · 1 个需要修复 · 0 个无需修改 · 1 条索引原样保留 · 4 个备份后跳过修复')
-            expect(history_summary).to_contain_text('将备份 6 个会话文件和 2 个索引数据库')
-            expect(history_summary.locator('details')).not_to_have_attribute('open', '')
+            expect(wizard.get_by_role('button', name='保存配置', exact=True)).to_be_enabled()
+            history_summary = wizard.locator('details[aria-label="历史会话辅助处理"]')
+            expect(history_summary).not_to_have_attribute('open', '')
             expect(wizard.get_by_role('alert')).to_have_count(0)
             selection = {'agentId': 'chatgpt-desktop', 'providerId': supplier['id'], 'model': 'gpt-6.1-sol', 'authMode': 'api', 'mode': 'gateway'}
             initial_preview = page.evaluate("p => window.aurora.invoke('agent.preview', p)", selection)
-            assert_history_preview(initial_preview, 1, 0)
+            assert initial_preview['ok'] and initial_preview['revision'], initial_preview
+            history_files_before = {file: file.read_bytes() for file in [*history_original['files'], *history_original['databases']]}
+            if args.expect_history_deferred:
+                assert initial_preview['history']['status'] == 'deferred', initial_preview
+            else:
+                assert_history_preview(initial_preview, 1, 0)
             assert history_fixture['snapshot']() == history_original, 'Configuration preview wrote isolated history'
             assert (clients / '.codex/config.toml').read_bytes() == original[clients / '.codex/config.toml']
-            if args.expect_client_busy:
-                # This mode does not bypass or mock process detection. A real
-                # active client must refuse both the UI action and native IPC.
-                agent_file = data / 'agents.json'
-                before_agents = agent_file.read_bytes() if agent_file.exists() else None
-                before_clients = {str(file.relative_to(clients)): file.read_bytes() for file in clients.rglob('*') if file.is_file()}
-                before_states = page.evaluate("async () => (await window.aurora.invoke('state.get')).agents")
-                catalog_file = data / 'codex-model-catalog.json'
-                before_catalog = catalog_file.read_bytes() if catalog_file.exists() else None
-                transaction_root = data / 'client-history-switches'
-                before_transactions = {str(file.relative_to(transaction_root)): file.read_bytes() for file in transaction_root.rglob('*') if file.is_file()}
 
-                def assert_busy_unchanged():
-                    assert all(file.read_bytes() == before for file, before in original.items()), 'A busy-client refusal changed config or auth bytes'
-                    assert {str(file.relative_to(clients)): file.read_bytes() for file in clients.rglob('*') if file.is_file()} == before_clients, 'A busy-client refusal wrote a client file or backup'
-                    assert (agent_file.read_bytes() if agent_file.exists() else None) == before_agents, 'A busy-client refusal changed persisted connection state'
-                    assert (catalog_file.read_bytes() if catalog_file.exists() else None) == before_catalog, 'A busy-client refusal changed the model catalog'
-                    assert {str(file.relative_to(transaction_root)): file.read_bytes() for file in transaction_root.rglob('*') if file.is_file()} == before_transactions, 'A busy-client refusal created a transaction or backup'
-                    assert page.evaluate("async () => (await window.aurora.invoke('state.get')).agents") == before_states
-                    expect(wizard.get_by_role('heading', name='配置已应用', exact=True)).to_have_count(0)
-                    expect(wizard.get_by_role('status', name='历史会话处理结果', exact=True)).to_have_count(0)
+            def assert_deferred_history(result=None):
+                if result is not None:
+                    assert result['ok'], result
+                    history = result['history']
+                    assert history['status'] == 'deferred' and history['code'] == 'CLIENT_HISTORY_BUSY', history
+                    assert not any(history.get(key) for key in ['backedUp', 'indexBackedUp', 'repaired', 'backupId', 'backupPath']), history
+                assert history_fixture['snapshot']() == history_original, 'A running client must leave history rows and log contents unchanged'
+                assert all(file.read_bytes() == before for file, before in history_files_before.items()), 'Deferred history changed raw SQLite or log bytes'
+                assert not list((clients / '.codex').rglob('manifest.json')), 'Deferred history created a backup or migration manifest'
+                assert (clients / '.codex/auth.json').read_bytes() == original[clients / '.codex/auth.json']
 
-                wizard.get_by_role('button', name='备份历史并应用配置', exact=True).click()
-                retry = wizard.get_by_role('button', name='已退出，重新应用', exact=True)
-                expect(retry).to_be_enabled()
-                expect(wizard.get_by_role('alert')).to_contain_text('请先完全退出')
-                assert_busy_unchanged()
-                checks.append('Native packaged wizard detects a real running client, explains the required exit and keeps config, auth and connection-state bytes unchanged without reporting success')
-                retry.click()
-                expect(retry).to_be_enabled()
-                expect(wizard.get_by_role('alert')).to_contain_text('请先完全退出')
-                busy_preview = page.evaluate("p => window.aurora.invoke('agent.preview', p)", selection)
-                assert_history_preview(busy_preview, 1, 0)
-                selection['revision'] = busy_preview['revision']
-                for _ in range(2):
-                    refused = page.evaluate("p => window.aurora.invoke('agent.connect', p)", selection)
-                    assert refused.get('ok') is False and refused.get('code') == 'CLIENT_HISTORY_BUSY', refused
-                    assert not refused.get('backup') and not refused.get('history'), 'A refused connection must not claim a history backup'
-                    assert_busy_unchanged()
-                wizard.get_by_role('button', name='取消', exact=True).click()
-                expect(wizard).not_to_be_visible()
-                assert not errors, errors
-                checks.append('UI retry and repeated native IPC preview preserved cross-database indexes and four skipped corrupt/ambiguous records without blocking, remain CLIENT_HISTORY_BUSY, create no configuration/history backup or transaction and allow cancellation; successful apply and restore are not covered in this mode')
+            wizard.get_by_role('button', name='保存配置', exact=True).click()
+            expect(wizard.get_by_role('heading', name='配置已保存，重启客户端后生效', exact=True)).to_be_visible()
+            expect(wizard.get_by_role('alert')).to_have_count(0)
+            expect(wizard.get_by_role('button', name='已退出，重新应用', exact=True)).to_have_count(0)
+            history_outcome = wizard.locator('details[aria-label="历史会话处理结果"]')
+            expect(history_outcome).not_to_have_attribute('open', '')
+            history_outcome.locator(':scope > summary').click()
+            if args.expect_history_deferred:
+                expect(history_outcome).to_contain_text('历史稍后处理 · 配置已保存')
+                expect(history_outcome).not_to_contain_text('已备份')
+                expect(history_outcome).not_to_contain_text('已修复')
+                assert_deferred_history()
+                first_backup = None
             else:
-                wizard.get_by_role('button', name='备份历史并应用配置', exact=True).click()
-                expect(wizard.get_by_role('heading', name='配置已应用', exact=True)).to_be_visible()
-                history_outcome = wizard.get_by_role('status', name='历史会话处理结果', exact=True)
                 expect(history_outcome).to_contain_text('已备份 6 个会话文件和 2 个索引数据库')
                 expect(history_outcome).to_contain_text('已修复 1 个会话，0 个无需修改')
                 expect(history_outcome).to_contain_text('1 条未找到原文件的会话索引已随数据库备份并原样保留')
@@ -514,44 +498,57 @@ def main():
                 assert first_backups['ok'] and len(first_backups['backups']) == 1, first_backups
                 first_backup = first_backups['backups'][0]
                 history_fixture['assert_backup'](first_backup['path'], history_original, 1)
-                configured = (clients / '.codex/config.toml').read_text(encoding='utf-8')
-                assert 'model_provider = "yunqiao"' in configured and supplier['id'] + '/gpt-6.1-sol' in configured
-                limits = tomllib.loads(configured)
-                assert limits['model_context_window'] == 272000 and limits['model_auto_compact_token_limit'] == 244800
-                assert (clients / '.codex/auth.json').read_bytes() == original[clients / '.codex/auth.json']
-                shared = page.evaluate("async () => (await window.aurora.invoke('state.get')).agents")
-                assert all(shared[client]['connected'] is True for client in ['codex-cli', 'chatgpt-desktop'])
-                wizard.get_by_role('button', name='完成', exact=True).click()
-                page.evaluate("id => window.aurora.invoke('provider.save', {id,models:[{id:'gpt-6.1-sol',contextWindow:200000}]})", supplier['id'])
-                updated = page.evaluate("p => window.aurora.invoke('agent.preview', p)", selection)
+            configured = (clients / '.codex/config.toml').read_text(encoding='utf-8')
+            assert 'model_provider = "yunqiao"' in configured and supplier['id'] + '/gpt-6.1-sol' in configured
+            limits = tomllib.loads(configured)
+            assert limits['model_context_window'] == 272000 and limits['model_auto_compact_token_limit'] == 244800
+            assert (clients / '.codex/auth.json').read_bytes() == original[clients / '.codex/auth.json']
+            shared = page.evaluate("async () => (await window.aurora.invoke('state.get')).agents")
+            assert all(shared[client]['connected'] is True for client in ['codex-cli', 'chatgpt-desktop'])
+            wizard.get_by_role('button', name='完成', exact=True).click()
+            page.evaluate("id => window.aurora.invoke('provider.save', {id,models:[{id:'gpt-6.1-sol',contextWindow:200000}]})", supplier['id'])
+            updated = page.evaluate("p => window.aurora.invoke('agent.preview', p)", selection)
+            assert updated['ok'] and updated['revision'], updated
+            if args.expect_history_deferred:
+                assert updated['history']['status'] == 'deferred', updated
+            else:
                 assert_history_preview(updated, 0, 1)
-                selection['revision'] = updated['revision']
-                before_reapply = history_fixture['snapshot']()
-                applied = page.evaluate("p => window.aurora.invoke('agent.connect', p)", selection)
+            selection['revision'] = updated['revision']
+            before_reapply = history_fixture['snapshot']()
+            applied = page.evaluate("p => window.aurora.invoke('agent.connect', p)", selection)
+            if args.expect_history_deferred:
+                assert_deferred_history(applied)
+            else:
                 assert_history_result(applied, 0, 1)
                 assert applied['history']['backupId'] != first_backup['id'], 'Reapply must create its own full history backup'
                 history_fixture['assert_provider']('yunqiao')
                 history_fixture['assert_backup'](applied['history']['backupPath'], before_reapply, 0)
-                limits = tomllib.loads((clients / '.codex/config.toml').read_text(encoding='utf-8'))
-                assert limits['model_context_window'] == 200000 and limits['model_auto_compact_token_limit'] == 180000
-                assert (clients / '.codex/auth.json').read_bytes() == original[clients / '.codex/auth.json']
-                checks.append('Native model configuration writes 272000/244800, recalculates 200000/180000 on reapply, preserves the original restore point and backs up all six raw history files and both databases while preserving cross-database missing-source copies and four skipped corrupt/ambiguous records')
-                before_restore = history_fixture['snapshot']()
-                restored = page.evaluate("() => window.aurora.invoke('agent.disconnect', {agentId:'chatgpt-desktop'})")
+            limits = tomllib.loads((clients / '.codex/config.toml').read_text(encoding='utf-8'))
+            assert limits['model_context_window'] == 200000 and limits['model_auto_compact_token_limit'] == 180000
+            assert (clients / '.codex/auth.json').read_bytes() == original[clients / '.codex/auth.json']
+            checks.append('Native configuration apply and reapply write 272000/244800 then 200000/180000, preserve official auth and shared CLI state; history defers without writes for a running client or completes verified raw-file/database backups for an idle client')
+            before_restore = history_fixture['snapshot']()
+            restored = page.evaluate("() => window.aurora.invoke('agent.disconnect', {agentId:'chatgpt-desktop'})")
+            if args.expect_history_deferred:
+                assert_deferred_history(restored)
+            else:
                 assert_history_result(restored, 1, 0)
                 assert restored['history']['backupId'] not in [first_backup['id'], applied['history']['backupId']]
                 history_fixture['assert_provider']('openai')
                 history_fixture['assert_backup'](restored['history']['backupPath'], before_restore, 1)
-                assert all(file.read_bytes() == before for file, before in original.items()), 'Shared configuration restore changed original bytes'
-                assert not errors, errors
-                checks.append('Native wizard previews, backs up, applies and restores shared Codex configuration without a desktop executable; auth and conversation body bytes stay intact, CLI state stays synchronized and missing-source indexes and corrupt/ambiguous histories retain original bytes and rows with explicit skipped backup manifests')
+            assert all(file.read_bytes() == before for file, before in original.items()), 'Shared configuration restore changed original bytes'
+            restored_states = page.evaluate("async () => (await window.aurora.invoke('state.get')).agents")
+            assert all(restored_states[client]['connected'] is False for client in ['codex-cli', 'chatgpt-desktop'])
+            assert not errors, errors
+            checks.append('Native configuration-first wizard and IPC successfully apply, reapply and restore isolated client configuration without launching or stopping a client; history outcome remains independent and all skipped or deferred original history stays intact')
             report = {
                 'version': args.version, 'platform': sys.platform, 'passed': True, 'count': len(checks), 'checks': checks,
-                'configurationAcceptance': 'client-busy-guard' if args.expect_client_busy else 'native-apply-restore',
-                'crossDatabaseHistoryAcceptance': 'preview-and-busy-guard' if args.expect_client_busy else 'native-apply-restore',
-                'skippedHistoryAcceptance': 'preview-and-busy-guard' if args.expect_client_busy else 'native-apply-restore',
-                'limitations': ['A real running client prevented native configuration writes. Successful native apply, context-limit recalculation and restore were not exercised in this acceptance run.'] if args.expect_client_busy else [],
-                **({'clientBusyCode': 'CLIENT_HISTORY_BUSY'} if args.expect_client_busy else {}),
+                'configurationAcceptance': 'native-apply-restore',
+                'historyAcceptance': 'deferred-running-client' if args.expect_history_deferred else 'native-backup-repair-restore',
+                'crossDatabaseHistoryAcceptance': 'preserved-while-deferred' if args.expect_history_deferred else 'native-apply-restore',
+                'skippedHistoryAcceptance': 'preserved-while-deferred' if args.expect_history_deferred else 'native-apply-restore',
+                'limitations': ['Native configuration apply, reapply and restore passed while a real client was running; history was deferred and its bytes stayed unchanged. Successful history backup and repair were not exercised in this mode.'] if args.expect_history_deferred else [],
+                **({'historyDeferredCode': 'CLIENT_HISTORY_BUSY'} if args.expect_history_deferred else {}),
                 'executable': str(executable.relative_to(ROOT)) if executable.is_relative_to(ROOT) else str(executable),
                 'exeSha256': sha256(executable), 'asarSha256': sha256(asar),
                 **({'portable': str(launcher.relative_to(ROOT)), 'portableSha256': sha256(launcher)} if args.launcher and launcher.is_relative_to(ROOT) else {}),
