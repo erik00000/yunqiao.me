@@ -2,25 +2,25 @@
 
 云桥 AI 是独立的桌面工具。请先安装你要使用的 Claude、ChatGPT、Codex 或其他客户端，再用云桥连接自己的模型服务。
 
-本说明更新于 **2026 年 11 月 18 日**，对应已发布的 **0.6.9**。Windows 与 macOS 安装包可从 [Releases 下载页](https://github.com/jxb412/yunqiao.me/releases/tag/v0.6.9)直接下载。
+本说明更新于 **2026 年 11 月 18 日**，对应 **0.6.11**。Windows 与 macOS 安装包可从 [Releases 下载页](https://github.com/jxb412/yunqiao.me/releases/tag/v0.6.11)直接下载。
 
-[打开 0.6.9 下载页](https://github.com/jxb412/yunqiao.me/releases/tag/v0.6.9) · [使用指南](USER-GUIDE.md) · [返回介绍](README.md)
+[打开 0.6.11 下载页](https://github.com/jxb412/yunqiao.me/releases/tag/v0.6.11) · [使用指南](USER-GUIDE.md) · [返回介绍](README.md)
 
 ## 获取安装文件
 
-打开 [0.6.9 发布页](https://github.com/jxb412/yunqiao.me/releases/tag/v0.6.9)，展开 **Assets**，选择与你的系统一致的文件；也可直接点击下表下载。这里提供可使用的安装文件，通常无需登录 GitHub。不要将 GitHub 自动生成的 **Source code** 压缩包当作客户端安装包。
+打开 [0.6.11 发布页](https://github.com/jxb412/yunqiao.me/releases/tag/v0.6.11)，展开 **Assets**，选择与你的系统一致的文件；也可直接点击下表下载。这里提供可使用的安装文件，通常无需登录 GitHub。不要将 GitHub 自动生成的 **Source code** 压缩包当作客户端安装包。
 
-| 系统与用途 | 0.6.9 安装文件 |
+| 系统与用途 | 0.6.11 安装文件 |
 | --- | --- |
-| Windows x64 安装版 | [YunQiaoAI-0.6.9-win-x64-setup.exe](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.9/YunQiaoAI-0.6.9-win-x64-setup.exe) |
-| Windows x64 免安装版 | [YunQiaoAI-0.6.9-win-x64-portable.exe](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.9/YunQiaoAI-0.6.9-win-x64-portable.exe) |
-| Windows x64 完整解压版 | [YunQiaoAI-0.6.9-win-x64.zip](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.9/YunQiaoAI-0.6.9-win-x64.zip) |
-| macOS Apple M 系列 | [YunQiaoAI-0.6.9-mac-arm64.dmg](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.9/YunQiaoAI-0.6.9-mac-arm64.dmg) |
-| macOS Intel | [YunQiaoAI-0.6.9-mac-x64.dmg](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.9/YunQiaoAI-0.6.9-mac-x64.dmg) |
+| Windows x64 安装版 | [YunQiaoAI-0.6.11-win-x64-setup.exe](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.11/YunQiaoAI-0.6.11-win-x64-setup.exe) |
+| Windows x64 免安装版 | [YunQiaoAI-0.6.11-win-x64-portable.exe](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.11/YunQiaoAI-0.6.11-win-x64-portable.exe) |
+| Windows x64 完整解压版 | [YunQiaoAI-0.6.11-win-x64.zip](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.11/YunQiaoAI-0.6.11-win-x64.zip) |
+| macOS Apple M 系列 | [YunQiaoAI-0.6.11-mac-arm64.dmg](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.11/YunQiaoAI-0.6.11-mac-arm64.dmg) |
+| macOS Intel | [YunQiaoAI-0.6.11-mac-x64.dmg](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.11/YunQiaoAI-0.6.11-mac-x64.dmg) |
 
-更新内容见 [0.6.9 版本说明](docs/RELEASE-0.6.9.md)。
+更新内容见 [0.6.11 版本说明](docs/RELEASE-0.6.11.md)。
 
-macOS 同时提供 [Apple Silicon ZIP](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.9/YunQiaoAI-0.6.9-mac-arm64.zip) 和 [Intel ZIP](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.9/YunQiaoAI-0.6.9-mac-x64.zip)，可完整解压后将 `YunQiaoAI.app` 放入“应用程序”；一般优先使用 DMG。[SHA256SUMS.txt](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.9/SHA256SUMS.txt) 可用于核对下载文件是否完整。
+macOS 同时提供 [Apple Silicon ZIP](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.11/YunQiaoAI-0.6.11-mac-arm64.zip) 和 [Intel ZIP](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.11/YunQiaoAI-0.6.11-mac-x64.zip)，可完整解压后将 `YunQiaoAI.app` 放入“应用程序”；一般优先使用 DMG。[SHA256SUMS.txt](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.11/SHA256SUMS.txt) 可用于核对下载文件是否完整。
 
 需要体验开发构建时，打开 [GitHub Actions 的 build 页面](https://github.com/jxb412/yunqiao.me/actions/workflows/build.yml)，选择对应平台已成功完成的构建，在 **Artifacts** 中下载；通常需要登录 GitHub，下载后先解压外层压缩包。开发构建可能包含尚未正式发布的改动。
 
@@ -107,7 +107,7 @@ xattr -cr "/Applications/YunQiaoAI.app"
 打开 PowerShell，进入准备存放项目的目录，依次执行：
 
 ```powershell
-git clone --branch v0.6.9 --depth 1 https://github.com/jxb412/yunqiao.me.git yunqiao.me
+git clone --branch v0.6.11 --depth 1 https://github.com/jxb412/yunqiao.me.git yunqiao.me
 cd yunqiao.me
 npm.cmd install --include=dev
 npm.cmd start
@@ -120,7 +120,7 @@ npm.cmd start
 打开“终端”，进入准备存放项目的目录，依次执行：
 
 ```bash
-git clone --branch v0.6.9 --depth 1 https://github.com/jxb412/yunqiao.me.git yunqiao.me
+git clone --branch v0.6.11 --depth 1 https://github.com/jxb412/yunqiao.me.git yunqiao.me
 cd yunqiao.me
 npm install --include=dev
 npm start
@@ -139,10 +139,12 @@ npm start
 1. 打开 **客户端接入**，找到要配置的客户端，点击 **开始配置**。
 2. 在向导中添加供应商，填写服务商提供的 API 地址和 API Key，再选择模型。
 3. 选择 **本地网关** 或符合条件的 **直连供应商**。
-4. 测试后点击 **预览配置**，核对实际路径和计划修改。ChatGPT / Codex 配置会同时显示历史处理数量；保存工作并完全退出相关桌面客户端和 CLI 后，有历史时点击 **备份历史并应用配置**，没有历史时点击 **备份并应用配置**。其他自动配置客户端按预览应用；手动接入按专属指南完成设置。
+4. 测试后点击 **预览配置**，核对实际路径和计划修改，点击 **保存配置**。ChatGPT / Codex 正在运行也可先保存配置，历史是否处理会单独说明；其他自动配置客户端按预览应用，手动接入按专属指南完成设置。
 5. 保存工作后点击 **重新启动客户端** 并确认，云桥会强制结束该桌面客户端（包括托盘和后台运行），确认退出后再打开。命令行工具使用 **新终端打开**，原终端和会话保留。使用网关时请保持云桥运行。
 
-ChatGPT / Codex 配置会先备份历史，再修复可处理的会话；缺少原文件的索引保留，格式错误、重复或归属不明等问题记录跳过，客户端配置继续完成。界面分别列出会话文件和数据库的备份数量，以及修复、保留、跳过的结果。备份失败时停止写入；提示客户端仍在运行时，退出后点击 **已退出，重新应用**。完整步骤见[历史迁移指南](docs/HISTORY-PROVIDER-MIGRATION.md)。
+ChatGPT / Codex 会先保存配置，再单独尝试历史备份与修复。客户端运行中或历史遇到问题时，历史保持原样并说明原因；已保存的配置可在重启后使用。配置文件自身无法备份或写入时仍会提示失败，不会把历史待处理显示为已迁移。旧会话提示供应商不存在时，请升级后重新选择有效供应商和模型、保存配置，再重启客户端。自动历史修复完成后，桌面旧对话通过兼容连接使用所选供应商和模型，即使会话记录仍保留旧模型名。网关或共存模式使用期间需保持云桥运行；直连会话保留旧模型名，能否继续由上游支持情况决定。接口无权限、模型不可用或缺失聊天正文仍需分别处理。完整步骤见[历史迁移指南](docs/HISTORY-PROVIDER-MIGRATION.md)。
+
+要在 Codex CLI 继续旧对话，进入 **历史会话**，选择记录并点击 **复制恢复命令**；Windows 使用 PowerShell，macOS 使用终端粘贴执行。命令会自动指定该会话的供应商，避免与新会话的默认供应商冲突。
 
 手动接入使用本地网关参数，云桥不自动修改或备份该客户端的配置。示例中的令牌是占位文字；电脑端的 **复制真实令牌** 或 **复制可用配置（含令牌）** 才会复制可用凭据。已有配置请先自行备份、再合并。插件市场的连接和启用步骤见[使用指南](USER-GUIDE.md)。
 
