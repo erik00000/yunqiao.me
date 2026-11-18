@@ -45,6 +45,7 @@ try {
   const bundle = path.join(scratch, 'core.cjs');
   await build({ stdin: { contents: [
     "export * from './src/core/agents/adapters.ts';",
+    "export * from './src/core/agents/historyProviders.ts';",
     "export * from './src/core/store/index.ts';",
     "export * from './src/core/actions.ts';",
     "export * from './src/core/gateway/coexist.ts';",
@@ -81,7 +82,7 @@ try {
     assert.equal(parsed.profiles['work.v2'].model_provider, 'openai'); assert.deepEqual(parsed.profiles['work.v2'].permissions, ['read', 'write']); assert.equal(parsed.mcp_servers.keep.command, 'fixture');
     assert.equal(parsed.forced_login_method, undefined); assert.equal(parsed.profiles['work.v2'].openai_base_url, undefined); assert.equal(parsed.profiles['work.v2'].model_catalog_json, undefined);
     assert.equal(parsed.notes, '\n[model_providers.aurora]\nbase_url = "fake-table-value"\n'.slice(1)); assert.equal(parsed.authorization, 'multiline-private-first\nmultiline-private-second\n'); assert(read(configFile).includes('# keep this comment'));
-    assert.deepEqual(Object.keys(parsed.model_providers).sort(), ['old-provider', 'profile-old']);
+    assert.deepEqual(Object.keys(parsed.model_providers).sort(), ['old-provider', 'profile-old', api.getManagedHistoryTarget(read(configFile))].sort());
     for (const alias of Object.values(parsed.model_providers)) {
       assert.equal(alias.base_url, 'http://127.0.0.1:3425/codex-coexist/history/' + Buffer.from(supplier.id + '/relay-model').toString('base64url') + '/v1');
       assert.equal(alias.name, '云桥历史兼容'); assert.equal(alias.requires_openai_auth, true); assert.equal(alias.experimental_bearer_token, undefined); assert.equal(alias.env_key, undefined);

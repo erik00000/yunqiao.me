@@ -48,6 +48,8 @@ try {
       const plan = api.codexPlan({ ...context, historyProviderIds: ids }); currentBackup = api.applyPlan('codex-cli', plan, currentBackup);
       originalBackup ||= json(currentBackup).files[0].backup; assert.equal(json(currentBackup).files[0].backup, originalBackup);
       const config = parse(read(f.file)), encoded = Buffer.from(`${context.provider.id}/${context.model}`).toString('base64url');
+      const historyTarget = api.getManagedHistoryTarget(read(f.file)); assert(historyTarget); assert.notEqual(historyTarget, config.model_provider);
+      assert.deepEqual(config.model_providers[historyTarget], config.model_providers[ids[0]]);
       for (const id of ids) {
         const alias = config.model_providers[id]; assert(alias, id); assert.equal(alias.wire_api, 'responses');
         if (context.authMode === 'coexist') { assert.equal(alias.base_url, `${context.gatewayUrl}/codex-coexist/history/${encoded}/v1`); assert.equal(alias.requires_openai_auth, true); assert.equal(alias.experimental_bearer_token, undefined); assert.equal(alias.env_key, undefined); }
@@ -61,6 +63,7 @@ try {
     }
     const prior = parse(read(f.file)), unsupportedAlias = api.codexPlan({ ...f.context, model: 'x'.repeat(401), historyProviderIds: ids })[0].after;
     const unsupportedConfig = parse(unsupportedAlias); assert.equal(unsupportedConfig.model, `${f.provider.id}/${'x'.repeat(401)}`);
+    assert.equal(api.getManagedHistoryTarget(unsupportedAlias), undefined, 'an unavailable new binding cannot retain a trusted old automatic target');
     for (const id of ids) assert.deepEqual(unsupportedConfig.model_providers[id], prior.model_providers[id], 'optional route failure preserves previous aliases');
     api.restorePlan('codex-cli', currentBackup, [f.file]); assert.equal(read(f.file), f.before);
   });
@@ -68,8 +71,24 @@ try {
     const before = 'profile="work"\nmodel_provider="legacy"\n[model_providers.legacy]\nname="User owned"\nbase_url="https://old.invalid/v1"\n[profiles.work]\nmodel_provider="profile-only"\n[profiles.work.model_providers."profile-only"]\nname="Profile user provider"\nbase_url="https://profile.invalid/v1"\n';
     const f = fixture('user-tables', before), planned = api.codexPlan({ ...f.context, historyProviderIds: ['legacy', 'profile-only', 'openai', 'ollama', 'lmstudio', 'owned'] })[0].after, parsed = parse(planned), original = parse(before);
     assert.deepEqual(parsed.model_providers.legacy, original.model_providers.legacy); assert.deepEqual(parsed.profiles.work.model_providers, original.profiles.work.model_providers); assert.equal(parsed.model_providers['profile-only'], undefined);
-    const changed = planned.replace('name = "云桥历史兼容"', 'name = "Customer edited alias"'); write(f.file, changed);
+    const changed = planned.replaceAll('name = "云桥历史兼容"', 'name = "Customer edited alias"'); write(f.file, changed);
     const later = parse(api.codexPlan({ ...f.context, model: 'another', historyProviderIds: ['owned'] })[0].after); assert.deepEqual(later.model_providers.owned, parse(changed).model_providers.owned);
+  });
+  await check('Automatic history targets avoid user table collisions and require intact purpose hash and active-profile identity', async () => {
+    for (const profileOverride of [false, true]) {
+      const before = 'model_provider="legacy"\n' + (profileOverride ? 'profile="work"\n[profiles.work.model_providers.yunqiao-history]\n' : '[model_providers.yunqiao-history]\n') + 'name="User table"\nbase_url="https://customer.invalid/v1"\n';
+      const f = fixture('collision-' + profileOverride, before), first = api.codexPlan({ ...f.context, historyProviderIds: [] })[0].after, target = api.getManagedHistoryTarget(first), config = parse(first);
+      assert.equal(target, 'yunqiao-history-2'); assert.equal(config.model_provider, 'yunqiao');
+      assert.deepEqual(profileOverride ? config.profiles.work.model_providers['yunqiao-history'] : config.model_providers['yunqiao-history'], profileOverride ? parse(before).profiles.work.model_providers['yunqiao-history'] : parse(before).model_providers['yunqiao-history']);
+      write(f.file, first); const switched = api.codexPlan({ ...f.context, authMode: 'coexist', historyProviderIds: [] })[0].after;
+      assert.equal(api.getManagedHistoryTarget(switched), target); assert.equal(parse(switched).model_provider, 'openai');
+      assert.equal(api.getManagedHistoryTarget(switched.replace('# yunqiao-history-target:v1', '# customer edited target')), undefined);
+      const shadowed = switched + `\n[profiles.work.model_providers."${target}"]\nname="Customer override"\nbase_url="https://override.invalid/v1"\n`;
+      const shadowedActive = profileOverride ? shadowed : 'profile="work"\n' + shadowed;
+      assert.equal(api.getManagedHistoryTarget(shadowedActive), undefined);
+      write(f.file, shadowedActive); const afterShadow = api.codexPlan({ ...f.context, historyProviderIds: [] })[0].after;
+      assert.equal(api.getManagedHistoryTarget(afterShadow), 'yunqiao-history-3'); assert.equal(parse(afterShadow).profiles.work.model_providers[target].name, 'Customer override');
+    }
   });
   await check('Marker-looking text inside multiline notes cannot claim ownership of an independent provider', async () => {
     const f = fixture('marker-notes'), generated = api.codexPlan({ ...f.context, historyProviderIds: ['legacy'] })[0].after;
@@ -79,8 +98,11 @@ try {
   });
   await check('Optional aliases cannot block valid coexistence with inline providers and multiline quote endings keep owned aliases updatable', async () => {
     const before = 'model_provider="old-inline"\nmodel_providers={independent={name="Keep",base_url="https://customer.invalid/v1"}}\n';
-    const f = fixture('inline-coexist', before), result = await api.runAction(f.deps, 'agent.connect', { ...f.payload, authMode: 'coexist' });
+    const f = fixture('inline-coexist', before); f.deps.historyContext.blockingProcesses = async () => [];
+    const dbPath = path.join(f.home, 'state_5.sqlite'); database(dbPath, 'CREATE TABLE threads(model_provider TEXT)', ['old-inline']); const databaseBefore = fs.readFileSync(dbPath);
+    const result = await api.runAction(f.deps, 'agent.connect', { ...f.payload, authMode: 'coexist' });
     assert(result.ok, result.message); const config = parse(read(f.file)); assert.equal(config.model_provider, 'openai');
+    assert.equal(result.history.status, 'deferred'); assert.equal(result.history.code, 'CLIENT_HISTORY_TARGET_UNAVAILABLE'); assert.deepEqual(fs.readFileSync(dbPath), databaseBefore);
     assert.deepEqual(config.model_providers, parse(before).model_providers); assert.equal(read(f.auth), f.authBytes);
     const restored = await api.runAction(f.deps, 'agent.disconnect', { agentId: 'codex-cli' }); assert(restored.ok, restored.message); assert.equal(read(f.file), before);
     write(f.file, 'model_provider="legacy"\nnotes="""A quoted ending""""\n');

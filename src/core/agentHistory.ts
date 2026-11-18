@@ -5,6 +5,7 @@ import type { AuroraStore } from './store/index.js';
 import type { AgentState } from './store/types.js';
 import { atomicWrite, readText, digest, type PlannedFile } from './agents/configFiles.js';
 import { detectReset } from './agents/adapters.js';
+import { getManagedHistoryTarget } from './agents/historyProviders.js';
 import { createHistoryRepairService } from './historyRepair.js';
 import { historyContext, historyLocation, normalizeHistoryContext, assertClientsStopped, type HistoryContext } from './historyRepairIO.js';
 import { recoverClientHistorySwitches, runClientHistorySwitch, type ClientHistorySwitchSnapshot, type ClientHistoryBackup } from './clientHistorySwitch.js';
@@ -35,19 +36,21 @@ const trusted = (configurationText?: string, onPrepared?: (info: ClientHistoryBa
 });
 
 /** Only the action layer supplies the unredacted adapter plan. No renderer options are trusted. */
-export async function prepareClientHistory(deps: Deps, configurationText: string, inspect = true) {
-  const deferred = (message: string) => ({ ok: true as const, revision: '', configurationText, history: {
+export async function prepareClientHistory(deps: Deps, configurationText: string, inspect = true, restore = false) {
+  const historyTargetProvider = restore ? undefined : getManagedHistoryTarget(configurationText), historyTargetRequired = !restore;
+  const deferred = (message: string) => ({ ok: true as const, revision: '', configurationText, historyTargetProvider, historyTargetRequired, history: {
     status: 'deferred' as 'pending' | 'deferred', total: 0, repairable: 0, unchanged: 0, blocked: 0, preserved: 0, skipped: 0,
     filesToBackUp: 0, indexDatabasesToBackUp: 0, blockedReasons: [] as string[], skippedReasons: [] as string[], backupRequired: false, requiresClientExit: false, message, warnings: [] as string[],
   } });
+  if (historyTargetRequired && !historyTargetProvider) return deferred('可直接保存配置；历史兼容连接暂未就绪，已有历史保持不变。');
   if (!inspect) return deferred('先保存客户端配置，随后尝试处理历史。');
   try {
   const ctx = clientHistoryContext(deps); await assertClientsStopped(ctx);
-  const plan = await createHistoryRepairService(ctx, trusted(configurationText)).preview({ scope: 'all', fixPaths: true });
+  const plan = await createHistoryRepairService(ctx, trusted(configurationText)).preview({ scope: 'all', fixPaths: true, ...(historyTargetProvider ? { targetProvider: historyTargetProvider } : {}) });
   if (!plan.ok || !('summary' in plan)) return deferred('可直接保存配置；历史暂时无法检查，已有历史保持不变。');
   const summary = plan.summary;
   const backupRequired = summary.scanned > 0 || plan.dbPaths.length > 0;
-  return { ok: true as const, revision: plan.revision, configurationText, history: {
+  return { ok: true as const, revision: plan.revision, configurationText, historyTargetProvider, historyTargetRequired, history: {
     status: 'pending' as 'pending' | 'deferred',
     total: summary.scanned, repairable: summary.repairable, unchanged: summary.unchanged, blocked: summary.blocked, preserved: summary.preserved, skipped: summary.skipped,
     filesToBackUp: summary.filesToBackUp, indexDatabasesToBackUp: summary.indexDatabasesToBackUp,
@@ -113,8 +116,11 @@ function getConfigurationPath(): string {
   const home = process.env.AURORA_CLIENT_HOME ? path.join(process.env.AURORA_CLIENT_HOME, '.codex') : process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
   return path.join(home, 'config.toml');
 }
-async function optionalHistory(deps: Deps, configurationText: string) {
+async function optionalHistory(deps: Deps, prepared: PreparedClientHistory) {
+  const { configurationText, historyTargetProvider, historyTargetRequired } = prepared;
   const base = { backedUp: 0, indexBackedUp: 0, repaired: 0, unchanged: 0, preserved: 0, skipped: 0, skippedReasons: [] as string[], code: undefined as string | undefined, backupId: undefined as string | undefined, backupPath: undefined as string | undefined };
+  if (historyTargetRequired && (!historyTargetProvider || getManagedHistoryTarget(configurationText) !== historyTargetProvider))
+    return { ...base, status: 'deferred' as const, code: 'CLIENT_HISTORY_TARGET_UNAVAILABLE', message: '配置已保存；历史兼容连接暂未就绪，已有历史保持不变。' };
   let ctx: HistoryContext;
   try { ctx = clientHistoryContext(deps); await assertClientsStopped(ctx); }
   catch (error) { const running = /检测到：/.test(String((error as Error).message)); return { ...base, status: 'deferred' as const, code: running ? 'CLIENT_HISTORY_BUSY' : 'CLIENT_HISTORY_DEFERRED', message: running ? '配置已保存；客户端正在运行，历史保持不变，退出后可再处理。' : '配置已保存；历史暂不可读取，已保留原状，可稍后重试。' }; }
@@ -130,9 +136,10 @@ async function optionalHistory(deps: Deps, configurationText: string) {
       }
     }
     if (readText(path.join(ctx.home, 'config.toml')) !== configurationText) return { ...base, status: 'deferred' as const, message: '配置已保存；客户端随后更新了配置，历史保持不变。' };
-    const service = createHistoryRepairService(ctx, trusted(configurationText)), plan = await service.preview({ scope: 'all', fixPaths: true });
+    const input = { scope: 'all' as const, fixPaths: true, ...(historyTargetProvider ? { targetProvider: historyTargetProvider } : {}) };
+    const service = createHistoryRepairService(ctx, trusted(configurationText)), plan = await service.preview(input);
     if (!plan.ok || !('summary' in plan)) return { ...base, status: 'failed' as const, message: '配置已保存；历史检查暂未完成，可稍后重新处理历史。' };
-    const result = await service.apply({ scope: 'all', fixPaths: true, revision: plan.revision });
+    const result = await service.apply({ ...input, revision: plan.revision });
     if (!result.ok) return { ...base, status: 'failed' as const, backupId: result.backupId, backupPath: result.backup, message: '配置已保存；历史备份或修复暂未完成，可稍后在历史记录中重试。' };
     return { ...base, status: 'completed' as const, backedUp: result.backedUp, indexBackedUp: result.indexBackedUp, repaired: result.updated, unchanged: plan.summary.unchanged, preserved: result.preserved, skipped: result.skipped,
       skippedReasons: [...new Set([...plan.items.filter(item => item.status === 'skipped').map(item => item.reason || '已备份并跳过'), ...plan.backupOnlyDatabases.map(entry => entry.reason)])].slice(0, 5), backupId: result.backupId, backupPath: result.backup, message: result.message };
@@ -173,7 +180,7 @@ export async function applyClientHistory<T extends { ok: boolean; message: strin
   if (!switched.ok) return { ok: false, code: switched.code, message: switched.message,
     ...(committed?.backup ? { backup: committed.backup } : {}), rolledBack: switched.rolledBack,
     recoveryRequired: switched.recoveryRequired, ...(switched.journalPath ? { recoveryPath: switched.journalPath } : {}) };
-  return { ...switched.result!, message: '客户端配置已保存，重新启动客户端后生效。', history: await optionalHistory(deps, prepared.configurationText) };
+  return { ...switched.result!, message: '客户端配置已保存，重新启动客户端后生效。', history: await optionalHistory(deps, prepared) };
 }
 
 export function historyPreviewRevision(clientRevision: string | undefined, prepared: PreparedClientHistory, connectionRevision: string): string {

@@ -71,7 +71,8 @@ export function discoverHistoryProviderIds(configText: string, home: string, sql
   return [...ids].sort();
 }
 
-interface ManagedBlock { id: string; start: number; end: number; text: string }
+const HISTORY_TARGET_MARKER = '# yunqiao-history-target:v1\n';
+interface ManagedBlock { id: string; start: number; end: number; text: string; body: string; target: boolean }
 /** Locate real comment lines, excluding marker-looking text inside TOML strings. */
 function commentOffsets(text: string): Set<number> {
   const offsets = new Set<number>(); let quote = '', multiline = false, lineStart = true;
@@ -100,10 +101,30 @@ function managedBlocks(text: string, current: any): ManagedBlock[] {
       const id = Buffer.from(match[1], 'base64url').toString('utf8'); if (!validHistoryProviderId(id) || hash(match[3]) !== match[2]) continue;
       const parsed: any = parse(match[3]), provider = parsed.model_providers?.[id];
       if (!object(provider) || JSON.stringify(current.model_providers?.[id]) !== JSON.stringify(provider)) continue;
-      result.push({ id, start: match.index!, end: match.index! + match[0].length, text: match[0] });
+      result.push({ id, start: match.index!, end: match.index! + match[0].length, text: match[0], body: match[3], target: match[3].startsWith(HISTORY_TARGET_MARKER) });
     } catch { /* A manually edited alias becomes ordinary user configuration. */ }
   }
   return result;
+}
+/** Only a purpose-marked, unchanged managed table can receive automatic history. */
+export function getManagedHistoryTarget(text: string): string | undefined {
+  try {
+    const current: any = parse(text.replace(/^\uFEFF/, '')), profile = activeProfile(current);
+    return managedBlocks(text, current).find(block => block.target && !Object.hasOwn(profile.model_providers || {}, block.id))?.id;
+  } catch { return undefined; }
+}
+/** Keep working aliases on optional failure, but never advertise an old binding as the newly chosen history target. */
+export function clearManagedHistoryTarget(text: string): string {
+  try {
+    const current: any = parse(text.replace(/^\uFEFF/, ''));
+    let result = text;
+    for (const block of managedBlocks(text, current).filter(block => block.target).sort((a, b) => b.start - a.start)) {
+      const body = block.body.slice(HISTORY_TARGET_MARKER.length), encoded = Buffer.from(block.id, 'utf8').toString('base64url');
+      const replacement = `# yunqiao-history-provider:v1:${encoded}:${hash(body)}\n${body}# yunqiao-history-provider:end:${encoded}\n`;
+      result = result.slice(0, block.start) + replacement + result.slice(block.end);
+    }
+    return result;
+  } catch { return text; }
 }
 /** Remove only intact owned blocks before editing other TOML tables; this keeps
  * newly inserted root/profile keys from being mistaken for owned alias bytes. */
@@ -116,15 +137,24 @@ export function detachManagedHistoryProviders(text: string): { text: string; ids
   } catch { return { text, ids: [], blocks: [] }; }
 }
 /** Missing exact provider IDs remain resolvable even when native history repair is deferred. */
-export function withHistoryProviderAliases(text: string, ids: readonly string[], transport: Record<string, string | number | boolean>): string {
+export function withHistoryProviderAliases(text: string, ids: readonly string[], transport: Record<string, string | number | boolean>, automaticTarget = false): string {
   try {
     const current: any = parse(text), profile = activeProfile(current), managed = managedBlocks(text, current), changes: ManagedBlock[] = [], additions: string[] = [];
-    const candidates = [...new Set([...managed.map(block => block.id), ...ids.filter(validHistoryProviderId)])].slice(0, MAX_IDS);
+    let targetId: string | undefined;
+    if (automaticTarget) {
+      targetId = managed.find(block => block.target && !Object.hasOwn(profile.model_providers || {}, block.id))?.id;
+      for (let suffix = 1; !targetId && suffix <= 256; suffix++) {
+        const candidate = 'yunqiao-history' + (suffix === 1 ? '' : '-' + suffix);
+        if (!Object.hasOwn(profile.model_providers || {}, candidate) && (!Object.hasOwn(current.model_providers || {}, candidate) || managed.some(block => block.id === candidate))) targetId = candidate;
+      }
+      if (!targetId) return clearManagedHistoryTarget(text);
+    }
+    const candidates = [...new Set([...(targetId ? [targetId] : []), ...managed.map(block => block.id), ...ids.filter(validHistoryProviderId)])].slice(0, MAX_IDS + (targetId ? 1 : 0));
     for (const id of candidates) {
       if (Object.hasOwn(profile.model_providers || {}, id)) continue;
       const block = managed.find(entry => entry.id === id);
       if (!block && Object.hasOwn(current.model_providers || {}, id)) continue;
-      const encoded = Buffer.from(id, 'utf8').toString('base64url'), body = stringify({ model_providers: { [id]: transport } }).trimEnd() + '\n';
+      const encoded = Buffer.from(id, 'utf8').toString('base64url'), body = (id === targetId ? HISTORY_TARGET_MARKER : '') + stringify({ model_providers: { [id]: transport } }).trimEnd() + '\n';
       const replacement = `# yunqiao-history-provider:v1:${encoded}:${hash(body)}\n${body}# yunqiao-history-provider:end:${encoded}\n`;
       if (block) changes.push({ ...block, text: replacement }); else additions.push(replacement);
     }
@@ -132,5 +162,5 @@ export function withHistoryProviderAliases(text: string, ids: readonly string[],
     for (const change of changes.sort((a, b) => b.start - a.start)) result = result.slice(0, change.start) + change.text + result.slice(change.end);
     if (additions.length) result = result.trimEnd() + '\n\n' + additions.join('\n');
     parse(result); return result;
-  } catch { return text; }
+  } catch { return automaticTarget ? clearManagedHistoryTarget(text) : text; }
 }

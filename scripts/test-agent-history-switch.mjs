@@ -29,11 +29,14 @@ try {
   await build({ stdin: { contents: [
     "export * from './src/core/store/index.ts';", "export * from './src/core/actions.ts';",
     "export * from './src/core/agents/adapters.ts';", "export * from './src/core/agents/configFiles.ts';",
+    "export * from './src/core/agents/historyProviders.ts';",
   ].join('\n'), resolveDir: workspace, loader: 'ts' }, outfile: bundle, bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent' });
   for (const [input, output] of [['src/core/readOnlyWorker.ts', 'read-only-worker.cjs'], ['src/core/agents/detectionWorker.ts', 'detection-worker.cjs']]) {
     await build({ entryPoints: [path.join(workspace, input)], outfile: path.join(scratch, output), bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent' });
   }
   const api = createRequire(import.meta.url)(bundle);
+  const historyTarget = content => api.getManagedHistoryTarget(content) || effective(content);
+  const plannedTarget = f => api.getManagedHistoryTarget(api.codexPlan({ provider: f.provider, model: f.payload.model, mode: 'gateway', authMode: 'api', gatewayUrl: f.deps.gatewayUrl(), token: f.store.getSettings().gatewayToken })[0].after);
 
   function fixture(name, original = originalConfig, options = {}) {
     const root = path.join(scratch, name), client = path.join(root, 'client'), home = path.join(client, '.codex');
@@ -81,7 +84,7 @@ try {
   const snapshot = f => ({ files: filesSnapshot([f.config, f.auth, f.catalog, ...f.sessions.map(s => s.file)]), rows: f.rows(), agents: JSON.stringify(f.store.listAgents()), agentFiles: filesSnapshot([path.join(f.store.dir, 'agents.json')]) });
   const assertSnapshot = (f, before) => { assertFiles(before.files); assert.deepEqual(f.rows(), before.rows); assert.equal(JSON.stringify(f.store.listAgents()), before.agents); assertFiles(before.agentFiles); };
   const noSecrets = result => { const text = JSON.stringify(result); for (const secret of [fault, 'fixture-private-refresh', 'fixture-private-gateway-token', 'fixture-private-provider-key', 'fixture-original-provider-key', 'fixture-external-secret']) assert(!text.includes(secret), 'Result disclosed fixture credentials or storage error'); };
-  function aligned(f, target = effective(read(f.config))) {
+  function aligned(f, target = historyTarget(read(f.config))) {
     for (const session of f.sessions) {
       const content = read(session.file), prior = session.content.split('\r\n'), after = content.split('\r\n');
       assert.deepEqual(after.slice(1), prior.slice(1), 'Conversation body or encrypted bytes changed');
@@ -116,7 +119,7 @@ try {
   }
 
   await check('First configuration automatically backs up all active/archive/child histories and migrates metadata and local indexes', async () => {
-    const f = fixture('first'), empty = await f.preview(), target = effective(empty.files.find(file => file.path === f.config).after);
+    const f = fixture('first'), empty = await f.preview(), target = plannedTarget(f);
     const parent = f.add(1), child = f.add(2, { parent: parent.id, provider: 'child-region' }); f.add(3, { archived: true, provider: 'archived-region' }); f.add(4, { provider: target });
     const before = snapshot(f), preview = await f.preview();
     assert.equal(preview.history.total, 4); assert.equal(preview.history.repairable, 3); assert.equal(preview.history.unchanged, 1); assert.equal(preview.history.blocked, 0); assert.equal(preview.history.backupRequired, true);
@@ -221,7 +224,7 @@ try {
   });
 
   await check('Already aligned histories still receive full backups on model changes without changing source bytes', async () => {
-    const f = fixture('aligned'), plan = await f.preview(), target = effective(plan.files.find(file => file.path === f.config).after); f.add(10, { provider: target });
+    const f = fixture('aligned'), plan = await f.preview(), target = plannedTarget(f); f.add(10, { provider: target });
     const first = await f.connect(); assert(first.ok, first.message);
     const before = snapshot(f), result = await f.connect({ model: 'model-two' }); assert(result.ok, result.message);
     assert.equal(result.history.repaired, 0); assert.equal(result.history.unchanged, 1); assert.equal(result.history.backedUp, 1);
@@ -349,7 +352,7 @@ try {
     const f = fixture('during-backup-' + change), session = f.add(66), alignedPlan = await f.preview();
     // An unchanged history is still copied into the full snapshot, providing a
     // deterministic pause inside backup without replacing a production service.
-    f.add(67, { provider: effective(alignedPlan.files.find(file => file.path === f.config).after) });
+    f.add(67, { provider: plannedTarget(f) });
     const before = snapshot(f), preview = await f.preview(), originalCopy = fs.promises.copyFile;
     let changed = false, changedBytes;
     const changedFile = path.join(f.store.dir, change === 'provider' ? 'providers.json' : 'settings.json');
@@ -368,7 +371,7 @@ try {
     finally { fs.promises.copyFile = originalCopy; }
     assert(changed, 'Mutation must occur inside full history backup'); assert(result.ok, result.message); assert.equal(effective(read(f.config)), 'yunqiao'); assert.equal(read(changedFile), changedBytes);
     assert(!JSON.stringify(result).includes('fixture-new-private-key')); assert(!JSON.stringify(result).includes('fixture-new-gateway-token'));
-    assert.equal(f.rows().threads.find(row => row.id === session.id).model_provider, 'yunqiao');
+    assert.equal(f.rows().threads.find(row => row.id === session.id).model_provider, historyTarget(read(f.config)));
   });
 
   await check('State-commit failure restores complete history, config, catalog and all shared connection records', async () => {
@@ -376,7 +379,7 @@ try {
     const before = snapshot(f);
     await failState(f, () => f.connect({ authMode: 'coexist' }), states => assert.deepEqual(states.map(state => state.id), aliases));
     assertSnapshot(f, before); assert.equal(read(f.auth), f.authBytes);
-    const retry = await f.connect({ authMode: 'coexist' }); assert(retry.ok, retry.message); aligned(f, 'openai');
+    const retry = await f.connect({ authMode: 'coexist' }); assert(retry.ok, retry.message); aligned(f);
   });
 
   await check('Failed repeated switch and failed disconnect both restore the immediately preceding config and history', async () => {

@@ -649,7 +649,7 @@ export async function runAction(deps: ActionDeps, action: string, payload: any):
           const reviewedConnectionRevision = clientConnectionRevision(deps);
           const original = restorePlanSnapshot('codex-cli', current.backupPath, adapter.configPaths());
           const files = original.files;
-          const history = await prepareClientHistory(deps, files[0].after, false);
+          const history = await prepareClientHistory(deps, files[0].after, false, true);
           return await applyClientHistory(deps, {
               prepared: history, files,
               revalidate: () => {

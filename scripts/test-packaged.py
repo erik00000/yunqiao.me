@@ -57,7 +57,7 @@ def packaged_history_fixture(home):
     rollout = home / 'sessions' / f'rollout-{existing_id}.jsonl'
     missing = home / 'sessions' / f'rollout-{missing_id}.jsonl'
     rollout.parent.mkdir(parents=True, exist_ok=True)
-    records = [json.dumps({'type': 'session_meta', 'payload': {'id': existing_id, 'model_provider': 'retired-provider', 'source': 'cli', 'cwd': str(home)}}, separators=(',', ':')),
+    records = [json.dumps({'type': 'session_meta', 'payload': {'id': existing_id, 'model_provider': 'retired-provider', 'model': 'retired-model', 'source': 'cli', 'cwd': str(home)}}, separators=(',', ':')),
                ' {"type":"event_msg","payload":{"type":"user_message","message":"keep conversation bytes"}} ',
                '{"type":"response_item","payload":{"encrypted_content":"fixture-opaque-history"}}']
     rollout.write_bytes(('\r\n'.join(records) + '\r\n').encode('utf-8'))
@@ -494,7 +494,6 @@ def main():
                 expect(history_outcome).to_contain_text('已修复 1 个会话，0 个无需修改')
                 expect(history_outcome).to_contain_text('1 条未找到原文件的会话索引已随数据库备份并原样保留')
                 expect(history_outcome).to_contain_text('4 个会话未修复，已完整备份并原样保留')
-                history_fixture['assert_provider']('yunqiao')
                 first_backups = page.evaluate("() => window.aurora.invoke('codex.repair.backups')")
                 assert first_backups['ok'] and len(first_backups['backups']) == 1, first_backups
                 first_backup = first_backups['backups'][0]
@@ -502,10 +501,21 @@ def main():
             configured = (clients / '.codex/config.toml').read_text(encoding='utf-8')
             assert 'model_provider = "yunqiao"' in configured and supplier['id'] + '/gpt-6.1-sol' in configured
             limits = tomllib.loads(configured)
+            target_blocks = re.findall(r'^# yunqiao-history-provider:v1:([A-Za-z0-9_-]+):([a-f0-9]{64})\n(.*?)^# yunqiao-history-provider:end:\1$', configured, re.MULTILINE | re.DOTALL)
+            owned_targets = []
+            for encoded_id, digest, body in target_blocks:
+                if body.startswith('# yunqiao-history-target:v1\n'):
+                    assert hashlib.sha256(body.encode('utf-8')).hexdigest() == digest
+                    owned_targets.append(base64.urlsafe_b64decode(encoded_id + '=' * (-len(encoded_id) % 4)).decode('utf-8'))
+            assert len(owned_targets) == 1, 'Automatic history needs one verified owned provider for the selected route'
+            history_target = owned_targets[0]
+            assert history_target != limits['model_provider'], 'Historical model routing must not alter the default client model menu'
+            if not args.expect_history_deferred:
+                history_fixture['assert_provider'](history_target)
             assert limits['model_context_window'] == 272000 and limits['model_auto_compact_token_limit'] == 244800
             def assert_legacy_provider_routes(configuration):
                 providers = configuration.get('model_providers', {})
-                for legacy_id in ['retired-provider', 'missing-region-0', 'missing-region-1']:
+                for legacy_id in ['retired-provider', 'missing-region-0', 'missing-region-1', history_target]:
                     alias = providers[legacy_id]
                     route = urllib.parse.urlparse(alias['base_url'])
                     assert route.hostname == '127.0.0.1' and route.path.startswith('/codex-history/')
@@ -534,7 +544,7 @@ def main():
             else:
                 assert_history_result(applied, 0, 1)
                 assert applied['history']['backupId'] != first_backup['id'], 'Reapply must create its own full history backup'
-                history_fixture['assert_provider']('yunqiao')
+                history_fixture['assert_provider'](history_target)
                 history_fixture['assert_backup'](applied['history']['backupPath'], before_reapply, 0)
             limits = tomllib.loads((clients / '.codex/config.toml').read_text(encoding='utf-8'))
             assert limits['model_context_window'] == 200000 and limits['model_auto_compact_token_limit'] == 180000
@@ -559,6 +569,7 @@ def main():
                 'version': args.version, 'platform': sys.platform, 'passed': True, 'count': len(checks), 'checks': checks,
                 'configurationAcceptance': 'native-apply-restore',
                 'legacyProviderAcceptance': 'missing-history-providers-bound-to-selected-route',
+                'automaticHistoryProviderAcceptance': 'dedicated-bound-provider',
                 'historyAcceptance': 'deferred-running-client' if args.expect_history_deferred else 'native-backup-repair-restore',
                 'crossDatabaseHistoryAcceptance': 'preserved-while-deferred' if args.expect_history_deferred else 'native-apply-restore',
                 'skippedHistoryAcceptance': 'preserved-while-deferred' if args.expect_history_deferred else 'native-apply-restore',

@@ -11,7 +11,7 @@ import { CLAUDE_DESKTOP_PROFILE, claudeDesktopConfigFiles, claudeDesktopRestoreP
 import { readOfficialCodexIdentity, codexCoexistBaseUrl, CODEX_COEXIST_BASE_PATH } from '../gateway/coexist.js';
 import { codexHistoryBasePath } from '../gateway/historyRoute.js';
 import { nativeDirectParameters } from './directConnection.js';
-import { discoverHistoryProviderIds, detachManagedHistoryProviders, withHistoryProviderAliases } from './historyProviders.js';
+import { discoverHistoryProviderIds, detachManagedHistoryProviders, withHistoryProviderAliases, clearManagedHistoryTarget } from './historyProviders.js';
 import { applyPlan, restorePlan, backupPlanFiles, jsonObject, planned, plannedJson, readText, patchToml, patchEnv, redactConfig, digest, type PlannedFile } from './configFiles.js';
 
 export interface ConnectContext {
@@ -288,8 +288,8 @@ export function codexPlan(ctx: ConnectContext): PlannedFile[] {
       : ctx.gatewayUrl.replace(/\/+$/, '') + codexHistoryBasePath(`${ctx.provider.id}/${ctx.model}`);
     const aliasTransport: Record<string, string | number | boolean> = coexist ? { name: '云桥历史兼容', base_url: aliasBaseUrl, wire_api: 'responses', requires_openai_auth: true, stream_idle_timeout_ms: 300000 }
       : { name: '云桥历史兼容', base_url: aliasBaseUrl, wire_api: 'responses', experimental_bearer_token: ep.apiKey, requires_openai_auth: false, stream_idle_timeout_ms: 300000 };
-    text = withHistoryProviderAliases(text, [...detached.ids, ...ids], aliasTransport);
-  } catch { /* Keep a valid primary configuration if optional evidence cannot be read. */ }
+    text = withHistoryProviderAliases(text, [...detached.ids, ...ids], aliasTransport, true);
+  } catch { text = clearManagedHistoryTarget(text); }
   return [{ ...planned(file, text), ...(ctx.permissionMode === 'full-access' ? { permissionScope: { kind: 'codex-execution-v1' as const, ...(typeof current.profile === 'string' ? { profile: current.profile } : {}) } } : {}) }];
 }
 const CODEX_CONTEXT_WARNING = '应用上下文窗口时，自动压缩阈值同步设为其 90%（向下取整，至少 1 Token），修改后需重启客户端。共存模式按模型目录分别设置，并清除旧的全局窗口和阈值覆盖，让切换模型时使用各自的设置。';

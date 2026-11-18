@@ -382,11 +382,25 @@ export function readSession(file: string, limit = 400): SessionMessage[] {
   return out;
 }
 
-export function resumeCommand(s: SessionSummary): string {
+export function resumeCommand(s: SessionSummary, platform: NodeJS.Platform = process.platform): string {
   if (s?.isSubagent || s?.canResume === false || s?.sourceKind === 'desktop') return '';
   if (!s || typeof s.id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,200}$/.test(s.id)) return '';
   if (s.agent === 'Claude Code') return `claude --resume ${s.id}`;
-  if (s.agent === 'Codex') return `codex resume ${s.id}`;
+  if (s.agent === 'Codex') {
+    if (s.modelProvider === undefined) return `codex resume ${s.id}`;
+    const provider = s.modelProvider;
+    if (typeof provider !== 'string' || !provider || provider.length > 200 || provider.trim() !== provider
+      || /[\u0000-\u001f\u007f]/.test(provider) || Buffer.from(provider, 'utf8').toString('utf8') !== provider) return '';
+    // PowerShell 5 drops embedded double quotes when invoking native programs.
+    // TOML literal strings keep the exact provider through both PS5 and PS7.
+    // Refuse values without a portable literal instead of resuming elsewhere;
+    // PowerShell also treats typographic quotes as shell delimiters.
+    if (platform === 'win32' && /"|'''|[\u2018-\u201f]/.test(provider)) return '';
+    const value = platform === 'win32' ? provider.includes("'") ? `'''${provider}'''` : `'${provider}'` : JSON.stringify(provider);
+    const override = `model_provider=${value}`;
+    const argument = platform === 'win32' ? `'${override.replace(/'/g, "''")}'` : `'${override.replace(/'/g, `'"'"'`)}'`;
+    return `codex -c ${argument} resume ${s.id}`;
+  }
   if (s.agent === 'Gemini CLI') return `gemini --resume ${s.id}`;
   return '';
 }
