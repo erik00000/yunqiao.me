@@ -1,35 +1,44 @@
 # 云桥 AI · yunqiao.me 安装说明
 
-> **个人维护源码版：0.6.11-erik.1（2026 年 11 月 19 日）。Windows x64 本地安装包已构建并验收，GitHub Release 尚未发布。**
+> **个人维护版：0.6.11-erik.1（2026 年 11 月 19 日）。GitHub Release 已公开发布，标记为预发布；提供未签名的 Windows x64 安装版与完整 ZIP。**
 >
-> 本版由 **erik00000** 基于原作者 **jxb412 / 云桥AI** 的 0.6.11 源码维护，继续遵循 **AGPL-3.0-only**。仅使用 `erik00000/yunqiao.me` 的 Actions 手动构建产物或本地源码构建。**不要安装上游 0.6.11 安装包或接受上游自动更新，以免覆盖本版修复。**
+> 本版由 **erik00000** 基于原作者 **jxb412 / 云桥AI** 的 0.6.11 源码维护，继续遵循 **AGPL-3.0-only**。本维护版的发布下载来自 `erik00000/yunqiao.me` 的 GitHub Releases；也可自行从维护分支构建。**不要安装上游 0.6.11 安装包或接受上游更新，以免覆盖本版修复。**
 
 云桥 AI 是独立的桌面工具。请先安装你要使用的 Claude、ChatGPT、Codex 或其他客户端，再用云桥连接自己的模型服务。
 
-[个人维护源码](https://github.com/erik00000/yunqiao.me) · [维护版 Actions 构建入口](https://github.com/erik00000/yunqiao.me/actions/workflows/build.yml) · [使用指南](USER-GUIDE.md) · [返回介绍](README.md)
+[下载个人维护版](https://github.com/erik00000/yunqiao.me/releases/tag/v0.6.11-erik.1) · [个人维护源码](https://github.com/erik00000/yunqiao.me) · [可选 Actions 构建入口](https://github.com/erik00000/yunqiao.me/actions/workflows/build.yml) · [使用指南](USER-GUIDE.md) · [返回介绍](README.md)
 
 ## 获取安装文件
 
-**Windows x64 安装版本地构建与 14 项隔离验收已通过；以下各平台名称为构建产物约定，未发布 GitHub Release，不是可点击下载的安装包。** 维护版仅从个人仓库手动运行 Actions 后的 artifact，或本地源码构建获取。GitHub 自动生成的 **Source code** 压缩包不是客户端安装包。
+**[v0.6.11-erik.1 公开发行页](https://github.com/erik00000/yunqiao.me/releases/tag/v0.6.11-erik.1)已提供 Windows x64 安装版与完整 ZIP，属于未签名的预发布版本。** 标签对应提交为 `3e533c416daed2987ea6a17629c9433f42619921`。本次 Release 不提供 macOS、Linux 或 Windows portable 文件；GitHub 自动生成的 **Source code** 压缩包不是客户端安装包。
 
-| 系统与用途 | 0.6.11-erik.1 预期文件（尚未构建发布） | Actions artifact 来源 |
-| --- | --- | --- |
-| Windows x64 安装版 | `YunQiaoAI-0.6.11-erik.1-win-x64-setup.exe` | `yunqiao-windows` |
-| Windows x64 免安装版 | `YunQiaoAI-0.6.11-erik.1-win-x64-portable.exe` | `yunqiao-windows` |
-| Windows x64 完整解压版 | `YunQiaoAI-0.6.11-erik.1-win-x64.zip` | `yunqiao-windows` |
-| macOS Apple M 系列 | `YunQiaoAI-0.6.11-erik.1-mac-arm64.dmg` / `.zip` | `yunqiao-macos-arm64` |
-| macOS Intel | `YunQiaoAI-0.6.11-erik.1-mac-x64.dmg` / `.zip` | `yunqiao-macos-x64` |
+| 系统与用途 | 已发布文件 |
+| --- | --- |
+| Windows x64 安装版 | [YunQiaoAI-0.6.11-erik.1-win-x64-setup.exe](https://github.com/erik00000/yunqiao.me/releases/download/v0.6.11-erik.1/YunQiaoAI-0.6.11-erik.1-win-x64-setup.exe) |
+| Windows x64 完整解压版 | [YunQiaoAI-0.6.11-erik.1-win-x64.zip](https://github.com/erik00000/yunqiao.me/releases/download/v0.6.11-erik.1/YunQiaoAI-0.6.11-erik.1-win-x64.zip) |
+| 校验清单 | [SHA256SUMS.txt](https://github.com/erik00000/yunqiao.me/releases/download/v0.6.11-erik.1/SHA256SUMS.txt) |
+| 构建信息 | [BUILD-INFO.json](https://github.com/erik00000/yunqiao.me/releases/download/v0.6.11-erik.1/BUILD-INFO.json) |
 
-### 从个人仓库手动构建 Actions artifact
+### 校验下载文件
+
+从同一发行页下载 `SHA256SUMS.txt` 和 `BUILD-INFO.json`，核对版本、上述标签提交及文件名。Windows PowerShell 可执行以下命令，将输出的 SHA256 与清单中对应文件的值比较（ZIP 文件同样可用 `Get-FileHash` 校验）：
+
+```powershell
+Get-FileHash -Algorithm SHA256 ".\YunQiaoAI-0.6.11-erik.1-win-x64-setup.exe"
+```
+
+校验值不一致时不要运行文件。SHA256 用于核对文件完整性，不替代代码签名或来源确认。
+
+### 可选：从个人仓库手动构建 Actions artifact
 
 1. 使用个人仓库的 `fix/codex-native-catalog-maintained-20261118` 维护分支。先核对提交；分支或工作流不可用时，不要用上游构建替代。
 2. 在 `erik00000/yunqiao.me` 的 [build 工作流](https://github.com/erik00000/yunqiao.me/actions/workflows/build.yml)中，以有权限的 GitHub 账号选择 **Run workflow**，分支选择上述维护分支，`target` 选择 `desktop`、`windows` 或 `macos`。没有运行权限时由维护者手动触发。
 3. 等待所选平台构建成功，核对仓库、分支及提交确实包含本次维护修复，再从该次运行的 **Artifacts** 下载对应产物。通常需要登录 GitHub，下载后先解压 artifact 外层压缩包。
-4. 若任务失败、artifact 尚未生成或已过期，就没有可用安装文件；请重新构建或使用下文的本地源码方式。Actions artifact 不等于 Release，也不表示已进入自动更新渠道。
+4. 若任务失败、artifact 尚未生成或已过期，该次 Actions 就没有可用安装文件；可改用上面的公开 Release、重新构建或使用下文的本地源码方式。Actions artifact 不等于 Release，也不表示已进入自动更新渠道。
 
-工作流成功后预期同时提供 `SHA256SUMS-windows-x64.txt` 或 `SHA256SUMS-macos-arm64.txt` / `SHA256SUMS-macos-x64.txt`，可核对文件完整性；这些校验文件同样尚未构建发布。macOS ZIP 需完整解压，将 `YunQiaoAI.app` 放入“应用程序”。
+此途径保留供后续可选构建，无需等待 Actions 即可下载上面的公开 Release。工作流成功后预期同时提供 `SHA256SUMS-windows-x64.txt` 或 `SHA256SUMS-macos-arm64.txt` / `SHA256SUMS-macos-x64.txt`，以实际运行产物为准；它们与当前 Release 的 `SHA256SUMS.txt` 不同。macOS ZIP 需完整解压，将 `YunQiaoAI.app` 放入“应用程序”。
 
-以下平台安装步骤仅适用于取得并核实上述维护版产物之后，不表示当前已有可下载包。上游 0.6.11 的历史功能说明保留在项目介绍中；本次维护改动以维护分支提交和 PR 说明为准。
+以下 Windows 安装版与 ZIP 步骤适用于当前公开 Release；portable 与 macOS 步骤仅供取得并核实可选维护分支构建产物后参考，不代表本次 Release 提供这些文件。上游 0.6.11 的历史功能说明保留在项目介绍中；本次维护改动以维护分支提交和 PR 说明为准。
 
 ## Windows
 
@@ -39,11 +48,11 @@
 2. 双击安装包，按提示选择安装目录并完成安装。
 3. 从桌面或开始菜单打开 **云桥AI 工具箱**。
 
-当前安装包未做代码签名。若 Windows 显示“已保护你的电脑”，先确认文件来自上述个人仓库维护分支的成功构建，并核对版本与校验值，再在提示中选择 **更多信息 → 仍要运行**。如果电脑由单位管理且没有该选项，请联系管理员安装。
+当前安装包未做代码签名。若 Windows 显示“已保护你的电脑”，先确认文件来自上述个人仓库 Release 或自行核实的维护分支成功构建，并核对版本与校验值，再在提示中选择 **更多信息 → 仍要运行**。如果电脑由单位管理且没有该选项，请联系管理员安装。
 
-### 免安装版
+### 免安装版（本次 Release 未提供）
 
-下载名称以 `win-x64-portable.exe` 结尾的文件，放到固定目录后双击。启动时会先显示准备提示，待准备完成后打开主窗口，请勿连续双击。
+仅在自行取得并核实维护分支构建产物后，使用名称以 `win-x64-portable.exe` 结尾的文件，放到固定目录后双击。启动时会先显示准备提示，待准备完成后打开主窗口，请勿连续双击。
 
 免安装版也会保存你的设置。需要找到这些数据时，进入 **系统设置 → 数据与关于 → 打开数据目录**；不要仅凭程序所在文件夹判断数据位置。
 
@@ -71,6 +80,8 @@
 如果客户端已打开但连接未完成，等待窗口加载后点击 **重新连接**。提示程序已更新时重新检测和选择程序；提示没有当前账号的安装记录时，修复或重新安装客户端。不要在确认开始菜单可用后，让未退出的客户端继续占用旧连接。
 
 ## macOS
+
+**本次 Release 未提供 macOS 安装包。** 以下仅供将来取得并核实个人维护分支的 Actions 或本地构建产物后参考；也可直接使用下文的 npm 源码运行方式。Linux 同样未提供本次 Release 安装包。
 
 ### 选择对应芯片的安装包
 
@@ -166,9 +177,9 @@ ChatGPT / Codex 会先保存配置，再单独尝试历史备份与修复。客�
 
 ## 更新、换电脑与卸载
 
-**更新：维护版仅手动更新。** 当前没有维护版 Release 或可依赖的自动更新渠道；不要接受指向原作者仓库的更新提示，不要通过上游 **检查更新**、发布包或 Git 更新覆盖本版。只使用 `erik00000/yunqiao.me` 维护分支的手动 Actions 构建或本地源码构建，并核对版本、分支及提交仍包含修复。
+**更新：维护版检查更新会查询自己的 `erik00000/yunqiao.me` GitHub Releases，安装仍需手动完成。** 当前公开发行版为预发布 `v0.6.11-erik.1`；已安装同一版本 `0.6.11-erik.1` 时不会提示新版本。检查更新不等于自动下载安装，也不要接受指向原作者仓库的更新提示或用上游发布包、Git 更新覆盖本版。
 
-在维护者手动运行并成功生成新 artifact 后，可按本文步骤获取；不存在成功构建时请等待或本地构建，不要改用上游包。安装前备份配置并退出云桥；Windows 运行核实后的维护版安装包，Mac 用维护版应用替换旧应用。原有供应商与设置通常保留，升级后仍需检查。旧版会员会话需要用邮箱与密码重新登录一次，平台支持时即可启用后台自动续期。
+后续升级请核对个人仓库 Releases 的版本、提交和校验清单，再下载所需文件；也可选择维护分支的成功 Actions 构建或本地构建，并确认仍包含修复。当前 Release 只有 Windows x64 安装版与完整 ZIP，不提供 macOS、Linux 或 portable。安装前备份配置并退出云桥；Windows 运行核实后的维护版安装包，ZIP 版按前文完整解压到新目录。Mac 仅在自行取得并核实维护分支构建后替换应用。原有供应商与设置通常保留，升级后仍需检查。旧版会员会话需要用邮箱与密码重新登录一次，平台支持时即可启用后台自动续期。
 
 **换电脑：** 在旧电脑打开 **系统设置 → 数据与关于 → 导出配置**，在新电脑安装云桥后选择 **导入配置**，然后重新应用客户端连接。导出文件含 API 密钥；客户端安装位置及本地历史需另行迁移，导入云桥配置不会自动搬走这些文件。
 
@@ -176,6 +187,6 @@ ChatGPT / Codex 会先保存配置，再单独尝试历史备份与修复。客�
 
 ## iPhone 与 iPad
 
-当前没有可直接安装的正式 iOS App 或公开 TestFlight 入口，维护版也尚未构建发布。iOS 源码、模拟器文件和未签名设备文件都不能通过普通点击安装到手机。
+当前没有可直接安装的正式 iOS App 或公开 TestFlight 入口，本次维护版 Release 也不提供 iOS 安装包。iOS 源码、模拟器文件和未签名设备文件都不能通过普通点击安装到手机。
 
 现阶段可使用手机浏览器访问电脑的云桥控制台：电脑和手机连接同一局域网，在电脑中开启局域网监听，再输入电脑地址与访问令牌。具体操作见[使用指南](USER-GUIDE.md)。

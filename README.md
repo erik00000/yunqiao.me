@@ -1,16 +1,16 @@
 # 云桥 AI · yunqiao.me
 
-> **个人维护源码版：0.6.11-erik.1（2026 年 11 月 19 日）。Windows x64 本地安装包已构建并验收，GitHub Release 尚未发布。**
+> **个人维护版：0.6.11-erik.1（2026 年 11 月 19 日）。GitHub Release 已公开发布，标记为预发布；提供未签名的 Windows x64 安装版与完整 ZIP。**
 >
-> 本版由 **erik00000** 基于原作者 **jxb412 / 云桥AI** 的 0.6.11 源码维护，继续遵循 **AGPL-3.0-only**。维护版仅从 `erik00000/yunqiao.me` 的 Actions 手动构建产物或本地源码构建获取。**不要安装上游 0.6.11 安装包，也不要通过上游自动更新覆盖本版，否则会丢失个人维护修复。** 本文不提供尚不存在的维护版安装包链接。
+> 本版由 **erik00000** 基于原作者 **jxb412 / 云桥AI** 的 0.6.11 源码维护，继续遵循 **AGPL-3.0-only**。本维护版的发布下载来自 `erik00000/yunqiao.me` 的 GitHub Releases；也可自行从维护分支构建。**不要安装上游 0.6.11 安装包，也不要通过上游更新覆盖本版，否则会丢失个人维护修复。**
 
 **解锁桌面插件市场，把客户端、供应商、模型和历史会话放进一个中文工作空间。**
 
 从你正在使用的客户端开始：选择 Claude Code、兼容的 ChatGPT 桌面版或 Codex CLI，连接自己的 API 供应商，选好模型，预览后应用。支持国内外模型服务与自定义中转地址。新安装默认使用 **深夜** 主题，可在设置中切换为云白或跟随系统；升级保留已保存的主题选择。
 
-[个人维护源码](https://github.com/erik00000/yunqiao.me) · [维护版 Actions 构建入口](https://github.com/erik00000/yunqiao.me/actions/workflows/build.yml) · [安装说明](INSTALLATION.md) · [使用指南](USER-GUIDE.md)
+[下载个人维护版](https://github.com/erik00000/yunqiao.me/releases/tag/v0.6.11-erik.1) · [个人维护源码](https://github.com/erik00000/yunqiao.me) · [可选 Actions 构建入口](https://github.com/erik00000/yunqiao.me/actions/workflows/build.yml) · [安装说明](INSTALLATION.md) · [使用指南](USER-GUIDE.md)
 
-维护分支为 `fix/codex-native-catalog-maintained-20261118`，包含已在 Windows 公司电脑验收的修复；上游贡献另走独立 PR 分支，不混入个人更新源。当前未发布 GitHub Release 或触发本分支 Actions 构建，下文产物名称不代表已有公开下载。
+维护分支为 `fix/codex-native-catalog-maintained-20261118`，包含已在 Windows 公司电脑验收的修复；上游贡献另走独立 PR 分支，不混入个人更新源。公开发行标签为 `v0.6.11-erik.1`，对应提交 `3e533c416daed2987ea6a17629c9433f42619921`。
 
 **上游 0.6.11 功能说明：旧会话迁移后也能继续使用当前选择的模型。** 补齐可识别的历史供应商入口，并为自动修复的会话建立兼容连接。在网关或官方账号共存模式下，桌面端重新打开旧会话时，即使记录中仍是旧模型，也会使用本次选择的供应商和模型。Codex CLI 可在历史页复制带有对应供应商的恢复命令。配置保存与历史处理仍分别进行。以上为上游 0.6.11 的历史功能说明；本次个人维护改动以维护分支提交和 PR 说明为准。
 
@@ -64,18 +64,20 @@ ChatGPT / Codex 的配置结果与历史状态分开显示。配置先保存，�
 
 ## 下载与安装
 
-**Windows x64 安装版本地构建及隔离验收已通过；维护版 GitHub Release 尚未发布。下表列各平台预期产物，不提供尚不存在的公开下载链接，其他平台未经本机验收。**
+**[v0.6.11-erik.1 公开发行页](https://github.com/erik00000/yunqiao.me/releases/tag/v0.6.11-erik.1)已提供 Windows x64 安装版与完整 ZIP；这是未签名的预发布版本。macOS、Linux 和 Windows portable 均未在本次 Release 提供。**
 
-| 平台 | 0.6.11-erik.1 预期产物 | 个人仓库 Actions artifact |
-| --- | --- | --- |
-| Windows x64 | 安装版 `win-x64-setup.exe`、免安装版 `win-x64-portable.exe`、完整解压版 `win-x64.zip` | `yunqiao-windows` |
-| macOS Apple Silicon | Apple M 系列使用 `mac-arm64.dmg` / `.zip` | `yunqiao-macos-arm64` |
-| macOS Intel | Intel 处理器使用 `mac-x64.dmg` / `.zip` | `yunqiao-macos-x64` |
-| iPhone / iPad | 目前没有可直接安装的正式 App，可通过浏览器连接电脑端 | 无普通用户可直接安装的维护版 App |
+| 平台与用途 | 已发布文件 |
+| --- | --- |
+| Windows x64 安装版 | [YunQiaoAI-0.6.11-erik.1-win-x64-setup.exe](https://github.com/erik00000/yunqiao.me/releases/download/v0.6.11-erik.1/YunQiaoAI-0.6.11-erik.1-win-x64-setup.exe) |
+| Windows x64 完整解压版 | [YunQiaoAI-0.6.11-erik.1-win-x64.zip](https://github.com/erik00000/yunqiao.me/releases/download/v0.6.11-erik.1/YunQiaoAI-0.6.11-erik.1-win-x64.zip) |
+| 校验清单 | [SHA256SUMS.txt](https://github.com/erik00000/yunqiao.me/releases/download/v0.6.11-erik.1/SHA256SUMS.txt) |
+| 构建信息 | [BUILD-INFO.json](https://github.com/erik00000/yunqiao.me/releases/download/v0.6.11-erik.1/BUILD-INFO.json) |
 
-桌面产物的完整文件名前缀预计为 `YunQiaoAI-0.6.11-erik.1-`。由维护者在 [个人仓库 build 工作流](https://github.com/erik00000/yunqiao.me/actions/workflows/build.yml)手动选择维护分支运行；成功后核对提交，再从该次运行的 **Artifacts** 获取对应平台文件及校验清单。分支未推送、构建未成功或 artifact 不存在时，请等待或本地构建，不要使用上游安装包替代。手动构建步骤、预期文件名及本地打包命令见[安装说明](INSTALLATION.md)。
+下载后核对校验清单及构建信息，确认标签提交为 `3e533c416daed2987ea6a17629c9433f42619921`。Windows ZIP 版需完整解压后双击同目录的 `YunQiaoAI.exe`；安装版与 ZIP 均未签名，首次运行及校验方法见[安装说明](INSTALLATION.md)。更新或切换包形式前请备份配置并退出云桥，已有本机数据通常保留。
 
-Windows ZIP 版需完整解压后双击同目录的 `YunQiaoAI.exe`；portable 启动会显示准备提示。macOS 将 `YunQiaoAI.app` 拖入“应用程序”，未签名包的首次打开方法见[安装说明](INSTALLATION.md#安装和首次打开)。更新或切换包形式会保留已有本机数据。
+[个人仓库 build 工作流](https://github.com/erik00000/yunqiao.me/actions/workflows/build.yml)保留为后续可选手动构建途径，artifact 是否可用以实际成功运行结果为准；无需等待 Actions 即可下载上述 Release。其他平台可参考[源码运行和本地构建说明](INSTALLATION.md)，不要用上游包替代维护版。
+
+维护版检查更新会查询自己的 `erik00000/yunqiao.me` GitHub Releases；当前已安装版本与该发行版同为 `0.6.11-erik.1`，不会提示新版本。检查更新不等于自动安装，后续升级请核对个人仓库发行信息后手动下载安装。
 
 电脑端已运行时，可用手机浏览器访问远程控制台。局域网连接方法见[使用指南](USER-GUIDE.md)。
 
