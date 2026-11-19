@@ -1,6 +1,8 @@
 node_modules/
 dist/
 release/
+release-*/
+.build-cache/
 .devdata/
 tmp/
 *.log

@@ -6,14 +6,11 @@ import { Btn } from './ui';
 export default function UpdateActions({ update }: { update: UpdateInfo }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  async function download(website = false) {
+  async function download() {
     setBusy(true); setError('');
     try {
-      const result = website
-        ? await call<UpdateInfo>('update.check', { source: 'website', minimumVersion: update.version })
-        : update;
-      if (!result.ok || !result.hasUpdate || !result.url) throw new Error(result.message || '官网暂未提供此版本的安装包，请稍后重试或使用 GitHub 下载。');
-      const opened = await call('app.openExternal', { url: result.url });
+      if (!update.ok || !update.hasUpdate || !update.url || update.source !== 'github') throw new Error(update.message || '维护仓库暂未提供此版本的安装包，请重新检查更新。');
+      const opened = await call('app.openExternal', { url: update.url });
       if (!opened.ok) throw new Error(opened.message || '无法打开下载链接，请稍后重试。');
     } catch (e: any) { setError(e.message || String(e)); }
     finally { setBusy(false); }
@@ -21,8 +18,7 @@ export default function UpdateActions({ update }: { update: UpdateInfo }) {
   if (!update.hasUpdate || !update.url) return null;
   return <div>
     <div className="row" style={{ flexWrap: 'wrap' }}>
-      <Btn size="sm" variant="primary" disabled={busy} onClick={() => download()}>{update.source === 'website' ? '官网下载' : 'GitHub 下载'}</Btn>
-      {update.source === 'github' && <Btn size="sm" disabled={busy} onClick={() => download(true)}>{busy ? '处理中…' : '官网备用'}</Btn>}
+      <Btn size="sm" variant="primary" disabled={busy} onClick={() => download()}>{busy ? '处理中…' : 'GitHub 下载'}</Btn>
     </div>
     {error && <div role="alert" className="muted" style={{ marginTop: 8, maxWidth: 460, whiteSpace: 'pre-wrap' }}>{error}</div>}
   </div>;

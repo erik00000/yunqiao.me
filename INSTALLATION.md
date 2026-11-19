@@ -1,28 +1,35 @@
 # 云桥 AI · yunqiao.me 安装说明
 
+> **个人维护源码版：0.6.11-erik.1（2026 年 11 月 19 日）。Windows x64 本地安装包已构建并验收，GitHub Release 尚未发布。**
+>
+> 本版由 **erik00000** 基于原作者 **jxb412 / 云桥AI** 的 0.6.11 源码维护，继续遵循 **AGPL-3.0-only**。仅使用 `erik00000/yunqiao.me` 的 Actions 手动构建产物或本地源码构建。**不要安装上游 0.6.11 安装包或接受上游自动更新，以免覆盖本版修复。**
+
 云桥 AI 是独立的桌面工具。请先安装你要使用的 Claude、ChatGPT、Codex 或其他客户端，再用云桥连接自己的模型服务。
 
-本说明更新于 **2026 年 11 月 18 日**，对应已发布的 **0.6.9**。Windows 与 macOS 安装包可从 [Releases 下载页](https://github.com/jxb412/yunqiao.me/releases/tag/v0.6.9)直接下载。
-
-[打开 0.6.9 下载页](https://github.com/jxb412/yunqiao.me/releases/tag/v0.6.9) · [使用指南](USER-GUIDE.md) · [返回介绍](README.md)
+[个人维护源码](https://github.com/erik00000/yunqiao.me) · [维护版 Actions 构建入口](https://github.com/erik00000/yunqiao.me/actions/workflows/build.yml) · [使用指南](USER-GUIDE.md) · [返回介绍](README.md)
 
 ## 获取安装文件
 
-打开 [0.6.9 发布页](https://github.com/jxb412/yunqiao.me/releases/tag/v0.6.9)，展开 **Assets**，选择与你的系统一致的文件；也可直接点击下表下载。这里提供可使用的安装文件，通常无需登录 GitHub。不要将 GitHub 自动生成的 **Source code** 压缩包当作客户端安装包。
+**Windows x64 安装版本地构建与 14 项隔离验收已通过；以下各平台名称为构建产物约定，未发布 GitHub Release，不是可点击下载的安装包。** 维护版仅从个人仓库手动运行 Actions 后的 artifact，或本地源码构建获取。GitHub 自动生成的 **Source code** 压缩包不是客户端安装包。
 
-| 系统与用途 | 0.6.9 安装文件 |
-| --- | --- |
-| Windows x64 安装版 | [YunQiaoAI-0.6.9-win-x64-setup.exe](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.9/YunQiaoAI-0.6.9-win-x64-setup.exe) |
-| Windows x64 免安装版 | [YunQiaoAI-0.6.9-win-x64-portable.exe](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.9/YunQiaoAI-0.6.9-win-x64-portable.exe) |
-| Windows x64 完整解压版 | [YunQiaoAI-0.6.9-win-x64.zip](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.9/YunQiaoAI-0.6.9-win-x64.zip) |
-| macOS Apple M 系列 | [YunQiaoAI-0.6.9-mac-arm64.dmg](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.9/YunQiaoAI-0.6.9-mac-arm64.dmg) |
-| macOS Intel | [YunQiaoAI-0.6.9-mac-x64.dmg](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.9/YunQiaoAI-0.6.9-mac-x64.dmg) |
+| 系统与用途 | 0.6.11-erik.1 预期文件（尚未构建发布） | Actions artifact 来源 |
+| --- | --- | --- |
+| Windows x64 安装版 | `YunQiaoAI-0.6.11-erik.1-win-x64-setup.exe` | `yunqiao-windows` |
+| Windows x64 免安装版 | `YunQiaoAI-0.6.11-erik.1-win-x64-portable.exe` | `yunqiao-windows` |
+| Windows x64 完整解压版 | `YunQiaoAI-0.6.11-erik.1-win-x64.zip` | `yunqiao-windows` |
+| macOS Apple M 系列 | `YunQiaoAI-0.6.11-erik.1-mac-arm64.dmg` / `.zip` | `yunqiao-macos-arm64` |
+| macOS Intel | `YunQiaoAI-0.6.11-erik.1-mac-x64.dmg` / `.zip` | `yunqiao-macos-x64` |
 
-更新内容见 [0.6.9 版本说明](docs/RELEASE-0.6.9.md)。
+### 从个人仓库手动构建 Actions artifact
 
-macOS 同时提供 [Apple Silicon ZIP](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.9/YunQiaoAI-0.6.9-mac-arm64.zip) 和 [Intel ZIP](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.9/YunQiaoAI-0.6.9-mac-x64.zip)，可完整解压后将 `YunQiaoAI.app` 放入“应用程序”；一般优先使用 DMG。[SHA256SUMS.txt](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.9/SHA256SUMS.txt) 可用于核对下载文件是否完整。
+1. 使用个人仓库的 `fix/codex-native-catalog-maintained-20261118` 维护分支。先核对提交；分支或工作流不可用时，不要用上游构建替代。
+2. 在 `erik00000/yunqiao.me` 的 [build 工作流](https://github.com/erik00000/yunqiao.me/actions/workflows/build.yml)中，以有权限的 GitHub 账号选择 **Run workflow**，分支选择上述维护分支，`target` 选择 `desktop`、`windows` 或 `macos`。没有运行权限时由维护者手动触发。
+3. 等待所选平台构建成功，核对仓库、分支及提交确实包含本次维护修复，再从该次运行的 **Artifacts** 下载对应产物。通常需要登录 GitHub，下载后先解压 artifact 外层压缩包。
+4. 若任务失败、artifact 尚未生成或已过期，就没有可用安装文件；请重新构建或使用下文的本地源码方式。Actions artifact 不等于 Release，也不表示已进入自动更新渠道。
 
-需要体验开发构建时，打开 [GitHub Actions 的 build 页面](https://github.com/jxb412/yunqiao.me/actions/workflows/build.yml)，选择对应平台已成功完成的构建，在 **Artifacts** 中下载；通常需要登录 GitHub，下载后先解压外层压缩包。开发构建可能包含尚未正式发布的改动。
+工作流成功后预期同时提供 `SHA256SUMS-windows-x64.txt` 或 `SHA256SUMS-macos-arm64.txt` / `SHA256SUMS-macos-x64.txt`，可核对文件完整性；这些校验文件同样尚未构建发布。macOS ZIP 需完整解压，将 `YunQiaoAI.app` 放入“应用程序”。
+
+以下平台安装步骤仅适用于取得并核实上述维护版产物之后，不表示当前已有可下载包。上游 0.6.11 的历史功能说明保留在项目介绍中；本次维护改动以维护分支提交和 PR 说明为准。
 
 ## Windows
 
@@ -32,7 +39,7 @@ macOS 同时提供 [Apple Silicon ZIP](https://github.com/jxb412/yunqiao.me/rele
 2. 双击安装包，按提示选择安装目录并完成安装。
 3. 从桌面或开始菜单打开 **云桥AI 工具箱**。
 
-当前安装包未做代码签名。若 Windows 显示“已保护你的电脑”，先确认文件来自上述发布页，再在提示中选择 **更多信息 → 仍要运行**。如果电脑由单位管理且没有该选项，请联系管理员安装。
+当前安装包未做代码签名。若 Windows 显示“已保护你的电脑”，先确认文件来自上述个人仓库维护分支的成功构建，并核对版本与校验值，再在提示中选择 **更多信息 → 仍要运行**。如果电脑由单位管理且没有该选项，请联系管理员安装。
 
 ### 免安装版
 
@@ -82,7 +89,7 @@ macOS 同时提供 [Apple Silicon ZIP](https://github.com/jxb412/yunqiao.me/rele
 2. 推出 DMG，从“应用程序”打开 **YunQiaoAI.app**，进入云桥AI 工具箱。
 3. 若系统提示无法验证开发者，可先尝试在“应用程序”中按住 Control 点击应用，选择 **打开**；也可在 **系统设置 → 隐私与安全性** 中查看此次打开被阻止的提示。
 
-当前构建包未做 Apple 签名与公证。**确认应用来自项目发布者后**，若仍提示“已损坏”或无法打开，在系统“终端”中运行以下命令，再重新打开应用：
+当前构建包未做 Apple 签名与公证。**确认应用来自个人仓库维护分支的成功构建或自己的本地构建后**，若仍提示“已损坏”或无法打开，在系统“终端”中运行以下命令，再重新打开应用：
 
 ```bash
 xattr -cr "/Applications/YunQiaoAI.app"
@@ -100,14 +107,14 @@ xattr -cr "/Applications/YunQiaoAI.app"
 
 ## npm 从源码安装运行
 
-这种方式会下载项目源码、安装依赖，再启动云桥桌面应用。请先安装 **Node.js 22.x（22.13 或更新版本）**（安装时包含 npm）和 **Git**；本项目目前没有发布 npm 全局安装包。
+这种方式会下载项目源码、安装依赖，再启动云桥桌面应用。请先安装 **Node.js 22.x（22.13 或更新版本）**（安装时包含 npm）和 **Git**；本项目目前没有发布 npm 全局安装包。以下命令使用 `fix/codex-native-catalog-maintained-20261118` 维护分支，分支不可用时不要退回上游标签。已有本地维护源码时，可直接在其目录安装依赖并启动。
 
 ### Windows PowerShell
 
 打开 PowerShell，进入准备存放项目的目录，依次执行：
 
 ```powershell
-git clone --branch v0.6.9 --depth 1 https://github.com/jxb412/yunqiao.me.git yunqiao.me
+git clone --branch fix/codex-native-catalog-maintained-20261118 --depth 1 https://github.com/erik00000/yunqiao.me.git yunqiao.me
 cd yunqiao.me
 npm.cmd install --include=dev
 npm.cmd start
@@ -120,7 +127,7 @@ npm.cmd start
 打开“终端”，进入准备存放项目的目录，依次执行：
 
 ```bash
-git clone --branch v0.6.9 --depth 1 https://github.com/jxb412/yunqiao.me.git yunqiao.me
+git clone --branch fix/codex-native-catalog-maintained-20261118 --depth 1 https://github.com/erik00000/yunqiao.me.git yunqiao.me
 cd yunqiao.me
 npm install --include=dev
 npm start
@@ -132,25 +139,36 @@ npm start
 
 请保留下载的 `yunqiao.me` 源码目录。以后在该目录中执行 `npm.cmd start`（Windows PowerShell）或 `npm start`（macOS）即可打开；这种运行方式不会生成系统安装包或快捷方式。
 
-后续更新时，可从[发布页](https://github.com/jxb412/yunqiao.me/releases)选择新版本，按照上面的步骤将对应标签克隆到新的目录，再安装依赖并启动。也可在原源码目录运行 `git fetch --tags`，用 `git switch --detach 版本标签` 切换到选定的发布版本（将“版本标签”替换为实际的 `v` 开头标签），然后重新执行依赖安装和启动命令。保留自行修改的源码后再切换版本；发布标签安装请使用上述手动更新步骤，应用内的 Git 更新按钮不适用，也不要直接执行 `git pull`。
+后续仅手动更新个人维护分支：先备份配置及自行修改的源码，核对远端是 `erik00000/yunqiao.me`、目标分支仍包含本次修复，再将维护分支克隆到新的目录，重新安装依赖并启动。不要切换到上游 `v0.6.11` 标签，不要用上游安装包覆盖，也不要直接使用应用内 Git 更新按钮或未经核对的 `git pull`。
+
+### 本地构建安装包
+
+完成上述源码克隆和依赖安装后，在对应系统执行以下命令之一：
+
+- Windows PowerShell：`npm.cmd run package:win`，预期在 `release/` 生成 x64 安装版、portable 和 ZIP。
+- macOS 终端：`npm run package:mac`，预期在 `release/` 生成 arm64 与 x64 DMG；如需与 Actions 相同的 DMG / ZIP 格式，可执行 `npm run build`，再执行 `npx electron-builder --mac dmg zip --arm64 --x64 --publish never`。
+
+这些命令依据当前源码配置，仅在本地生成产物，不会发布 Release。构建成功前不能认为安装包已存在；产物版本应为 `0.6.11-erik.1`，文件名以实际构建结果为准。
 
 ## 首次连接模型
 
 1. 打开 **客户端接入**，找到要配置的客户端，点击 **开始配置**。
 2. 在向导中添加供应商，填写服务商提供的 API 地址和 API Key，再选择模型。
 3. 选择 **本地网关** 或符合条件的 **直连供应商**。
-4. 测试后点击 **预览配置**，核对实际路径和计划修改。ChatGPT / Codex 配置会同时显示历史处理数量；保存工作并完全退出相关桌面客户端和 CLI 后，有历史时点击 **备份历史并应用配置**，没有历史时点击 **备份并应用配置**。其他自动配置客户端按预览应用；手动接入按专属指南完成设置。
+4. 测试后点击 **预览配置**，核对实际路径和计划修改，点击 **保存配置**。ChatGPT / Codex 正在运行也可先保存配置，历史是否处理会单独说明；其他自动配置客户端按预览应用，手动接入按专属指南完成设置。
 5. 保存工作后点击 **重新启动客户端** 并确认，云桥会强制结束该桌面客户端（包括托盘和后台运行），确认退出后再打开。命令行工具使用 **新终端打开**，原终端和会话保留。使用网关时请保持云桥运行。
 
-ChatGPT / Codex 配置会先备份历史，再修复可处理的会话；缺少原文件的索引保留，格式错误、重复或归属不明等问题记录跳过，客户端配置继续完成。界面分别列出会话文件和数据库的备份数量，以及修复、保留、跳过的结果。备份失败时停止写入；提示客户端仍在运行时，退出后点击 **已退出，重新应用**。完整步骤见[历史迁移指南](docs/HISTORY-PROVIDER-MIGRATION.md)。
+ChatGPT / Codex 会先保存配置，再单独尝试历史备份与修复。客户端运行中或历史遇到问题时，历史保持原样并说明原因；已保存的配置可在重启后使用。配置文件自身无法备份或写入时仍会提示失败，不会把历史待处理显示为已迁移。旧会话提示供应商不存在时，请升级后重新选择有效供应商和模型、保存配置，再重启客户端。自动历史修复完成后，桌面旧对话通过兼容连接使用所选供应商和模型，即使会话记录仍保留旧模型名。网关或共存模式使用期间需保持云桥运行；直连会话保留旧模型名，能否继续由上游支持情况决定。接口无权限、模型不可用或缺失聊天正文仍需分别处理。完整步骤见[历史迁移指南](docs/HISTORY-PROVIDER-MIGRATION.md)。
+
+要在 Codex CLI 继续旧对话，进入 **历史会话**，选择记录并点击 **复制恢复命令**；Windows 使用 PowerShell，macOS 使用终端粘贴执行。命令会自动指定该会话的供应商，避免与新会话的默认供应商冲突。
 
 手动接入使用本地网关参数，云桥不自动修改或备份该客户端的配置。示例中的令牌是占位文字；电脑端的 **复制真实令牌** 或 **复制可用配置（含令牌）** 才会复制可用凭据。已有配置请先自行备份、再合并。插件市场的连接和启用步骤见[使用指南](USER-GUIDE.md)。
 
 ## 更新、换电脑与卸载
 
-**更新：** 在 **系统设置 → 版本更新 → 检查更新** 查看新版本，也可直接打开[发布页](https://github.com/jxb412/yunqiao.me/releases)。安装前退出云桥；Windows 运行新安装包，Mac 用新应用替换“应用程序”中的旧应用。预览版是否提供更新，以发布页为准。
+**更新：维护版仅手动更新。** 当前没有维护版 Release 或可依赖的自动更新渠道；不要接受指向原作者仓库的更新提示，不要通过上游 **检查更新**、发布包或 Git 更新覆盖本版。只使用 `erik00000/yunqiao.me` 维护分支的手动 Actions 构建或本地源码构建，并核对版本、分支及提交仍包含修复。
 
-使用 Actions 构建包时，可按本文步骤下载较新的成功构建；构建产物不等于已进入正式自动更新渠道。更新后，原有供应商与设置会保留。旧版会员会话需要用邮箱与密码重新登录一次，平台支持时即可启用后台自动续期。
+在维护者手动运行并成功生成新 artifact 后，可按本文步骤获取；不存在成功构建时请等待或本地构建，不要改用上游包。安装前备份配置并退出云桥；Windows 运行核实后的维护版安装包，Mac 用维护版应用替换旧应用。原有供应商与设置通常保留，升级后仍需检查。旧版会员会话需要用邮箱与密码重新登录一次，平台支持时即可启用后台自动续期。
 
 **换电脑：** 在旧电脑打开 **系统设置 → 数据与关于 → 导出配置**，在新电脑安装云桥后选择 **导入配置**，然后重新应用客户端连接。导出文件含 API 密钥；客户端安装位置及本地历史需另行迁移，导入云桥配置不会自动搬走这些文件。
 
@@ -158,6 +176,6 @@ ChatGPT / Codex 配置会先备份历史，再修复可处理的会话；缺少�
 
 ## iPhone 与 iPad
 
-当前没有可直接安装的正式 iOS App 或公开 TestFlight 入口。发布页中的 iOS 源码、模拟器文件和未签名设备文件都不能通过普通点击安装到手机。
+当前没有可直接安装的正式 iOS App 或公开 TestFlight 入口，维护版也尚未构建发布。iOS 源码、模拟器文件和未签名设备文件都不能通过普通点击安装到手机。
 
 现阶段可使用手机浏览器访问电脑的云桥控制台：电脑和手机连接同一局域网，在电脑中开启局域网监听，再输入电脑地址与访问令牌。具体操作见[使用指南](USER-GUIDE.md)。

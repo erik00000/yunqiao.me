@@ -4,44 +4,71 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
+import https from 'node:https';
+import { EventEmitter } from 'node:events';
 
+const workspace = path.resolve(import.meta.dirname, '..');
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'aurora-update-test-'));
-const bundle = path.join(scratch, 'updates.mjs');
-await build({ stdin: { contents: "export * from './src/core/cloud.ts'; export * from './src/core/releaseSources.ts';", resolveDir: process.cwd(), loader: 'ts' }, bundle: true, platform: 'node', format: 'esm', outfile: bundle, logLevel: 'silent' });
-const m = await import(pathToFileURL(bundle).href);
-const win = { platform: 'win', arch: 'x64' }, version = '0.7.0';
-const asset = (name, changes = {}) => ({ name, state: 'uploaded', size: 50_000_000, browser_download_url: `https://github.com/jxb412/yunqiao.me/releases/download/v${version}/${name}`, ...changes });
+async function load(name, repository) {
+  const bundle = path.join(scratch, `${name}.mjs`);
+  await build({ stdin: { contents: "export * from './src/core/cloud.ts'; export * from './src/core/releaseSources.ts';", resolveDir: workspace, loader: 'ts' }, bundle: true, platform: 'node', format: 'esm', outfile: bundle, logLevel: 'silent', define: repository === undefined ? {} : { __YUNQIAO_RELEASE_REPOSITORY__: JSON.stringify(repository) } });
+  return import(pathToFileURL(bundle).href);
+}
+const m = await load('updates');
+const win = { platform: 'win', arch: 'x64' }, version = '0.6.11-erik.2';
+// 以下发布和下载地址仅用于隔离测试，并不表示远端已有此发布。
+const asset = (name, changes = {}) => ({ name, state: 'uploaded', size: 50_000_000, browser_download_url: `https://github.com/${m.RELEASE_REPOSITORY}/releases/download/v${version}/${name}`, ...changes });
 const setup = `YunQiaoAI-${version}-win-x64-setup.exe`, portable = `YunQiaoAI-${version}-win-x64-portable.exe`;
-const release = (changes = {}) => ({ tag_name: `v${version}`, html_url: `https://github.com/jxb412/yunqiao.me/releases/tag/v${version}`, draft: false, prerelease: false, body: '正式版说明', published_at: '2026-11-15T00:00:00Z', assets: [asset(portable), asset(setup)], ...changes });
-const website = (changes = {}) => ({ version, platform: 'win', arch: 'x64', url: `https://ai.haowucm.cn/releases/${setup}`, notes: '官网正式版', mandatory: false, hasUpdate: true, ...changes });
+const release = (changes = {}) => ({ tag_name: `v${version}`, html_url: `https://github.com/${m.RELEASE_REPOSITORY}/releases/tag/v${version}`, draft: false, prerelease: true, body: '维护版说明', published_at: '2026-11-18T00:00:00Z', assets: [asset(portable), asset(setup)], ...changes });
 let passed = 0;
 async function test(name, fn) { await fn(); passed++; console.log(`PASS ${name}`); }
-async function expectFallback(github, official = website(), target = win) {
+async function rejected(data, target = win) {
   const calls = [];
-  const result = await m.checkUpdate('0.6.0', target, async url => { calls.push(url); if (url === m.GITHUB_RELEASE_API) { if (github instanceof Error) throw github; return github; } return official; });
-  assert.equal(calls.length, 2); assert.equal(calls[0], m.GITHUB_RELEASE_API);
-  const fallback = new URL(calls[1]); assert.equal(fallback.origin, 'https://ai.haowucm.cn'); assert.equal(fallback.searchParams.get('action'), 'update'); assert.equal(fallback.searchParams.get('platform'), target.platform); assert.equal(fallback.searchParams.get('arch'), target.arch); assert.equal(fallback.searchParams.get('current'), '0.6.0');
-  assert.equal(result.source, 'website'); assert.equal(result.fallbackUrl, result.url); return result;
+  await assert.rejects(() => m.checkUpdate('0.6.11-erik.1', target, async url => { calls.push(url); if (data instanceof Error) throw data; return data; }), /维护版更新检查未完成/);
+  assert.deepEqual(calls, [m.GITHUB_RELEASE_API]);
+  assert.ok(!calls.some(url => url.includes('jxb412') || url.includes('pub.php')));
 }
-
 try {
-  await test('GitHub latest is primary and Windows setup wins over portable', async () => {
-    const urls = []; const r = await m.checkUpdate('0.6.0', win, async url => { urls.push(url); return release(); });
-    assert.deepEqual(urls, [m.GITHUB_RELEASE_API]); assert.equal(r.source, 'github'); assert.equal(r.assetName, setup); assert.equal(r.hasUpdate, true); assert.equal(r.fallbackUrl, ''); assert.equal(r.releaseUrl, release().html_url);
+  await test('默认更新仓库属于个人维护者，保留明确上游署名', () => {
+    assert.equal(m.RELEASE_REPOSITORY, 'erik00000/yunqiao.me');
+    assert.equal(m.UPSTREAM_REPOSITORY, 'jxb412/yunqiao.me');
+    assert.equal(m.GITHUB_RELEASE_API, 'https://api.github.com/repos/erik00000/yunqiao.me/releases?per_page=100');
+    assert.equal(m.GITHUB_RELEASE_PAGE, 'https://github.com/erik00000/yunqiao.me/releases');
+    assert.equal(m.OFFICIAL_UPDATE_URL, undefined); assert.equal(m.websiteUpdate, undefined);
   });
-  await test('Windows portable remains available when no setup exists', () => assert.equal(m.githubUpdate(release({ assets: [asset(portable)] }), '0.6.0', win).assetName, portable));
-  await test('CPU architecture is matched exactly', () => {
+  await test('构建时只允许指定维护仓库，运行时环境变量无法覆盖', async () => {
+    const previous = process.env.YUNQIAO_RELEASE_REPOSITORY;
+    process.env.YUNQIAO_RELEASE_REPOSITORY = 'jxb412/yunqiao.me';
+    try {
+      const custom = await load('custom', 'erik00000/yunqiao.me');
+      assert.equal(custom.RELEASE_REPOSITORY, 'erik00000/yunqiao.me');
+      const defaultBuild = await load('runtime-env'); assert.equal(defaultBuild.RELEASE_REPOSITORY, m.RELEASE_REPOSITORY);
+    } finally { if (previous === undefined) delete process.env.YUNQIAO_RELEASE_REPOSITORY; else process.env.YUNQIAO_RELEASE_REPOSITORY = previous; }
+    for (const [index, value] of ['jxb412/yunqiao.me', 'JXB412/YUNQIAO.ME', 'fixture-owner/maintained', 'erik00000/other', 'https://github.com/evil/repo', 'owner/repo/other', ''].entries()) await assert.rejects(() => load(`invalid-${index}`, value), /erik00000\/yunqiao.me GitHub 发布仓库/);
+  });
+  await test('维护版预发布可更新，Windows 优先选择安装版', async () => {
+    const calls = [];
+    const r = await m.checkUpdate('0.6.11-erik.1', win, async url => { calls.push(url); return [release()]; });
+    assert.deepEqual(calls, [m.GITHUB_RELEASE_API]); assert.equal(r.source, 'github'); assert.equal(r.assetName, setup); assert.equal(r.hasUpdate, true); assert.equal(r.fallbackUrl, ''); assert.equal(r.releaseUrl, release().html_url);
+  });
+  await test('只从已存在的合法发布中选择最新匹配版本，不依赖列表顺序', async () => {
+    const oldVersion = '0.6.11-erik.1', name = `YunQiaoAI-${oldVersion}-win-x64-setup.exe`;
+    const old = release({ tag_name: `v${oldVersion}`, html_url: `https://github.com/${m.RELEASE_REPOSITORY}/releases/tag/v${oldVersion}`, assets: [asset(name, { browser_download_url: `https://github.com/${m.RELEASE_REPOSITORY}/releases/download/v${oldVersion}/${name}` })] });
+    const r = await m.checkUpdate(oldVersion, win, async () => [old, release()]); assert.equal(r.version, version);
+  });
+  await test('没有安装版时保留便携版', () => assert.equal(m.githubUpdate(release({ assets: [asset(portable)] }), '0.6.0', win).assetName, portable));
+  await test('CPU 架构必须精确匹配', () => {
     const arm = `YunQiaoAI-${version}-win-arm64-setup.exe`;
     assert.equal(m.githubUpdate(release({ assets: [asset(setup), asset(arm)] }), '0.6.0', { platform: 'win', arch: 'arm64' }).assetName, arm);
     assert.throws(() => m.githubUpdate(release(), '0.6.0', { platform: 'win', arch: 'arm64' }), /当前平台/);
   });
-  await test('macOS and Linux select their platform installers', () => {
+  await test('macOS 和 Linux 继续精确匹配平台安装包', () => {
     const mac = `YunQiaoAI-${version}-mac-arm64.dmg`, linux = `YunQiaoAI-${version}-linux-x64.AppImage`;
     const data = release({ assets: [asset(setup), asset(mac), asset(linux)] });
     assert.equal(m.githubUpdate(data, '0.6.0', { platform: 'mac', arch: 'arm64' }).assetName, mac);
     assert.equal(m.githubUpdate(data, '0.6.0', { platform: 'linux', arch: 'x64' }).assetName, linux);
   });
-  await test('Intel and Apple Silicon prefer matching DMG and accept universal without cross-architecture downloads', () => {
+  await test('macOS 通用安装包仅在缺少精确匹配时使用', () => {
     const intel = `YunQiaoAI-${version}-mac-x64.dmg`, apple = `YunQiaoAI-${version}-mac-arm64.dmg`, universal = `YunQiaoAI-${version}-mac-universal.dmg`;
     for (const [arch, expected, other] of [['x64', intel, apple], ['arm64', apple, intel]]) {
       const target = { platform: 'mac', arch };
@@ -50,87 +77,77 @@ try {
       assert.throws(() => m.githubUpdate(release({ assets: [asset(other)] }), '0.6.0', target), /当前平台/);
     }
   });
-  await test('macOS website fallback preserves the requested architecture and checks its filename', async () => {
-    for (const arch of ['arm64', 'x64']) {
-      const mac = website({ platform: 'mac', arch, url: `https://ai.haowucm.cn/releases/YunQiaoAI-${version}-mac-${arch}.dmg` });
-      assert.equal((await expectFallback(new Error('fixture offline'), mac, { platform: 'mac', arch })).url, mac.url);
-      assert.throws(() => m.websiteUpdate({ ...mac, url: mac.url.replace(`mac-${arch}`, `mac-${arch === 'arm64' ? 'x64' : 'arm64'}`) }, '0.6.0', { platform: 'mac', arch }), /平台/);
+  await test('无发布、限流、网络或 JSON 错误均明确失败，绝不回退', async () => {
+    for (const value of [[], null, {}, '<html>not JSON</html>', new Error('HTTP 404'), new Error('HTTP 403'), new Error('HTTP 429'), new Error('timeout'), new Error('invalid JSON')]) await rejected(value);
+  });
+  await test('真实 HTTP 请求层拒绝将更新检查重定向到上游或 PHP 镜像', async () => {
+    const get = https.get;
+    try {
+      for (const location of ['https://api.github.com/repos/jxb412/yunqiao.me/releases', 'https://ai.haowucm.cn/pub.php?action=update']) {
+        let calls = 0;
+        https.get = (_options, callback) => {
+          calls++;
+          const req = new EventEmitter(); req.destroy = () => {};
+          queueMicrotask(() => {
+            const res = new EventEmitter(); res.statusCode = 301; res.headers = { location }; res.resume = () => {};
+            callback(res);
+          });
+          return req;
+        };
+        await assert.rejects(() => m.checkUpdate('0.6.11-erik.1', win), /重定向/);
+        assert.equal(calls, 1);
+      }
+    } finally { https.get = get; }
+  });
+  await test('草稿、其他预发布通道和无效版本不能作为维护版更新', async () => {
+    for (const data of [release({ draft: true }), release({ draft: undefined }), release({ prerelease: undefined }), release({ tag_name: 'v0.8.0-beta.1' }), release({ tag_name: 'v0.8.0', prerelease: true })]) await rejected([data]);
+  });
+  await test('源码压缩包、blockmap、其他版本及未签名 iOS 文件全部忽略', async () => {
+    await rejected([release({ assets: ['Source code.zip', `${setup}.blockmap`, 'YunQiaoAI-0.8.0-win-x64-setup.exe', `YunQiaoAI-${version}-ios-device-unsigned.zip`].map(name => asset(name)) })]);
+  });
+  await test('跨仓库、上游、PHP 镜像及非法下载地址都不能提供给用户', async () => {
+    for (const url of [`http://github.com/${m.RELEASE_REPOSITORY}/releases/download/v${version}/${setup}`, 'javascript:alert(1)', `https://github.com.evil.test/${m.RELEASE_REPOSITORY}/releases/download/v${version}/${setup}`, `https://github.com/jxb412/yunqiao.me/releases/download/v${version}/${setup}`, `https://ai.haowucm.cn/releases/${setup}`, `https://user:pass@github.com/${m.RELEASE_REPOSITORY}/releases/download/v${version}/${setup}`, `https://github.com/${m.RELEASE_REPOSITORY}/releases/download/v0.6.0/${setup}`]) await rejected([release({ assets: [asset(setup, { browser_download_url: url })] })]);
+  });
+  await test('校验清单不能冒充安装包，也不能引入其他仓库或 PHP 下载', async () => {
+    for (const url of [`https://github.com/${m.RELEASE_REPOSITORY}/releases/download/v${version}/SHA256SUMS.txt`, `https://github.com/jxb412/yunqiao.me/releases/download/v${version}/SHA256SUMS.txt`, 'https://ai.haowucm.cn/pub.php?action=update']) {
+      await rejected([release({ assets: [asset('SHA256SUMS.txt', { browser_download_url: url })] })]);
+      const r = m.githubUpdate(release({ assets: [asset(setup), asset('SHA256SUMS.txt', { browser_download_url: url })] }), '0.6.0', win);
+      assert.equal(r.url, asset(setup).browser_download_url); assert.equal(r.fallbackUrl, '');
     }
   });
-  await test('network errors, missing stable release and rate limits automatically use the website', async () => { for (const error of [new Error('timeout'), new Error('HTTP 404'), new Error('HTTP 403'), new Error('HTTP 429')]) assert.equal((await expectFallback(error)).hasUpdate, true); });
-  await test('malformed JSON and invalid response shapes use the website', async () => { for (const value of [new Error('invalid JSON'), '<html>not JSON</html>', null, [], { message: 'API rate limit exceeded' }]) await expectFallback(value); });
-  await test('drafts, prereleases and prerelease tags cannot become stable updates', async () => {
-    for (const data of [release({ draft: true }), release({ prerelease: true }), release({ draft: undefined }), release({ tag_name: 'v0.8.0-beta.1' })]) await expectFallback(data);
+  await test('发布页、安装包大小和上传状态必须有效', async () => {
+    await rejected([release({ html_url: `https://github.com/jxb412/yunqiao.me/releases/tag/v${version}` })]);
+    await rejected([release({ assets: [asset(setup, { size: 0 }), asset(portable, { state: 'open' })] })]);
   });
-  await test('source archives, debug symbols, unsigned iOS and wrong-version files are ignored', async () => {
-    const names = ['Source code.zip', `${setup}.blockmap`, 'YunQiaoAI-0.8.0-win-x64-setup.exe', 'YunQiaoAI-0.7.0-ios-device-unsigned.zip', 'YunQiaoAI-0.7.0-ios-simulator.zip'];
-    await expectFallback(release({ assets: names.map(name => asset(name)) }));
+  await test('较旧或相同版本不会暴露下载地址或强制降级', () => {
+    for (const current of [version, '0.6.11-erik.10', '0.6.11', '0.8.0']) {
+      const r = m.githubUpdate(release(), current, win); assert.equal(r.hasUpdate, false); assert.equal(r.url, ''); assert.equal(r.mandatory, false);
+    }
   });
-  await test('bad or cross-repository asset URLs cannot be offered', async () => {
-    for (const url of ['http://github.com/jxb412/yunqiao.me/releases/download/v0.7.0/' + setup, 'javascript:alert(1)', 'https://github.com.evil.test/jxb412/yunqiao.me/releases/download/v0.7.0/' + setup, 'https://github.com/attacker/aurora/releases/download/v0.7.0/' + setup, 'https://user:pass@github.com/jxb412/yunqiao.me/releases/download/v0.7.0/' + setup, 'https://github.com/jxb412/yunqiao.me/releases/download/v0.6.0/' + setup]) await expectFallback(release({ assets: [asset(setup, { browser_download_url: url })] }));
-  });
-  await test('release URLs and empty or unuploaded assets are validated', async () => {
-    await expectFallback(release({ html_url: 'https://github.com/other/repo/releases/tag/v0.7.0' }));
-    await expectFallback(release({ assets: [asset(setup, { size: 0 }), asset(portable, { state: 'open' })] }));
-  });
-  await test('older GitHub versions never cause a downgrade or expose an old download', () => { const r = m.githubUpdate(release(), '0.8.0', win); assert.equal(r.hasUpdate, false); assert.equal(r.url, ''); assert.equal(r.mandatory, false); });
-  await test('server hasUpdate and mandatory cannot force an older website build', () => { const r = m.websiteUpdate(website({ hasUpdate: true, mandatory: true }), '0.8.0', win); assert.equal(r.hasUpdate, false); assert.equal(r.url, ''); assert.equal(r.fallbackUrl, ''); assert.equal(r.mandatory, false); });
-  await test('current live-source shape: no GitHub stable release and website 0.4.0 cannot downgrade 0.6.0', async () => {
-    const data = website({ version: '0.4.0', url: 'https://ai.haowucm.cn/releases/YunQiaoAI-0.4.0-win-x64-setup.exe', hasUpdate: false });
-    const r = await m.checkUpdate('0.6.0', win, async url => { if (url === m.GITHUB_RELEASE_API) throw new Error('HTTP 404'); return data; });
-    assert.equal(r.source, 'website'); assert.equal(r.version, '0.4.0'); assert.equal(r.hasUpdate, false); assert.equal(r.url, ''); assert.equal(r.fallbackUrl, '');
-  });
-  await test('semantic versions compare stable, prerelease, numeric and metadata correctly', () => {
-    assert.equal(m.compareReleaseVersions('0.7.0', '0.7.0-rc.9'), 1); assert.equal(m.compareReleaseVersions('0.7.0-rc.10', '0.7.0-rc.9'), 1); assert.equal(m.compareReleaseVersions('0.7.0+abc', 'v0.7.0+xyz'), 0); assert.equal(m.compareReleaseVersions('0.10.0', '0.9.9'), 1);
+  await test('语义版本正确比较维护编号、正式版和构建元数据', () => {
+    assert.equal(m.compareReleaseVersions('0.6.11-erik.2', '0.6.11-erik.1'), 1); assert.equal(m.compareReleaseVersions('0.6.11-erik.10', '0.6.11-erik.9'), 1);
+    assert.equal(m.compareReleaseVersions('0.6.11', '0.6.11-erik.1'), 1); assert.equal(m.compareReleaseVersions('0.6.12-erik.1', '0.6.11'), 1);
+    assert.equal(m.compareReleaseVersions('0.7.0+abc', 'v0.7.0+xyz'), 0); assert.equal(m.compareReleaseVersions('0.10.0', '0.9.9'), 1);
     for (const value of ['latest', '0.7', '01.7.0', '0.7.0-01', '0.7.0\n', '999999999999999999999.0.0']) assert.throws(() => m.compareReleaseVersions(value, '0.6.0'));
   });
-  await test('website rejects wrong platform, wrong filename version and untrusted HTTPS host', () => {
-    for (const data of [website({ arch: 'arm64' }), website({ platform: 'ios' }), website({ version: '0.8.0' }), website({ url: `https://evil.test/releases/${setup}` }), website({ url: `http://ai.haowucm.cn/releases/${setup}` }), website({ url: 'https://ai.haowucm.cn/' }), website({ url: '' })]) assert.throws(() => m.websiteUpdate(data, '0.6.0', win));
+  await test('最低版本要求也支持维护版预发布且不能被较旧发布绕过', async () => {
+    const r = await m.checkUpdate('0.6.11-erik.1', { ...win, minimumVersion: version }, async () => [release()]); assert.equal(r.version, version);
+    await assert.rejects(() => m.checkUpdate('0.6.11-erik.1', { ...win, minimumVersion: '0.6.11-erik.3' }, async () => [release()]), /尚未发布/);
   });
-  await test('manual official fallback skips GitHub and provides a verified same-version installer', async () => {
-    const calls = []; const r = await m.checkUpdate('0.6.0', { ...win, source: 'website', minimumVersion: version }, async url => { calls.push(url); return website(); });
-    assert.equal(calls.length, 1); assert.ok(calls[0].startsWith(m.OFFICIAL_UPDATE_URL)); assert.equal(r.source, 'website'); assert.equal(r.url, website().url); assert.equal(r.fallbackUrl, website().url);
-  });
-  await test('manual fallback allows newer releases but refuses an outdated mirror', async () => {
-    await assert.rejects(() => m.checkUpdate('0.6.0', { ...win, source: 'website', minimumVersion: '0.8.0' }, async () => website()), /尚未同步到 0.8.0/);
-    const r = await m.checkUpdate('0.6.0', { ...win, source: 'website', minimumVersion: '0.6.5' }, async () => website()); assert.equal(r.version, version);
-    await assert.rejects(() => m.checkUpdate('0.8.0', { ...win, source: 'website' }, async () => website()), /低于当前客户端/);
-  });
-  await test('automatic and manual fallback report an unpublished website without inventing a current release', async () => {
-    const unpublished = website({ version: '', url: '', hasUpdate: false });
-    for (const target of [win, { ...win, minimumVersion: version }, { ...win, source: 'website' }, { ...win, source: 'website', minimumVersion: version }]) {
-      const calls = [];
-      await assert.rejects(() => m.checkUpdate('0.6.0', target, async url => { calls.push(url); if (url === m.GITHUB_RELEASE_API) throw new Error('HTTP 404'); return unpublished; }), /官网备用检查未完成：官网尚未发布可用版本/);
-      assert.equal(calls.length, target.source === 'website' ? 1 : 2); assert.ok(calls.at(-1).startsWith(m.OFFICIAL_UPDATE_URL));
-    }
-  });
-  await test('only the explicit unpublished shape receives that explanation; malformed metadata stays invalid', () => {
-    const unpublished = website({ version: '', url: '', hasUpdate: false });
-    for (const patch of [{ version: null }, { version: undefined }, { url: undefined }, { url: null }, { hasUpdate: 'false' }, { hasUpdate: undefined }, { hasUpdate: true }, { platform: 'ios' }, { arch: 'arm64' }, { prerelease: true }, { draft: true }]) {
-      assert.throws(() => m.websiteUpdate({ ...unpublished, ...patch }, '0.6.0', win), error => !error.message.includes('官网尚未发布可用版本'));
-    }
-  });
-  await test('a claimed no-update response cannot bypass the requested minimum mirror version', async () => {
-    const old = website({ version: '0.6.0', url: 'https://ai.haowucm.cn/releases/YunQiaoAI-0.6.0-win-x64-setup.exe', hasUpdate: false });
-    for (const source of [undefined, 'website']) await assert.rejects(() => m.checkUpdate('0.6.0', { ...win, source, minimumVersion: version }, async url => { if (url === m.GITHUB_RELEASE_API) throw new Error('HTTP 404'); return old; }), /尚未同步到 0.7.0/);
-  });
-  await test('iOS falls back to a genuine TestFlight installation link', async () => {
-    const r = await expectFallback(release({ assets: [asset('YunQiaoAI-0.7.0-ios-device-unsigned.zip')] }), website({ platform: 'ios', arch: 'arm64', url: 'https://testflight.apple.com/join/AbCd1234' }), { platform: 'ios', arch: 'arm64' }); assert.equal(r.url, 'https://testflight.apple.com/join/AbCd1234');
-  });
-  await test('iOS accepts App Store but rejects IPA, simulator and unsigned ZIP downloads', () => {
-    const target = { platform: 'ios', arch: 'arm64' };
-    assert.equal(m.websiteUpdate(website({ platform: 'ios', arch: 'arm64', url: 'https://apps.apple.com/cn/app/yunqiao/id123456789' }), '0.6.0', target).hasUpdate, true);
-    for (const url of ['https://ai.haowucm.cn/releases/ios.ipa', 'https://ai.haowucm.cn/releases/ios-unsigned.zip', 'https://testflight.apple.com.evil.test/join/abc', 'https://apps.apple.com/cn/']) assert.throws(() => m.websiteUpdate(website({ platform: 'ios', arch: 'arm64', url }), '0.6.0', target));
-  });
-  await test('both sources failing produce an explicit failure without an admin-home fallback', async () => {
-    await assert.rejects(() => m.checkUpdate('0.6.0', win, async () => { throw new Error('fixture offline'); }), /官网备用检查未完成/);
-    await assert.rejects(() => m.checkUpdate('0.6.0', win, async url => url === m.GITHUB_RELEASE_API ? release({ assets: [] }) : website({ url: '' })), /官网备用检查未完成/);
-  });
-  await test('invalid version, architecture and source fail before any network access', async () => {
-    let requests = 0; const request = async () => { requests++; return release(); };
+  await test('旧官网备用请求和无效参数必须在联网之前拒绝', async () => {
+    let requests = 0; const request = async () => { requests++; return [release()]; };
     await assert.rejects(() => m.checkUpdate('not-a-version', win, request));
-    for (const target of [{ platform: 'android', arch: 'arm64' }, { platform: 'ios', arch: 'x64' }, { platform: 'mac', arch: 'ia32' }, { platform: 'win', arch: 'mips' }, { ...win, source: 'evil' }, { ...win, minimumVersion: '0.8.0-beta' }]) await assert.rejects(() => m.checkUpdate('0.6.0', target, request));
+    for (const target of [{ platform: 'android', arch: 'arm64' }, { platform: 'ios', arch: 'x64' }, { platform: 'mac', arch: 'ia32' }, { platform: 'win', arch: 'mips' }, { ...win, source: 'website' }, { ...win, source: 'evil' }, { ...win, minimumVersion: 'latest' }]) await assert.rejects(() => m.checkUpdate('0.6.0', target, request));
     assert.equal(requests, 0);
+  });
+  await test('没有合法自有发布时不能编造 iOS 或其他平台下载入口', async () => rejected([release()], { platform: 'ios', arch: 'arm64' }));
+  await test('生产下载组件只渲染 GitHub 下载，不渲染官网备用或无更新下载', async () => {
+    const bundle = path.join(scratch, 'renderer.cjs');
+    await build({ stdin: { contents: "import React from 'react'; import { renderToStaticMarkup } from 'react-dom/server'; import UpdateActions from './ui/src/components/UpdateActions.tsx'; export const render = update => renderToStaticMarkup(React.createElement(UpdateActions, { update }));", resolveDir: workspace, loader: 'tsx' }, bundle: true, platform: 'node', format: 'cjs', outfile: bundle, logLevel: 'silent' });
+    const renderer = await import(pathToFileURL(bundle).href);
+    const info = { ok: true, ...m.githubUpdate(release(), '0.6.11-erik.1', win) };
+    const html = renderer.render(info); assert.match(html, /GitHub 下载/); assert.doesNotMatch(html, /官网备用|官网下载/);
+    assert.equal(renderer.render({ ...info, hasUpdate: false, url: '' }), '');
   });
   console.log(`Updates: ${passed} tests passed`);
 } finally {

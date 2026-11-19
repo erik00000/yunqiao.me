@@ -6,6 +6,8 @@ import { execFileSync } from 'node:child_process';
 const root = path.dirname(fileURLToPath(import.meta.url));
 const base = path.resolve(root, '..');
 const builtAt = new Date().toISOString();
+const releaseRepository = process.env.YUNQIAO_RELEASE_REPOSITORY || 'erik00000/yunqiao.me';
+if (releaseRepository !== 'erik00000/yunqiao.me') throw new Error('维护版必须使用 erik00000/yunqiao.me GitHub 发布仓库');
 let revision = '';
 try { revision = execFileSync('git', ['rev-parse', '--short=8', 'HEAD'], { cwd: base, encoding: 'utf8', windowsHide: true }).trim(); } catch { /* Source archives do not require Git. */ }
 const buildInfo = { id: builtAt.replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z') + (revision ? `-${revision}` : ''),
@@ -18,7 +20,7 @@ const common = {
   format: 'cjs',
   sourcemap: false,
   logLevel: 'info',
-  define: { 'process.env.AURORA_BUILD': '"production"', __YUNQIAO_BUILD_INFO__: JSON.stringify(buildInfo) },
+  define: { 'process.env.AURORA_BUILD': '"production"', __YUNQIAO_BUILD_INFO__: JSON.stringify(buildInfo), __YUNQIAO_RELEASE_REPOSITORY__: JSON.stringify(releaseRepository) },
 };
 
 const entries = [

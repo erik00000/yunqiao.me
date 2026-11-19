@@ -1,11 +1,12 @@
 import https from 'node:https';
 import http from 'node:http';
 import { isValidContextWindow } from './modelContext.js';
+import { normalizeReasoningEfforts } from './agents/modelCatalog.js';
 import { createHash } from 'node:crypto';
 import { URL } from 'node:url';
 import type { AuroraStore, Provider, ProviderModel } from './store/index.js';
 import { newId, nowIso } from './util.js';
-import { GITHUB_RELEASE_API, GITHUB_RELEASE_PAGE, OFFICIAL_SITE_ORIGIN, OFFICIAL_UPDATE_URL, RELEASE_REPOSITORY } from './releaseSources.js';
+import { GITHUB_RELEASE_API, RELEASE_REPOSITORY } from './releaseSources.js';
 
 /**
  * 云端目录 + 更新检查 + 官方账号导入。
@@ -82,6 +83,8 @@ function getJson<T = any>(urlStr: string, timeoutMs = 12000, headers: Record<str
           res.resume();
           try {
             const next = new URL(res.headers.location, u);
+            // 仓库转移或改名也不能把维护版更新请求重定向到上游。
+            if (urlStr === GITHUB_RELEASE_API && next.href !== GITHUB_RELEASE_API) throw new Error('维护版更新源不允许重定向到其他仓库');
             if (redirects >= 3 || (u.protocol === 'https:' && next.protocol !== 'https:')) throw new Error('远端重定向次数过多或降级到不安全连接');
             getJson<T>(next.href, timeoutMs, {}, redirects + 1, deadline).then(value => finish(undefined, value), error => finish(error));
           } catch { finish(new Error('远端重定向地址无效、次数过多或连接不安全')); }
@@ -139,6 +142,8 @@ export function validateCloudProvider(raw: unknown): CloudProvider {
     }
     return {
       id: m.id.trim(), displayName: optionalText(m.displayName, 160), contextWindow: isValidContextWindow(m.contextWindow) ? m.contextWindow : undefined, maxOutput: number(m.maxOutput), inputPrice: number(m.inputPrice), outputPrice: number(m.outputPrice), cacheReadPrice: number(m.cacheReadPrice), cacheWritePrice: number(m.cacheWritePrice),
+      ...(Array.isArray(m.supportedReasoningEfforts) ? { supportedReasoningEfforts: normalizeReasoningEfforts(m.supportedReasoningEfforts) } : {}),
+      ...(['reasoning_effort', 'enable_thinking', 'none'].includes(m.thinkingField) ? { thinkingField: m.thinkingField as ProviderModel['thinkingField'] } : {}),
       capabilities: {
         tools: typeof m.capabilities?.tools === 'boolean' ? m.capabilities.tools : undefined,
         vision: typeof m.capabilities?.vision === 'boolean' ? m.capabilities.vision : undefined,
@@ -339,8 +344,12 @@ function result(current: string, version: string, url: string, source: UpdateInf
 }
 
 export function githubUpdate(data: any, current: string, target: Required<UpdateTarget>): UpdateInfo {
-  if (!data || data.draft !== false || data.prerelease !== false || !Array.isArray(data.assets) || data.assets.length > 1000) throw new Error('GitHub 未提供正式发布信息');
-  const version = releaseVersion(data.tag_name, true).text, releaseUrl = githubReleasePage(data.html_url, data.tag_name);
+  if (!data || data.draft !== false || typeof data.prerelease !== 'boolean' || !Array.isArray(data.assets) || data.assets.length > 1000) throw new Error('GitHub 未提供有效发布信息');
+  const parsed = releaseVersion(data.tag_name);
+  // 仅接收本维护分支的预发布，避免意外切换到 beta/rc 等其他通道。
+  if (parsed.pre.length && !/^erik\.(0|[1-9]\d*)$/.test(parsed.pre.join('.'))) throw new Error('GitHub 发布不属于维护版更新通道');
+  if (data.prerelease && !parsed.pre.length) throw new Error('GitHub 预发布版本标记不一致');
+  const version = parsed.text, releaseUrl = githubReleasePage(data.html_url, data.tag_name);
   const candidates = data.assets.flatMap((asset: any) => {
     if (!asset || typeof asset.name !== 'string' || asset.state !== 'uploaded' || !Number.isSafeInteger(asset.size) || asset.size <= 0) return [];
     const rank = clientAssetRank(asset.name, version, target); if (rank < 0) return [];
@@ -350,36 +359,19 @@ export function githubUpdate(data: any, current: string, target: Required<Update
   const selected = candidates[0]; return result(current, version, selected.url, 'github', data.body, data.published_at, releaseUrl, selected.name);
 }
 
-export function websiteUpdate(data: any, current: string, target: Required<UpdateTarget>): UpdateInfo {
-  if (!data || typeof data !== 'object' || Array.isArray(data) || data.prerelease === true || data.draft === true) throw new Error('官网更新信息无效');
-  if ((data.platform !== undefined && data.platform !== target.platform) || (data.arch !== undefined && data.arch !== target.arch)) throw new Error('官网安装包的平台或架构不匹配');
-  if (data.version === '' && data.url === '' && data.hasUpdate === false) throw new Error('官网尚未发布可用版本');
-  const version = releaseVersion(data.version, true).text;
-  const url = secureUpdateUrl(data.url); let assetName: string | undefined;
-  if (target.platform === 'ios') {
-    if (!((url.hostname === 'apps.apple.com' && /\/id\d+(?:\/)?$/.test(url.pathname)) || (url.hostname === 'testflight.apple.com' && /^\/join\/[a-zA-Z0-9]+\/?$/.test(url.pathname)))) throw new Error('当前 iOS 客户端尚无 App Store 或 TestFlight 安装入口');
-  } else {
-    assetName = decodeURIComponent(url.pathname.split('/').at(-1) || '');
-    if (clientAssetRank(assetName, version, target) < 0) throw new Error('官网未提供匹配版本及平台的客户端安装包');
-    if (url.hostname === 'github.com') {
-      const segments = decodeURIComponent(url.pathname).split('/'); const tag = segments.at(-2) || '';
-      if (releaseVersion(tag, true).text !== version) throw new Error('官网安装包版本不匹配');
-      githubAssetUrl(url.href, tag, assetName);
-    } else if (url.origin !== OFFICIAL_SITE_ORIGIN || url.search || !url.pathname.startsWith('/releases/')) throw new Error('官网安装包地址不属于官方发布源');
-  }
-  return result(current, version, url.href, 'website', data.notes, data.publishedAt, GITHUB_RELEASE_PAGE, assetName, data.mandatory === true);
-}
-
 export async function checkUpdate(current: string, target: UpdateCheckOptions = {}, request: JsonRequest = getJson): Promise<UpdateInfo> {
   const normalized = releaseVersion(current).text, selected = updateTarget(target);
-  if (target.source !== undefined && target.source !== 'website') throw new Error('未知更新来源');
-  const minimum = target.minimumVersion === undefined ? undefined : releaseVersion(target.minimumVersion, true).text;
-  if (target.source !== 'website') try { return githubUpdate(await request(GITHUB_RELEASE_API), normalized, selected); } catch { /* Network, rate limits, malformed metadata or missing platform assets use the official fallback. */ }
-  const endpoint = new URL(OFFICIAL_UPDATE_URL); endpoint.searchParams.set('platform', selected.platform); endpoint.searchParams.set('arch', selected.arch); endpoint.searchParams.set('current', normalized);
+  if (target.source !== undefined) throw new Error('维护版仅允许自己的 GitHub 发布源，不支持官网备用');
+  const minimum = target.minimumVersion === undefined ? undefined : releaseVersion(target.minimumVersion).text;
   try {
-    const info = websiteUpdate(await request(endpoint.href), normalized, selected);
-    if (minimum && compareReleaseVersions(info.version, minimum) < 0) throw new Error(`官网备用包尚未同步到 ${minimum}，请使用 GitHub 下载或稍后重试`);
-    if (target.source === 'website' && compareReleaseVersions(info.version, normalized) < 0) throw new Error('官网备用包版本低于当前客户端，已阻止下载');
+    const releases = await request(GITHUB_RELEASE_API);
+    if (!Array.isArray(releases) || releases.length > 100) throw new Error('GitHub 发布列表无效');
+    const candidates = releases.flatMap(data => {
+      try { return [githubUpdate(data, normalized, selected)]; } catch { return []; }
+    }).sort((a, b) => compareReleaseVersions(b.version, a.version));
+    const info = candidates[0];
+    if (!info) throw new Error('维护仓库尚未发布当前平台的有效安装包');
+    if (minimum && compareReleaseVersions(info.version, minimum) < 0) throw new Error(`维护仓库尚未发布 ${minimum} 或更高版本`);
     return info;
-  } catch (error) { throw new Error(`${target.source === 'website' ? '官网备用检查未完成' : 'GitHub 暂不可用或缺少匹配安装包；官网备用检查未完成'}：${(error as Error).message}`); }
+  } catch (error) { throw new Error(`维护版更新检查未完成（${RELEASE_REPOSITORY}；不会回退到上游或官网）：${(error as Error).message}`); }
 }

@@ -3,6 +3,7 @@ import type { PageProps } from '../App';
 import { Btn, Field, Ico, Toggle, copyText, useToast } from '../components/ui';
 import { Settings, UpdateInfo, call } from '../lib/api';
 import UpdateActions from '../components/UpdateActions';
+import { GITHUB_RELEASE_PAGE, RELEASE_REPOSITORY, UPSTREAM_PROJECT_URL } from '../../../src/core/releaseSources';
 
 export default function SettingsPage({ state, reload }: PageProps) {
   const [s, setS] = useState<Settings>(state.settings);
@@ -45,16 +46,16 @@ export default function SettingsPage({ state, reload }: PageProps) {
       {tab === 'cloud' && <div className="card" style={{ maxWidth: 900 }}>
         <div className="card-title">版本更新 <span className="chip">当前 v{state.version}</span></div>
         {state.build && <p className="hint" title={state.build.id}>{state.build.channel === 'local' ? '本地调试版' : '构建时间'} · {new Date(state.build.builtAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}（北京时间）</p>}
-        <p className="muted">优先从 GitHub 获取最新正式版，连接失败时自动尝试官网。下载较慢时也可选择官网备用。</p>
+        <p className="muted">个人维护版仅从 {RELEASE_REPOSITORY} 获取已发布的匹配安装包，不会回退到上游或官网镜像。尚无发布时不会提供下载。</p>
         {switchField('启动时检查更新', 'autoCheckUpdate', '发现新版本后显示下载入口，由你选择安装。')}
         <div className="row" style={{ flexWrap: 'wrap' }}>
           <Btn onClick={() => task(async () => { setUpdate(null); setUpdateError(''); try { setUpdate(await call<UpdateInfo>('update.check')); } catch (e: any) { setUpdateError(e.message || String(e)); } })}><Ico name="refresh" size={14} />{busy ? '正在检查…' : '检查更新'}</Btn>
-          <Btn variant="ghost" onClick={() => task(async () => { await call('app.openExternal', { url: 'https://github.com/jxb412/yunqiao.me/releases/latest' }); })}>GitHub 发布页 ↗</Btn>
+          <Btn variant="ghost" onClick={() => task(async () => { await call('app.openExternal', { url: GITHUB_RELEASE_PAGE }); })}>GitHub 发布页 ↗</Btn>
         </div>
         {updateError && <div className="notice warning" role="alert" style={{ marginTop: 24 }}>{updateError}</div>}
         {update && <div style={{ marginTop: 24 }} aria-live="polite">
           {!update.ok ? <div className="notice warning" role="alert">{update.message || '暂时无法检查更新，请稍后重试。'}</div> : <>
-            <div className="notice"><Ico name={update.hasUpdate ? 'download' : 'check'} /><div><b>{update.hasUpdate ? `发现新版本 v${update.version}` : '当前版本无需更新'}</b><p>最新正式版 v{update.version} · 来源：{update.source === 'website' ? '官网备用' : 'GitHub'}</p></div></div>
+            <div className="notice"><Ico name={update.hasUpdate ? 'download' : 'check'} /><div><b>{update.hasUpdate ? `发现新版本 v${update.version}` : '当前版本无需更新'}</b><p>最新维护版 v{update.version} · 来源：GitHub</p></div></div>
             {update.notes && <p className="muted" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 260, overflowY: 'auto' }}>{update.notes}</p>}
             <UpdateActions key={`${update.source}:${update.version}`} update={update} />
           </>}
@@ -65,6 +66,6 @@ export default function SettingsPage({ state, reload }: PageProps) {
         <div className="card"><div className="card-title">云桥 AI · yunqiao.me</div><p className="muted">连接你的客户端、供应商与模型。</p><div className="kv"><span className="k">版本</span><span className="v">{state.version}</span><span className="k">平台</span><span className="v">{platformName}</span><span className="k">网关</span><span className="v mono">{state.gatewayUrl}</span></div><div className="row" style={{ marginTop: 22 }}><Btn onClick={() => task(async () => { await call('gateway.restart'); await reload(); toast.push('网关已重启', 'ok'); })}><Ico name="refresh" size={14} />重启网关</Btn><Btn variant="danger" onClick={() => { if (confirm('退出云桥 AI 并停止本地网关？')) call('app.quit'); }}>退出应用</Btn></div></div>
       </div>}
     </fieldset>
-    {tab === 'data' && <div className="page-footnote"><a href="https://github.com/jxb412/yunqiao.me" target="_blank" rel="noopener noreferrer">项目源码 ↗</a><a href="https://github.com/jxb412/yunqiao.me/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">AGPL 许可 ↗</a></div>}
+    {tab === 'data' && <div className="page-footnote"><a href={`https://github.com/${RELEASE_REPOSITORY}`} target="_blank" rel="noopener noreferrer">项目源码 ↗</a><a href={UPSTREAM_PROJECT_URL} target="_blank" rel="noopener noreferrer">上游项目（云桥AI） ↗</a><a href={`${UPSTREAM_PROJECT_URL}/blob/main/LICENSE`} target="_blank" rel="noopener noreferrer">AGPL 许可 ↗</a></div>}
   </>;
 }

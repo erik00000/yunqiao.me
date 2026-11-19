@@ -1,16 +1,20 @@
 # 云桥 AI · yunqiao.me
 
+> **个人维护源码版：0.6.11-erik.1（2026 年 11 月 19 日）。Windows x64 本地安装包已构建并验收，GitHub Release 尚未发布。**
+>
+> 本版由 **erik00000** 基于原作者 **jxb412 / 云桥AI** 的 0.6.11 源码维护，继续遵循 **AGPL-3.0-only**。维护版仅从 `erik00000/yunqiao.me` 的 Actions 手动构建产物或本地源码构建获取。**不要安装上游 0.6.11 安装包，也不要通过上游自动更新覆盖本版，否则会丢失个人维护修复。** 本文不提供尚不存在的维护版安装包链接。
+
 **解锁桌面插件市场，把客户端、供应商、模型和历史会话放进一个中文工作空间。**
 
 从你正在使用的客户端开始：选择 Claude Code、兼容的 ChatGPT 桌面版或 Codex CLI，连接自己的 API 供应商，选好模型，预览后应用。支持国内外模型服务与自定义中转地址。新安装默认使用 **深夜** 主题，可在设置中切换为云白或跟随系统；升级保留已保存的主题选择。
 
-[下载 0.6.9](https://github.com/jxb412/yunqiao.me/releases/tag/v0.6.9) · [安装说明](INSTALLATION.md) · [使用指南](USER-GUIDE.md) · [反馈问题](https://github.com/jxb412/yunqiao.me/issues) · [用户讨论](https://github.com/jxb412/yunqiao.me/discussions)
+[个人维护源码](https://github.com/erik00000/yunqiao.me) · [维护版 Actions 构建入口](https://github.com/erik00000/yunqiao.me/actions/workflows/build.yml) · [安装说明](INSTALLATION.md) · [使用指南](USER-GUIDE.md)
 
-> 文档更新于 **2026 年 11 月 18 日**。**0.6.9 已发布**，Windows 与 macOS 安装包可从 [Releases 下载页](https://github.com/jxb412/yunqiao.me/releases/tag/v0.6.9)直接下载。旧版可能不包含下文全部功能。
+维护分支为 `fix/codex-native-catalog-maintained-20261118`，包含已在 Windows 公司电脑验收的修复；上游贡献另走独立 PR 分支，不混入个人更新源。当前未发布 GitHub Release 或触发本分支 Actions 构建，下文产物名称不代表已有公开下载。
 
-**本次更新：历史有问题，先备份再跳过，配置继续完成。** 格式错误、重复记录、路径或归属不明确的历史会完整备份并原样保留，能安全修复的继续迁移；预览和结果显示修复、保留、跳过及实际备份数量。完整说明见 [0.6.9 版本说明](docs/RELEASE-0.6.9.md)。
+**上游 0.6.11 功能说明：旧会话迁移后也能继续使用当前选择的模型。** 补齐可识别的历史供应商入口，并为自动修复的会话建立兼容连接。在网关或官方账号共存模式下，桌面端重新打开旧会话时，即使记录中仍是旧模型，也会使用本次选择的供应商和模型。Codex CLI 可在历史页复制带有对应供应商的恢复命令。配置保存与历史处理仍分别进行。以上为上游 0.6.11 的历史功能说明；本次个人维护改动以维护分支提交和 PR 说明为准。
 
-ChatGPT / Codex 配置会先备份当前目录内的会话文件和索引数据库，再修复可处理的历史。缺少原文件的索引原样保留，格式错误或归属不明等记录跳过，不影响其他安全项和客户端配置。执行前须保存工作并完全退出相关桌面客户端和 CLI；备份失败时停止写入。操作与恢复说明见[历史迁移指南](docs/HISTORY-PROVIDER-MIGRATION.md)。
+ChatGPT / Codex 先保存客户端配置，再单独尝试历史备份与修复。历史暂时无法处理时保留原样并显示原因，已保存的配置仍可使用；保存工作后重启客户端加载新设置。配置文件本身无法安全保存时仍会明确报错。网关或共存模式的旧会话入口连接已选择的供应商和模型，使用期间请保持云桥运行；直连模式保留旧会话模型名，需上游仍支持该模型。兼容入口不能恢复缺失正文，也不能保证跨账号加密内容可以继续使用。操作与恢复说明见[历史迁移指南](docs/HISTORY-PROVIDER-MIGRATION.md)。
 
 ![云桥 AI 客户端工作台](docs/images/clients-v0.6.png)
 
@@ -20,7 +24,7 @@ ChatGPT / Codex 配置会先备份当前目录内的会话文件和索引数据�
 2. **按客户端配置中转。** 先选客户端，再选或添加供应商和模型。向导支持已有配置发现、云端厂商预设、上游测试、本地网关测试、配置预览、自动备份和恢复；WorkBuddy、CodeBuddy、Kimi、OpenCode 和 Qwen 提供各自的手动接入步骤与示例。
 3. **网关与直连任选。** 本地网关支持常用模型协议转换、多密钥轮换、路由分组和用量统计；符合条件时可直连供应商。兼容的 ChatGPT / Codex 编程客户端还可保留官方账号，与第三方模型共存。
 4. **查看当前连接与权限。** “当前连接”集中显示客户端、供应商、模型、余额和状态，详细说明可按需展开；桌面应用可强制结束后重新启动，命令行工具可在新终端打开。支持的编程客户端可预览并单独恢复原执行权限，保留供应商连接。
-5. **找回与整理历史。** 搜索、阅读和导出本机会话，区分主会话与子任务；Claude 会话可按存储来源筛选，桌面会话会说明正文是否已找到。对 Codex 编程会话提供供应商区域迁移、路径检查和消息索引修复。配置应用和恢复会先备份历史、迁移安全项并跳过问题记录；独立修复入口继续用于指定范围的整理。
+5. **找回与整理历史。** 搜索、阅读和导出本机会话，区分主会话与子任务；Claude 会话可按存储来源筛选，桌面会话会说明正文是否已找到。对 Codex 编程会话提供供应商区域迁移、路径检查和消息索引修复。配置应用和恢复先完成配置，再尝试历史备份与修复；无法处理时保留原历史并提示，独立修复入口继续用于指定范围的整理。
 6. **统一管理模型、余额和使用量。** 厂商目录优先展示 OpenAI、Anthropic、Google，再展示其他国际、国内、中转和本地服务。同步供应商模型，分页查找并批量编辑能力、价格与上下文；查询支持接口的供应商余额和各 Key 额度，查看实时请求、Token、缓存命中与估算费用。
 7. **按自己的习惯使用。** 管理 MCP、Skills 与全局提示词，调整外观、托盘、自启、代理和网关设置，导入导出配置；通过远程控制台查看电脑上的工作空间。
 8. **会员登录自动续期。** 用邮箱和密码登录、完成所需验证后，在平台支持时后台续期，无需因短期访问令牌到期而反复登录。页面会说明续期状态，手动绑定访问令牌的方式需到期后重新绑定；会员活动和额度以平台实时结果为准。
@@ -36,10 +40,10 @@ ChatGPT / Codex 配置会先备份当前目录内的会话文件和索引数据�
 1. 安装并打开云桥 AI，进入 **客户端接入**，点击目标客户端的 **开始配置**。
 2. 选择已有供应商，或填写供应商给出的 API 地址、API Key 和模型。厂商目录可帮助填写预设。
 3. 选择模型和接入方式。通常使用 **本地网关**；不需要网关功能时，可选择界面允许的 **直连供应商**。
-4. 测试后点击 **预览配置**，核对实际路径和计划修改。ChatGPT / Codex 配置请先退出相关客户端，有历史时点击 **备份历史并应用配置**，无历史时点击 **备份并应用配置**。其他自动配置客户端按预览应用；手动接入按专属指南完成。测试可能产生少量费用。
+4. 测试后点击 **预览配置**，核对实际路径和计划修改，点击 **保存配置**。ChatGPT / Codex 即使正在运行也可先保存配置，历史处理结果会单独说明；手动接入按专属指南完成。测试可能产生少量费用。
 5. 重新启动客户端，发起一条对话。使用本地网关时，保持云桥 AI 运行。
 
-ChatGPT / Codex 配置预览会同时显示需修复、无需修改、原样保留、将跳过的数量，以及会话文件和数据库的备份数量。先退出相关客户端，有历史时点击 **备份历史并应用配置**；提示仍在运行时，退出后点击 **已退出，重新应用**。无法安全迁移的历史在完整备份后跳过，配置继续进行。备份或保存失败时不会显示成功；若检测到外部改动，保留现状与备份并提示处理。
+ChatGPT / Codex 的配置结果与历史状态分开显示。配置先保存，历史能安全处理时才备份并修复；客户端运行中、历史异常或历史备份失败时，保留原历史并提示稍后处理。配置成功后无需等待历史完成即可重启使用；“待处理”不代表历史已迁移。自动历史修复完成后，可在桌面客户端重新打开旧对话；在 Codex CLI 续聊时，请到 **历史会话** 选择记录并点击 **复制恢复命令**，Windows 粘贴到 PowerShell，macOS 粘贴到终端。命令会携带会话实际使用的供应商，避免直接输入旧命令时出现供应商不一致。
 
 要使用插件，保存工作并完全退出原客户端，在 **插件中心 → 桌面插件与市场** 顶部的 **插件市场解锁** 中点击 **启用并连接**。确认 **已生效** 后点击 **浏览插件市场**。完整操作见[使用指南](USER-GUIDE.md)。
 
@@ -60,14 +64,16 @@ ChatGPT / Codex 配置预览会同时显示需修复、无需修改、原样保�
 
 ## 下载与安装
 
-| 平台 | 0.6.9 下载 |
-| --- | --- |
-| Windows x64 | [安装版](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.9/YunQiaoAI-0.6.9-win-x64-setup.exe) · [免安装版](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.9/YunQiaoAI-0.6.9-win-x64-portable.exe) · [完整解压版](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.9/YunQiaoAI-0.6.9-win-x64.zip) |
-| macOS Apple Silicon | [DMG](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.9/YunQiaoAI-0.6.9-mac-arm64.dmg) · [ZIP](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.9/YunQiaoAI-0.6.9-mac-arm64.zip)，适用于 Apple M 系列芯片 |
-| macOS Intel | [DMG](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.9/YunQiaoAI-0.6.9-mac-x64.dmg) · [ZIP](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.9/YunQiaoAI-0.6.9-mac-x64.zip)，适用于 Intel 处理器 |
-| iPhone / iPad | 目前没有可直接安装的正式 App，可通过浏览器连接电脑端 |
+**Windows x64 安装版本地构建及隔离验收已通过；维护版 GitHub Release 尚未发布。下表列各平台预期产物，不提供尚不存在的公开下载链接，其他平台未经本机验收。**
 
-普通用户请下载上表安装包；[Releases 的 Assets](https://github.com/jxb412/yunqiao.me/releases/tag/v0.6.9)同时提供 [SHA256 校验清单](https://github.com/jxb412/yunqiao.me/releases/download/v0.6.9/SHA256SUMS.txt)。具体文件名和步骤见[安装说明](INSTALLATION.md)。[GitHub Actions](https://github.com/jxb412/yunqiao.me/actions/workflows/build.yml) 中的产物用于体验开发构建，可能包含尚未正式发布的改动。
+| 平台 | 0.6.11-erik.1 预期产物 | 个人仓库 Actions artifact |
+| --- | --- | --- |
+| Windows x64 | 安装版 `win-x64-setup.exe`、免安装版 `win-x64-portable.exe`、完整解压版 `win-x64.zip` | `yunqiao-windows` |
+| macOS Apple Silicon | Apple M 系列使用 `mac-arm64.dmg` / `.zip` | `yunqiao-macos-arm64` |
+| macOS Intel | Intel 处理器使用 `mac-x64.dmg` / `.zip` | `yunqiao-macos-x64` |
+| iPhone / iPad | 目前没有可直接安装的正式 App，可通过浏览器连接电脑端 | 无普通用户可直接安装的维护版 App |
+
+桌面产物的完整文件名前缀预计为 `YunQiaoAI-0.6.11-erik.1-`。由维护者在 [个人仓库 build 工作流](https://github.com/erik00000/yunqiao.me/actions/workflows/build.yml)手动选择维护分支运行；成功后核对提交，再从该次运行的 **Artifacts** 获取对应平台文件及校验清单。分支未推送、构建未成功或 artifact 不存在时，请等待或本地构建，不要使用上游安装包替代。手动构建步骤、预期文件名及本地打包命令见[安装说明](INSTALLATION.md)。
 
 Windows ZIP 版需完整解压后双击同目录的 `YunQiaoAI.exe`；portable 启动会显示准备提示。macOS 将 `YunQiaoAI.app` 拖入“应用程序”，未签名包的首次打开方法见[安装说明](INSTALLATION.md#安装和首次打开)。更新或切换包形式会保留已有本机数据。
 
@@ -78,7 +84,7 @@ Windows ZIP 版需完整解压后双击同目录的 `YunQiaoAI.exe`；portable �
 安装 [Node.js 22.x](https://nodejs.org/)（22.13 或更新版本，含 npm）和 [Git](https://git-scm.com/downloads) 后，可通过源码运行桌面应用：
 
 ```bash
-git clone --branch v0.6.9 --depth 1 https://github.com/jxb412/yunqiao.me.git yunqiao.me
+git clone --branch fix/codex-native-catalog-maintained-20261118 --depth 1 https://github.com/erik00000/yunqiao.me.git yunqiao.me
 cd yunqiao.me
 npm install --include=dev
 npm start
@@ -86,12 +92,14 @@ npm start
 
 Windows PowerShell 请将最后两条命令写为 `npm.cmd install --include=dev` 和 `npm.cmd start`。首次安装需联网下载依赖；以后在保留的源码目录中运行启动命令，不会生成系统快捷方式。Windows、macOS 的完整命令与更新方法见 [npm 源码安装说明](INSTALLATION.md#npm-从源码安装运行)。
 
-版本说明：[0.6.9](docs/RELEASE-0.6.9.md) · [0.6.8](docs/RELEASE-0.6.8.md) · [0.6.7](docs/RELEASE-0.6.7.md) · [0.6.6](docs/RELEASE-0.6.6.md) · [0.6.5](docs/RELEASE-0.6.5.md) · [0.6.4](docs/RELEASE-0.6.4.md) · [0.6.3](docs/RELEASE-0.6.3.md) · [0.6.2](docs/RELEASE-0.6.2.md) · [0.6.1](docs/RELEASE-0.6.1.md)。
+本次维护改动请参阅维护分支提交和 PR 说明；0.6.10 / 0.6.11 的版本说明文件未包含在当前源码中，不提供失效链接。上游历史版本说明：[0.6.9](docs/RELEASE-0.6.9.md) · [0.6.8](docs/RELEASE-0.6.8.md) · [0.6.7](docs/RELEASE-0.6.7.md) · [0.6.6](docs/RELEASE-0.6.6.md) · [0.6.5](docs/RELEASE-0.6.5.md) · [0.6.4](docs/RELEASE-0.6.4.md) · [0.6.3](docs/RELEASE-0.6.3.md) · [0.6.2](docs/RELEASE-0.6.2.md) · [0.6.1](docs/RELEASE-0.6.1.md)。
 
 ## 数据与反馈
 
 供应商密钥和配置保存在本机。云端目录提供公开的厂商信息；模型请求发送到你选择的服务。导出的配置包含密钥，请妥善保管。余额以供应商返回为准，用量费用按配置价格估算。
 
-遇到问题可提交[问题反馈](https://github.com/jxb412/yunqiao.me/issues)。请提供云桥版本、系统、客户端名称和版本、所选接入方式及错误提示，并遮住 API Key、访问令牌和个人会话内容。
+维护版问题请向个人仓库维护者反馈，并提供 `0.6.11-erik.1` 版本、构建提交、系统、客户端名称和版本、所选接入方式及错误提示，遮住 API Key、访问令牌和个人会话内容。
 
-本项目按 [AGPL-3.0-only](LICENSE) 开源。[查看源码](https://github.com/jxb412/yunqiao.me) · [第三方许可](THIRD_PARTY_NOTICES.md)
+本项目保留原作者 **jxb412 / 云桥AI** 署名，个人维护者为 **erik00000**，继续按 [AGPL-3.0-only](LICENSE) 开源。[个人维护源码](https://github.com/erik00000/yunqiao.me) · [第三方许可](THIRD_PARTY_NOTICES.md)
+
+仅供上游参考（不是维护版下载或更新来源）：[原作者源码](https://github.com/jxb412/yunqiao.me) · [上游 0.6.11 发布记录](https://github.com/jxb412/yunqiao.me/releases/tag/v0.6.11) · [上游问题](https://github.com/jxb412/yunqiao.me/issues) · [上游讨论](https://github.com/jxb412/yunqiao.me/discussions)。

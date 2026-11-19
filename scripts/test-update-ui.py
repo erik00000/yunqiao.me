@@ -25,7 +25,7 @@ window.mount();
 FIXTURE = """()=>{
   window.calls=[];window.opened=[];window.windowOpens=[];window.pending=[];
   window.hold={};window.manualError='';window.websiteError='';
-  window.latest={ok:true,current:'0.6.0',version:'0.7.0',hasUpdate:true,mandatory:false,source:'github',url:'https://github.com/jxb412/yunqiao.me/releases/download/v0.7.0/YunQiaoAI-0.7.0-win-x64-setup.exe',releaseUrl:'https://github.com/jxb412/yunqiao.me/releases/tag/v0.7.0',assetName:'YunQiaoAI-0.7.0-win-x64-setup.exe',notes:'改进客户端配置与更新体验。'};
+  window.latest={ok:true,current:'0.6.0',version:'0.7.0',hasUpdate:true,mandatory:false,source:'github',url:'https://github.com/erik00000/yunqiao.me/releases/download/v0.7.0/YunQiaoAI-0.7.0-win-x64-setup.exe',releaseUrl:'https://github.com/erik00000/yunqiao.me/releases/tag/v0.7.0',assetName:'YunQiaoAI-0.7.0-win-x64-setup.exe',notes:'改进客户端配置与更新体验。'};
   window.manual=structuredClone(window.latest);
   window.website={...window.latest,source:'website',url:'https://yunqiao.me/downloads/YunQiaoAI-0.7.0-win-x64-setup.exe'};
   window.openResult={ok:true};
@@ -142,35 +142,16 @@ def main():
                 assert page.evaluate('window.opened[0]') == page.evaluate('window.latest.url')
             run('Manual checks ignore legacy URL settings and only an explicit GitHub download opens a link', explicit_download)
 
-            def fallback_payload():
+            def no_upstream_fallback():
                 update_tab(); check_update()
-                page.get_by_role('button', name='官网备用', exact=True).click()
-                page.wait_for_function('window.opened.length===1')
-                assert page.evaluate("window.calls.filter(x=>x.action==='update.check').at(-1).payload") == {'source': 'website', 'minimumVersion': '0.7.0'}
-                assert page.evaluate('window.opened') == ['https://yunqiao.me/downloads/YunQiaoAI-0.7.0-win-x64-setup.exe']
-            run('Website fallback passes source and minimumVersion and opens only the validated returned URL', fallback_payload)
-
-            def bad_website(kind):
-                update_tab(); check_update()
-                if kind == 'old':
-                    page.evaluate("window.website={ok:false,message:'官网当前仅提供 v0.6.0，请使用 GitHub 下载 v0.7.0'}")
-                    message = '官网当前仅提供 v0.6.0，请使用 GitHub 下载 v0.7.0'
-                elif kind == 'package':
-                    page.evaluate("window.website={...window.website,url:'',message:'官网尚未提供 Windows 安装包'}")
-                    message = '官网尚未提供 Windows 安装包'
-                else:
-                    page.evaluate("window.websiteError='官网连接超时，请稍后重试'")
-                    message = '官网连接超时，请稍后重试'
-                page.get_by_role('button', name='官网备用', exact=True).click()
-                expect(page.get_by_role('alert')).to_have_text(message)
+                expect(page.get_by_role('button', name='官网备用', exact=True)).to_have_count(0)
+                expect(page.get_by_text('个人维护版仅从 erik00000/yunqiao.me 获取已发布的匹配安装包，不会回退到上游或官网镜像。尚无发布时不会提供下载。', exact=True)).to_be_visible()
+                assert not page.evaluate("window.calls.some(x=>x.action==='update.check'&&x.payload.source==='website')")
                 no_navigation()
-                page.evaluate("window.websiteError='';window.website={...window.latest,source:'website',url:'https://yunqiao.me/verified-new-installer.exe'}")
-                page.get_by_role('button', name='官网备用', exact=True).click()
+                page.get_by_role('button', name='GitHub 发布页 ↗', exact=True).click()
                 page.wait_for_function('window.opened.length===1')
-                expect(page.get_by_role('alert')).to_have_count(0)
-                assert page.evaluate('window.opened[0]') == 'https://yunqiao.me/verified-new-installer.exe'
-            for kind, label in [('old', 'Older website release'), ('package', 'Missing platform package'), ('network', 'Website network rejection')]:
-                run(label + ' remains visible without navigation and can recover on retry', lambda kind=kind: bad_website(kind))
+                assert page.evaluate('window.opened[0]') == 'https://github.com/erik00000/yunqiao.me/releases'
+            run('维护版只展示自有仓库和下载，不存在官网备用操作', no_upstream_fallback)
 
             def check_failure(thrown):
                 update_tab()
@@ -201,27 +182,17 @@ def main():
             run('A pending manual check disables repeated clicks until it completes', duplicate_check)
 
             def duplicate_download():
-                update_tab(); check_update(); page.evaluate('window.hold.website=true')
-                page.get_by_role('button', name='官网备用', exact=True).click()
+                update_tab(); check_update(); page.evaluate('window.hold.open=true')
+                page.get_by_role('button', name='GitHub 下载', exact=True).click()
                 processing = page.get_by_role('button', name='处理中…', exact=True)
                 expect(processing).to_be_disabled()
-                primary = page.get_by_role('button', name='GitHub 下载', exact=True)
-                expect(primary).to_be_disabled()
                 processing.evaluate('node=>{node.click();node.click();}')
-                primary.evaluate('node=>node.click()')
-                assert page.evaluate("window.calls.filter(x=>x.action==='update.check'&&x.payload.source==='website').length") == 1
-                no_navigation()
-                page.evaluate("window.release('website')")
-                page.wait_for_function('window.opened.length===1')
-                expect(primary).to_be_enabled()
-                page.evaluate("window.hold.open=true")
-                primary.click()
-                expect(primary).to_be_disabled()
-                primary.evaluate('node=>node.click()')
-                assert page.evaluate("window.calls.filter(x=>x.action==='app.openExternal').length") == 2
+                assert page.evaluate("window.calls.filter(x=>x.action==='app.openExternal').length") == 1
+                assert not page.evaluate("window.calls.some(x=>x.action==='update.check'&&x.payload.source==='website')")
                 page.evaluate("window.release('open')")
-                expect(primary).to_be_enabled()
-            run('Both download actions disable duplicate website requests and pending browser opens', duplicate_download)
+                page.wait_for_function('window.opened.length===1')
+                expect(page.get_by_role('button', name='GitHub 下载', exact=True)).to_be_enabled()
+            run('下载期间禁止重复点击，且不会触发官网备用请求', duplicate_download)
 
             def opening_failure():
                 update_tab(); check_update()
@@ -247,21 +218,22 @@ def main():
 
             def direct_website():
                 update_tab(); page.evaluate('window.manual=structuredClone(window.website)'); check_update()
-                expect(page.get_by_text('最新正式版 v0.7.0 · 来源：官网备用', exact=True)).to_be_visible()
                 no_navigation()
                 expect(page.get_by_role('button', name='官网备用', exact=True)).to_have_count(0)
-                page.get_by_role('button', name='官网下载', exact=True).click()
-                page.wait_for_function('window.opened.length===1')
-                assert page.evaluate('window.opened[0]') == page.evaluate('window.website.url')
-            run('Automatic website fallback is labelled and still requires an explicit download', direct_website)
+                expect(page.get_by_role('button', name='官网下载', exact=True)).to_have_count(0)
+                page.get_by_role('button', name='GitHub 下载', exact=True).click()
+                expect(page.get_by_role('alert')).to_have_text('维护仓库暂未提供此版本的安装包，请重新检查更新。')
+                no_navigation()
+            run('旧官网来源响应不能触发下载', direct_website)
 
             def desktop_banner():
                 reset(mode='app')
                 expect(page.get_by_text('新版本 v0.7.0 已发布 · GitHub', exact=True)).to_be_visible()
                 no_navigation()
-                page.get_by_role('button', name='官网备用', exact=True).click()
+                expect(page.get_by_role('button', name='官网备用', exact=True)).to_have_count(0)
+                page.get_by_role('button', name='GitHub 下载', exact=True).click()
                 page.wait_for_function('window.opened.length===1')
-                assert page.evaluate("window.calls.filter(x=>x.action==='update.check').at(-1).payload") == {'source': 'website', 'minimumVersion': '0.7.0'}
+                assert page.evaluate('window.opened[0]') == page.evaluate('window.latest.url')
                 page.get_by_role('button', name='稍后', exact=True).click()
                 expect(page.get_by_text('新版本 v0.7.0 已发布 · GitHub', exact=True)).to_have_count(0)
             run('Desktop App banner checks automatically but downloads and dismisses only on user action', desktop_banner)

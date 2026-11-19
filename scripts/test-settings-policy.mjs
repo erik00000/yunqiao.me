@@ -33,6 +33,18 @@ try {
     assert.equal(current.gatewayToken, token); assert.equal(current.gatewayPort, 4401); assert.equal(current.theme, 'dark'); assert.equal(current.catalogUrl, catalog);
     const reopened = new AuroraStore(legacyDir).getSettings(); assert.equal(reopened.updateUrl, GITHUB_RELEASE_API); assert.equal(reopened.autoSyncModels, true); assert.equal(reopened.gatewayToken, token);
   });
+  check('维护版将上游 GitHub、PHP 和第三方旧更新地址迁移到自有仓库且不触碰真实设置', () => {
+    assert.equal(GITHUB_RELEASE_API, 'https://api.github.com/repos/erik00000/yunqiao.me/releases?per_page=100');
+    for (const [index, updateUrl] of ['https://api.github.com/repos/jxb412/yunqiao.me/releases/latest', 'https://ai.haowucm.cn/pub.php?action=update', 'https://third-party.invalid/update'].entries()) {
+      const store = new AuroraStore(path.join(scratch, `upstream-${index}`));
+      const before = store.getSettings(); store.settings.write({ ...before, updateUrl });
+      const migrated = store.getSettings(); assert.equal(migrated.updateUrl, GITHUB_RELEASE_API);
+      assert.equal(migrated.gatewayToken, before.gatewayToken); assert.equal(migrated.catalogUrl, before.catalogUrl);
+      assert.equal(new AuroraStore(store.dir).getSettings().updateUrl, GITHUB_RELEASE_API);
+      const backup = store.exportAll(); backup.settings.updateUrl = updateUrl; store.importAll(backup);
+      assert.equal(store.exportAll().settings.updateUrl, GITHUB_RELEASE_API);
+    }
+  });
   check('Settings saves cannot restore a custom update source or disable the hidden automatic sync policy', () => {
     const settings = legacy.saveSettings({ updateUrl: 'invalid legacy value', autoSyncModels: false, catalogUrl: catalog + '/alternate', closeToTray: false });
     assert.equal(settings.updateUrl, GITHUB_RELEASE_API); assert.equal(settings.autoSyncModels, true); assert.equal(settings.catalogUrl, catalog + '/alternate'); assert.equal(settings.closeToTray, false);
