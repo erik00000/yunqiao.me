@@ -19,6 +19,7 @@ try {
   await build({ stdin: { contents: [
     "export * from './src/core/actions.ts';", "export * from './src/core/store/index.ts';",
     "export * from './src/core/agents/modelCatalog.ts';", "export * from './src/core/extensions/models.ts';",
+    "export * from './src/core/cloud.ts';",
   ].join('\n'), resolveDir: workspace, loader: 'ts' }, outfile: bundle, bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent' });
   const api = createRequire(import.meta.url)(bundle);
   function fixture(name, configText = 'model_reasoning_effort = "xhigh"\nmodel_context_window = 123\nmodel_auto_compact_token_limit = 100\n') {
@@ -83,6 +84,82 @@ try {
     assert.deepEqual(catalog.models.map(m => m.supported_reasoning_levels.map(level => level.effort)),
       [[], ['low', 'medium', 'high'], ['low', 'medium', 'high'], [], []]);
     assert.deepEqual(catalog.models.map(m => m.default_reasoning_level), [null, 'medium', 'medium', null, null]);
+  });
+  await check('显式等级优先、白名单去重排序，默认值必须来自支持列表', () => {
+    const f = fixture('explicit-efforts');
+    const cases = [
+      [{ id: 'unknown-max', supportedReasoningEfforts: ['max', 'high', 'medium', 'low', 'xhigh', 'minimal', 'none', 'max', 'invalid', 5, null] }, ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'], 'medium'],
+      [{ id: 'gpt-5.4', supportedReasoningEfforts: ['max', 'high', 'high'] }, ['high', 'max'], 'high'],
+      [{ id: 'only-max', supportedReasoningEfforts: ['max'] }, ['max'], 'max'],
+      [{ id: 'only-minimal', supportedReasoningEfforts: ['minimal'] }, ['minimal'], 'minimal'],
+      [{ id: 'only-none', supportedReasoningEfforts: ['none'] }, ['none'], 'none'],
+      [{ id: 'gpt-5.4-empty', supportedReasoningEfforts: [] }, [], null],
+      [{ id: 'gpt-5.4-invalid', supportedReasoningEfforts: ['MAX', 'invalid', {}, null] }, [], null],
+      [{ id: 'gpt-5.4-disabled', capabilities: { thinking: false }, supportedReasoningEfforts: ['medium', 'max'] }, [], null],
+      [{ id: 'gpt-5.4-none', thinkingField: 'none', supportedReasoningEfforts: ['max'] }, [], null],
+      [{ id: 'unknown-named-max' }, [], null],
+      [{ id: 'unknown-thinking-max', capabilities: { thinking: true } }, ['low', 'medium', 'high'], 'medium'],
+      [{ id: 'gpt-5.1-codex-max' }, ['low', 'medium', 'high', 'xhigh'], 'medium'],
+      [{ id: 'gpt-5' }, ['minimal', 'low', 'medium', 'high'], 'medium'],
+    ];
+    const before = structuredClone(cases);
+    for (const [model, expected, defaultLevel] of cases) {
+      const entry = api.buildGatewayModelCatalog({ ...f.provider, models: [model] }).models[0];
+      assert.deepEqual(entry.supported_reasoning_levels.map(level => level.effort), expected, model.id);
+      assert.equal(entry.default_reasoning_level, defaultLevel, model.id);
+      assert(defaultLevel === null || expected.includes(defaultLevel));
+    }
+    assert.deepEqual(cases, before, '目录生成不得修改供应商元数据');
+  });
+  await check('网关刷新与扩展目录保持显式等级，直连使用相同列表和否决规则', async () => {
+    const f = fixture('refresh-efforts');
+    const models = [
+      { id: 'gpt-5.4', supportedReasoningEfforts: ['max', 'high', 'high'] },
+      { id: 'custom-text', supportedReasoningEfforts: ['max', 'medium', 'low'] },
+      { id: 'disabled', supportedReasoningEfforts: ['max'], capabilities: { thinking: false } },
+      { id: 'field-none', supportedReasoningEfforts: ['max'], thinkingField: 'none' },
+      { id: 'gpt-5-empty', supportedReasoningEfforts: [] },
+    ];
+    f.store.saveProvider({ id: f.provider.id, models });
+    assert.equal((await f.connect()).ok, true);
+    api.refreshGatewayModelCatalog(f.store);
+    const native = json(f.catalog), desktop = api.desktopModelCatalog(f.store);
+    for (const entry of native.models) {
+      const metadata = desktop.modelMetadata[entry.slug];
+      assert.deepEqual(metadata.supportedReasoningEfforts.map(level => level.reasoningEffort), entry.supported_reasoning_levels.map(level => level.effort));
+      assert.equal(metadata.defaultReasoningEffort ?? null, entry.default_reasoning_level);
+    }
+    assert.deepEqual(native.models[0].supported_reasoning_levels.map(level => level.effort), ['high', 'max']);
+    assert.equal(native.models[0].default_reasoning_level, 'high');
+    f.store.saveProvider({ id: f.provider.id, models: models.map(m => m.id === 'gpt-5.4' ? { ...m, supportedReasoningEfforts: ['max'] } : m) });
+    api.refreshGatewayModelCatalog(f.store);
+    assert.deepEqual(json(f.catalog).models[0].supported_reasoning_levels, [{ effort: 'max', description: 'max' }]);
+    assert.equal(json(f.catalog).models[0].default_reasoning_level, 'max');
+    assert.equal((await f.connect({ mode: 'direct' })).ok, true);
+    const direct = api.desktopModelCatalog(f.store);
+    for (const [id, levels, defaultLevel] of [['gpt-5.4', ['max'], 'max'], ['custom-text', ['low', 'medium', 'max'], 'medium'], ['disabled', ['none'], 'none'], ['field-none', ['none'], 'none'], ['gpt-5-empty', [], undefined]]) {
+      assert.deepEqual(direct.modelMetadata[id].supportedReasoningEfforts.map(level => level.reasoningEffort), levels);
+      assert.equal(direct.modelMetadata[id].defaultReasoningEffort, defaultLevel);
+    }
+  });
+  await check('云目录校验、缓存再校验及导入保留显式等级和 none 否决', () => {
+    const f = fixture('cloud-efforts');
+    const raw = { key: 'explicit-fixture', name: '显式模型目录', format: 'openai-responses', baseUrl: 'https://explicit.fixture.invalid/v1',
+      models: [
+        { id: 'explicit', supportedReasoningEfforts: ['max', 'medium', 'low', 'max', 'invalid'] },
+        { id: 'disabled', supportedReasoningEfforts: ['max'], thinkingField: 'none' },
+        { id: 'empty', supportedReasoningEfforts: [] },
+      ] };
+    const normalized = api.validateCloudProvider(raw);
+    assert.deepEqual(normalized.models[0].supportedReasoningEfforts, ['low', 'medium', 'max']);
+    assert.equal(normalized.models[1].thinkingField, 'none');
+    assert.deepEqual(api.validateCloudProvider(normalized), normalized);
+    const imported = api.importCloudProviders(f.store, [normalized]).providers[0];
+    const saved = new api.AuroraStore(f.store.dir).getProvider(imported.id);
+    assert.deepEqual(saved.models, JSON.parse(JSON.stringify(imported.models)));
+    const catalog = api.buildGatewayModelCatalog({ ...saved, apiKeys: f.provider.apiKeys });
+    assert.deepEqual(catalog.models.map(m => m.supported_reasoning_levels.map(level => level.effort)), [['low', 'medium', 'max'], [], []]);
+    assert.deepEqual(catalog.models.map(m => m.default_reasoning_level), ['medium', null, null]);
   });
   await check('目录内容或供应商列表在预览后变化时拒绝写入', async () => {
     for (const kind of ['catalog', 'models']) {

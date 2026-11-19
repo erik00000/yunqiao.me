@@ -4,7 +4,7 @@ import type { AuroraStore } from '../store/index.js';
 import { readTomlValue } from '../codex.js';
 import { getCoexistCatalog, isCodexCoexistConfigured } from '../gateway/coexist.js';
 import { extensionClientConfig } from './clientConfig.js';
-import { buildGatewayModelCatalog, CODEX_MODEL_CATALOG_FILE } from '../agents/modelCatalog.js';
+import { buildGatewayModelCatalog, CODEX_MODEL_CATALOG_FILE, reasoningLevels } from '../agents/modelCatalog.js';
 export function desktopModelCatalog(store:AuroraStore):any{
   if(isCodexCoexistConfigured(store)){
     const catalog=getCoexistCatalog(store),models=catalog.models.map(m=>m.id),model=readTomlValue('model')||models[0]||'';
@@ -27,7 +27,14 @@ export function desktopModelCatalog(store:AuroraStore):any{
     return{status:models.length?'ok':'not_configured',models,model:selected,default_model:selected,model_provider:configured,codex_model_provider:configured,provider_name:provider.name,modelMetadata,sources:[{id:`${configured}:${provider.id}`,name:provider.name}],responses_api:{status:'configured',message:'使用当前供应商的云桥原生模型目录'}};
   }
   const models=provider.models.map(m=>m.id);const model=(typeof nativeModel==='string'?nativeModel:undefined)||agent.model||models[0]||'';
-  const modelMetadata=Object.fromEntries(provider.models.map(m=>[m.id,{displayName:m.displayName||m.id,description:provider.name,...(m.contextWindow?{contextWindow:m.contextWindow,maxContextWindow:m.contextWindow}:{}),...(m.capabilities?.thinking===false?{defaultReasoningEffort:'none',supportedReasoningEfforts:[{reasoningEffort:'none',description:'此模型未启用额外思考'}]}:{})}]));
+  const modelMetadata=Object.fromEntries(provider.models.map(m=>{
+    const disabled=m.capabilities?.thinking===false||m.thinkingField==='none';
+    const levels=disabled?['none']:reasoningLevels(m);
+    const defaultEffort=levels.includes('medium')?'medium':levels[0];
+    return[m.id,{displayName:m.displayName||m.id,description:provider.name,...(m.contextWindow?{contextWindow:m.contextWindow,maxContextWindow:m.contextWindow}:{}),
+      ...(defaultEffort?{defaultReasoningEffort:defaultEffort}:{}),
+      supportedReasoningEfforts:levels.map(reasoningEffort=>({reasoningEffort,description:disabled?'此模型未启用额外思考':reasoningEffort}))}];
+  }));
   return{status:'ok',models,model,default_model:model,model_provider:configured,codex_model_provider:configured,provider_name:provider.name,modelMetadata,sources:[{id:`${configured}:${provider.id}`,name:provider.name}],responses_api:{status:agent.mode==='gateway'||provider.format==='openai-responses'?'configured':'unknown',message:'使用已保存的供应商模型目录'}};
 }
 export function modelCatalogFingerprint(store:AuroraStore):string{return createHash('sha256').update(JSON.stringify(desktopModelCatalog(store))).digest('hex');}

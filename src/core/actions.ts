@@ -9,7 +9,7 @@ import { applyContextDefaults, isChatgptTextModel, isValidContextWindow } from '
 import { readText, atomicWrite, digest, expectedPlanFiles, planned, restorePlanSnapshot } from './agents/configFiles.js';
 import { runPermissionAction } from './agents/permissions.js';
 import { getCoexistCatalog } from './gateway/coexist.js';
-import { buildGatewayModelCatalog } from './agents/modelCatalog.js';
+import { buildGatewayModelCatalog, normalizeReasoningEfforts } from './agents/modelCatalog.js';
 import { runExtensionAction } from './extensions/index.js';
 import { AGENT_ADAPTERS, detectReset, getAdapter, connectionParameters, exportEnvScript, configureDesktopPath, codexPlan, planRevision, type ConnectContext } from './agents/adapters.js';
 import { detectAllAsync, detectDesktopAsync } from './agents/detectionAsync.js';
@@ -253,7 +253,11 @@ export async function fetchProviderModels(deps: ActionDeps, payload: { providerI
         if (!id || id.length > 512 || /[\s\u0000-\u001f]/.test(id)) return [];
         const context = x.context_window ?? x.input_token_limit ?? x.inputTokenLimit;
         const thinking = [x.capabilities?.thinking, x.capabilities?.reasoning, x.reasoning].find(value => typeof value === 'boolean');
+        const efforts = normalizeReasoningEfforts(x.supportedReasoningEfforts ?? x.supported_reasoning_efforts);
+        const thinkingField = ['reasoning_effort', 'enable_thinking', 'none'].includes(x.thinkingField) ? x.thinkingField as 'reasoning_effort' | 'enable_thinking' | 'none' : undefined;
         return [{ id, ...(isValidContextWindow(context) ? { contextWindow: context } : {}),
+          ...(efforts !== undefined ? { supportedReasoningEfforts: efforts } : {}),
+          ...(thinkingField !== undefined ? { thinkingField } : {}),
           ...(typeof thinking === 'boolean' ? { capabilities: { thinking } } : {}) }];
       });
       if (models.length) {
@@ -267,6 +271,12 @@ export async function fetchProviderModels(deps: ActionDeps, payload: { providerI
           if (index >= 0) {
             // Existing explicit limits are local choices; synchronization never replaces them.
             if (merged[index].contextWindow === undefined && isChatgptTextModel(m.id)) merged[index] = applyContextDefaults({ ...merged[index], contextWindow: m.contextWindow });
+            if (merged[index].supportedReasoningEfforts === undefined && m.supportedReasoningEfforts !== undefined) {
+              merged[index] = { ...merged[index], supportedReasoningEfforts: m.supportedReasoningEfforts };
+            }
+            if (merged[index].thinkingField === undefined && m.thinkingField !== undefined) {
+              merged[index] = { ...merged[index], thinkingField: m.thinkingField };
+            }
             if (merged[index].capabilities?.thinking === undefined && m.capabilities?.thinking !== undefined) {
               merged[index] = { ...merged[index], capabilities: { ...merged[index].capabilities, thinking: m.capabilities.thinking } };
             }

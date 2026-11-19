@@ -30,8 +30,17 @@ export function gatewayProviderAvailable(provider: Provider): boolean {
   } catch { return false; }
 }
 
-function reasoningLevels(model: ProviderModel): string[] {
+const REASONING_EFFORT_ORDER = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+
+export function normalizeReasoningEfforts(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return REASONING_EFFORT_ORDER.filter(effort => value.includes(effort));
+}
+
+export function reasoningLevels(model: ProviderModel): string[] {
   if (model.capabilities?.thinking === false || model.thinkingField === 'none') return [];
+  const explicit = normalizeReasoningEfforts(model.supportedReasoningEfforts);
+  if (explicit !== undefined) return explicit;
   const id = model.id.toLowerCase().replace(/^openai\//, '');
   if (/^gpt-5(?:\.[2-9]\d*|\.[1-9]\d{1,})(?:[-.]|$)/.test(id) || /^gpt-5\.1-codex-max(?:[-.]|$)/.test(id)) return ['low', 'medium', 'high', 'xhigh'];
   if (/^gpt-5(?:[-.]|$)/.test(id)) return ['minimal', 'low', 'medium', 'high'];
@@ -51,7 +60,7 @@ export function buildGatewayModelCatalog(provider: Provider): GatewayModelCatalo
     const levels = reasoningLevels(model);
     return [{ slug, display_name: model.displayName || model.id, description: `${provider.name} / ${model.id}`,
       base_instructions: '', model_messages: null, priority: seen.size, visibility: 'list', supported_in_api: true,
-      default_reasoning_level: levels.length ? 'medium' : null,
+      default_reasoning_level: levels.includes('medium') ? 'medium' : levels[0] ?? null,
       supported_reasoning_levels: levels.map(effort => ({ effort, description: effort })),
       additional_speed_tiers: [], service_tiers: [], availability_nux: null, upgrade: null,
       supports_parallel_tool_calls: false, supports_reasoning_summaries: false, support_verbosity: false,
